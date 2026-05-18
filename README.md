@@ -1,17 +1,17 @@
-# myMCP — Local MCP Gateway
+# MCPRelay — Local MCP Gateway
 
-A local MCP (Model Context Protocol) gateway with vision, filesystem, puppeteer tools and built-in OAuth authentication.
+MCPRelay is a local MCP (Model Context Protocol) gateway with vision, filesystem, puppeteer tools and built-in OAuth authentication.
 
----
+Its purpose is to bypass token limitation by using front end Chrome ChatGPT access. The included ChatGPT userscript can detect a ChatGPT MCP app configured with a matching name, then relay requests through the browser session.
 
 ## 📦 Prerequisites
 
 - Python 3.10+
 - Node.js 18+ (for `npx`)
 - [ngrok](https://ngrok.com/) (to expose the service over HTTPS)
+- [Tampermonkey](https://www.tampermonkey.net/) or Violentmonkey in Chrome
+- Install the included ChatGPT userscript from this repository
 - **Screen Recording** permission (macOS) for vision/screenshot tools
-
----
 
 ## 🚀 Installation
 
@@ -48,8 +48,6 @@ OAUTH_KEY_ID=local-dev-key
 ```
 
 > ⚠️ `MCP_BASE_URL` and `OAUTH_ISSUER` must point to your ngrok URL.
-
----
 
 ## 🏁 Getting Started
 
@@ -90,8 +88,6 @@ python3 src/mcp_gateway.py
 # → http://localhost:8761/oauth/...
 ```
 
----
-
 ## 🌐 Exposing via ngrok
 
 ```bash
@@ -101,8 +97,6 @@ ngrok http 8761
 ```
 
 The generated URL becomes your `MCP_BASE_URL` in `config/.env`.
-
----
 
 ## 🛠️ Available MCP Tools
 
@@ -147,8 +141,6 @@ The generated URL becomes your `MCP_BASE_URL` in `config/.env`.
 |---|---|
 | `run_command` | Execute a shell command with streaming |
 
----
-
 ## 🧪 Tests
 
 ### OAuth unit tests (29 tests — no external dependencies)
@@ -176,12 +168,10 @@ pytest tests/ -v
 
 > MCP integration tests are automatically **skipped** if the gateway is unreachable (localhost:8761). No false failures in CI or offline.
 
----
-
 ## 📂 Project Structure
 
 ```
-myMCP/
+MCPRelay/
 ├── config/
 │   └── .env                 # Environment variables
 ├── data/
@@ -209,19 +199,18 @@ myMCP/
 └── README.md
 ```
 
----
-
 ## 🔗 Connecting from an MCP Client
 
 ### Example with ChatGPT (OAuth connector)
 
 1. Start ngrok on port **8761**
 2. Set `MCP_BASE_URL` to your ngrok URL
-3. In ChatGPT, use the URL:
+3. In ChatGPT, create a new MCP app with a name that starts with `MCP DL`, for example `MCP DL`. This prefix is required so the userscript can detect it.
+4. In ChatGPT, use the URL:
    ```
    https://your-url.ngrok-free.dev/mcp
    ```
-4. OAuth is handled automatically via the endpoint mounted at `/oauth`
+5. OAuth is handled automatically via the endpoint mounted at `/oauth`
 
 ### Example with `fastmcp` CLI
 
@@ -241,8 +230,6 @@ curl -X POST https://your-url.ngrok-free.dev/mcp \
   }'
 ```
 
----
-
 ## 🧪 Verify Everything is Running
 
 ```bash
@@ -256,15 +243,12 @@ curl http://localhost:8762/oauth/.well-known/oauth-authorization-server
 curl http://localhost:8762/oauth/jwks.json
 ```
 
----
-
 ## ⚠️ Security
 
 - `run_command` executes shell commands **without restrictions** — use with caution
 - OAuth tokens are signed with a local RSA key (generated in `data/oauth_private_key.pem`)
 - Files shared via `public_file_share` are accessible without authentication
 - Command logs contain all input/output — do not expose logs
-
 
 ## ChatGPT Userscript Helpers
 
@@ -274,6 +258,7 @@ Features:
 - Auto-send prompts from `?prompt=` URLs
 - Auto-open the latest conversation from the homepage
 - Auto-approve MCP action cards
+- Detect ChatGPT MCP apps whose name starts with `MCP DL`
 
 Example:
 
