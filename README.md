@@ -1,87 +1,87 @@
 # myMCP — Local MCP Gateway
 
-Passerelle MCP (Model Context Protocol) locale avec outils vision, filesystem, puppeteer et authentification OAuth intégrée.
+A local MCP (Model Context Protocol) gateway with vision, filesystem, puppeteer tools and built-in OAuth authentication.
 
 ---
 
-## 📦 Prérequis
+## 📦 Prerequisites
 
 - Python 3.10+
-- Node.js 18+ (pour `npx`)
-- [ngrok](https://ngrok.com/) (pour exposer le service en HTTPS)
-- Permission **Screen Recording** (macOS) pour les outils vision/screenshot
+- Node.js 18+ (for `npx`)
+- [ngrok](https://ngrok.com/) (to expose the service over HTTPS)
+- **Screen Recording** permission (macOS) for vision/screenshot tools
 
 ---
 
 ## 🚀 Installation
 
-### 1. Créer le venv et installer les dépendances
+### 1. Create the venv and install dependencies
 
 ```bash
-# Depuis la racine du projet
+# From the project root
 python3 -m venv .venv
 source .venv/bin/activate
 
-# Installer les dépendances
+# Install dependencies
 pip install fastmcp python-dotenv fastapi uvicorn pyjwt cryptography python-multipart pyautogui pillow
 ```
 
-### 2. Configurer les variables d'environnement
+### 2. Configure environment variables
 
-Crée un fichier `config/.env` à la racine (ou copie `.env` existant) :
+Create a `config/.env` file at the root (or copy an existing `.env`):
 
 ```bash
-# Obligatoire
-MCP_BASE_URL=https://ton-sous-domaine.ngrok-free.dev
+# Required
+MCP_BASE_URL=https://your-subdomain.ngrok-free.dev
 
-# OAuth (optionnel, valores par défaut)
-OAUTH_ISSUER=https://ton-sous-domaine.ngrok-free.dev/oauth
+# OAuth (optional, defaults provided)
+OAUTH_ISSUER=https://your-subdomain.ngrok-free.dev/oauth
 OAUTH_AUDIENCE=https://mcp.local
 OAUTH_PORT=8762
 OAUTH_TOKEN_TTL_SECONDS=3600
 
-# Mode OAuth on/off
+# OAuth on/off
 ENABLE_OAUTH=true
 
-# Clé OAuth (générée automatiquement si absente)
+# OAuth key (auto-generated if missing)
 OAUTH_KEY_ID=local-dev-key
 ```
 
-> ⚠️ `MCP_BASE_URL` et `OAUTH_ISSUER` doivent pointer vers ton URL ngrok.
+> ⚠️ `MCP_BASE_URL` and `OAUTH_ISSUER` must point to your ngrok URL.
 
 ---
 
-## 🏁 Démarrage
+## 🏁 Getting Started
 
-### Option A — `run.sh` tout-en-un (recommandé)
+### Option A — `run.sh` all-in-one (recommended)
 
 ```bash
-# Mode interactif — Ctrl+C arrête le gateway + ngrok
+# Interactive mode — Ctrl+C stops gateway + ngrok
 ./run.sh
 
-# Mode daemon (arrière-plan)
+# Daemon mode (background)
 ./run.sh start
 
-# Arrêter le daemon
+# Stop the daemon
 ./run.sh stop
 
-# Voir l'état du daemon
+# Check daemon status
 ./run.sh status
 ```
 
-Le script s'occupe de tout : activation du venv, lancement du gateway, tunnel ngrok.
+The script handles everything: venv activation, gateway startup, ngrok tunnel.
 
-### Option B — Lancement automatique simple
+### Option B — Simple automated launch
 
 ```bash
 python3 start_services.py
 ```
 
-Lance le service unique **Gateway** (MCP + OAuth intégré) sur le port `8761`.
+Starts the single **Gateway** service (MCP + OAuth integrated) on port `8761`.
 
-Les logs sont écrits dans `logs/services/gateway.log`.
+Logs are written to `logs/services/gateway.log`.
 
-### Option C — Lancement manuel
+### Option C — Manual launch
 
 ```bash
 source .venv/bin/activate
@@ -92,147 +92,147 @@ python3 src/mcp_gateway.py
 
 ---
 
-## 🌐 Exposition via ngrok
+## 🌐 Exposing via ngrok
 
 ```bash
-# Un seul tunnel suffit — le gateway sert MCP + OAuth sur le même port
+# A single tunnel is enough — the gateway serves MCP + OAuth on the same port
 ngrok http 8761
 # → https://xxxx-xxxx-xxxx.ngrok-free.dev
 ```
 
-L'URL générée devient ton `MCP_BASE_URL` dans `config/.env`.
+The generated URL becomes your `MCP_BASE_URL` in `config/.env`.
 
 ---
 
-## 🛠️ Tools MCP disponibles
+## 🛠️ Available MCP Tools
 
-### 🔐 Authentification
+### 🔐 Authentication
 | Tool | Description |
 |---|---|
-| `auth_status` | État OAuth : issuer, audience, base_url |
+| `auth_status` | OAuth status: issuer, audience, base_url |
 
 ### 📁 File Sharing
 | Tool | Description |
 |---|---|
-| `public_file_share` | Partager un fichier via URL publique |
-| `public_file_list` | Lister les partages actifs |
-| `public_file_revoke` | Révoquer un partage |
+| `public_file_share` | Share a file via a public URL |
+| `public_file_list` | List active shares |
+| `public_file_revoke` | Revoke a share |
 
 ### 🖥️ Filesystem & Puppeteer (via npx)
 | Tool | Description |
 |---|---|
-| `list_filesystem_available_tools` | Lister les outils du serveur filesystem |
-| `list_puppeteer_available_tools` | Lister les outils du serveur puppeteer |
-| `filesystem_execute_tool` | Exécuter un outil filesystem |
-| `puppeteer_execute_tool` | Exécuter un outil puppeteer |
+| `list_filesystem_available_tools` | List filesystem server tools |
+| `list_puppeteer_available_tools` | List puppeteer server tools |
+| `filesystem_execute_tool` | Execute a filesystem tool |
+| `puppeteer_execute_tool` | Execute a puppeteer tool |
 
 ### 👁️ Vision & Automation
 | Tool | Description |
 |---|---|
-| `vision_screen_size` | Taille de l'écran |
-| `vision_screenshot` | Capture d'écran (fichier) |
-| `vision_screenshot_as_base64` | Capture d'écran (base64) |
-| `mouse_position` | Position actuelle de la souris |
-| `mouse_move` | Déplacer la souris |
-| `mouse_click_at` | Clic à une position spécifique |
-| `mouse_click_current` | Clic à la position actuelle |
-| `mouse_drag` | Glisser de la souris |
+| `vision_screen_size` | Screen dimensions |
+| `vision_screenshot` | Take a screenshot (file) |
+| `vision_screenshot_as_base64` | Take a screenshot (base64) |
+| `mouse_position` | Current mouse position |
+| `mouse_move` | Move the mouse |
+| `mouse_click_at` | Click at a specific position |
+| `mouse_click_current` | Click at the current position |
+| `mouse_drag` | Drag the mouse |
 | `mouse_scroll` | Scroll |
-| `keyboard_type` | Taper du texte |
-| `keyboard_press` | Presser une touche |
-| `keyboard_hotkey` | Combinaison de touches |
+| `keyboard_type` | Type text |
+| `keyboard_press` | Press a key |
+| `keyboard_hotkey` | Key combination |
 
-### 💻 Commandes
+### 💻 Commands
 | Tool | Description |
 |---|---|
-| `run_command` | Exécuter une commande shell avec streaming |
+| `run_command` | Execute a shell command with streaming |
 
 ---
 
 ## 🧪 Tests
 
-### Tests unitaires OAuth (29 tests — sans dépendance externe)
+### OAuth unit tests (29 tests — no external dependencies)
 
 ```bash
 pytest tests/test_oauth.py -v
 ```
 
-Couvre : metadata, enregistrement client, authorization, token exchange, PKCE (S256), JWKS, validation JWT, codes expirés, réutilisation de code, edge cases.
+Covers: metadata, client registration, authorization, token exchange, PKCE (S256), JWKS, JWT validation, expired codes, code reuse, edge cases.
 
-### Tests d'intégration MCP (7 tests — nécessite le gateway en marche)
+### MCP integration tests (7 tests — requires the gateway to be running)
 
 ```bash
-# Gateway doit tourner (./run.sh start), puis :
+# Gateway must be running (./run.sh start), then:
 pytest tests/test_mcp_endpoint.py -v
 ```
 
-Couvre : reachabilité, santé OAuth, discovery, JWKS live, flow OAuth complet (register → authorize → token), appel JSON-RPC (`initialize` + `tools/list`).
+Covers: reachability, OAuth health, discovery, live JWKS, full OAuth flow (register → authorize → token), JSON-RPC call (`initialize` + `tools/list`).
 
-### Toute la suite
+### Full test suite
 
 ```bash
 pytest tests/ -v
 ```
 
-> Les tests d'intégration MCP sont automatiquement **skippés** si le gateway n'est pas joignable (localhost:8761). Aucun faux échec en CI ou hors-ligne.
+> MCP integration tests are automatically **skipped** if the gateway is unreachable (localhost:8761). No false failures in CI or offline.
 
 ---
 
-## 📂 Structure du projet
+## 📂 Project Structure
 
 ```
 myMCP/
 ├── config/
-│   └── .env                 # Variables d'environnement
+│   └── .env                 # Environment variables
 ├── data/
 │   ├── oauth_clients.json
 │   ├── oauth_codes.json
 │   ├── oauth_private_key.pem
 │   └── public_file_shares.json
 ├── logs/
-│   ├── commands/            # Logs des commandes exécutées
-│   ├── services/            # Logs du gateway
-│   └── vision/              # Captures d'écran
+│   ├── commands/            # Executed command logs
+│   ├── services/            # Gateway logs
+│   └── vision/              # Screenshots
 ├── src/
-│   ├── mcp_gateway.py       # Serveur MCP + OAuth unifié (port 8761)
-│   └── lightweight_oauth.py # Module OAuth (importé par le gateway)
+│   ├── mcp_gateway.py       # Unified MCP + OAuth server (port 8761)
+│   └── lightweight_oauth.py # OAuth module (imported by the gateway)
 ├── tests/
-│   ├── conftest.py          # Fixtures partagées
-│   ├── test_oauth.py        # 29 tests unitaires OAuth
-│   └── test_mcp_endpoint.py # 7 tests d'intégration MCP
+│   ├── conftest.py          # Shared fixtures
+│   ├── test_oauth.py        # 29 OAuth unit tests
+│   └── test_mcp_endpoint.py # 7 MCP integration tests
 ├── docs/
-│   └── plans-dev/           # Plans de développement
-├── run.sh                   # Gestionnaire tout-en-un (interactif + daemon)
-├── start_services.py        # Lanceur du service unique
-├── pytest.ini               # Configuration pytest
-├── .env                     # Variables d'environnement (fallback)
+│   └── plans-dev/           # Development plans
+├── run.sh                   # All-in-one manager (interactive + daemon)
+├── start_services.py        # Single service launcher
+├── pytest.ini               # Pytest configuration
+├── .env                     # Environment variables (fallback)
 └── README.md
 ```
 
 ---
 
-## 🔗 Connexion depuis un client MCP
+## 🔗 Connecting from an MCP Client
 
-### Exemple avec ChatGPT (connector OAuth)
+### Example with ChatGPT (OAuth connector)
 
-1. Lancer ngrok sur le port **8761**
-2. Configurer `MCP_BASE_URL` avec l'URL ngrok
-3. Dans ChatGPT, utiliser l'URL :
+1. Start ngrok on port **8761**
+2. Set `MCP_BASE_URL` to your ngrok URL
+3. In ChatGPT, use the URL:
    ```
-   https://ton-url.ngrok-free.dev/mcp
+   https://your-url.ngrok-free.dev/mcp
    ```
-4. L'OAuth se fait automatiquement via le endpoint monté sur `/oauth`
+4. OAuth is handled automatically via the endpoint mounted at `/oauth`
 
-### Exemple avec `fastmcp` CLI
+### Example with `fastmcp` CLI
 
 ```bash
 fastmcp dev src/mcp_gateway.py
 ```
 
-Ou en HTTP direct :
+Or directly over HTTP:
 
 ```bash
-curl -X POST https://ton-url.ngrok-free.dev/mcp \
+curl -X POST https://your-url.ngrok-free.dev/mcp \
   -H "Content-Type: application/json" \
   -d '{
     "jsonrpc": "2.0",
@@ -243,13 +243,13 @@ curl -X POST https://ton-url.ngrok-free.dev/mcp \
 
 ---
 
-## 🧪 Vérifier que tout tourne
+## 🧪 Verify Everything is Running
 
 ```bash
-# Santé du service OAuth
+# OAuth service health
 curl http://localhost:8762/oauth/health
 
-# Métadonnées OAuth
+# OAuth metadata
 curl http://localhost:8762/oauth/.well-known/oauth-authorization-server
 
 # JWKS
@@ -258,9 +258,27 @@ curl http://localhost:8762/oauth/jwks.json
 
 ---
 
-## ⚠️ Sécurité
+## ⚠️ Security
 
-- `run_command` exécute des commandes shell **sans restriction** — utiliser avec précaution
-- Les tokens OAuth sont signés avec une clé RSA locale (générée dans `data/oauth_private_key.pem`)
-- Les fichiers partagés via `public_file_share` sont accessibles sans authentification
-- Les logs de commandes contiennent toutes les entrées/sorties — ne pas exposer les logs
+- `run_command` executes shell commands **without restrictions** — use with caution
+- OAuth tokens are signed with a local RSA key (generated in `data/oauth_private_key.pem`)
+- Files shared via `public_file_share` are accessible without authentication
+- Command logs contain all input/output — do not expose logs
+
+
+## ChatGPT Userscript Helpers
+
+This project also includes a small merged userscript for ChatGPT automation.
+
+Features:
+- Auto-send prompts from `?prompt=` URLs
+- Auto-open the latest conversation from the homepage
+- Auto-approve MCP action cards
+
+Example:
+
+```txt
+https://chatgpt.com/?prompt=Explain%20this%20repository
+```
+
+The script is designed for Tampermonkey / Violentmonkey and is intentionally lightweight.

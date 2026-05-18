@@ -140,6 +140,67 @@ def append_conversation_event(conversation_id: str, event: dict) -> Path:
     return path
 
 
+
+
+def conversation_has_start(conversation_id: str) -> bool:
+    path = conversation_log_path(conversation_id)
+    if not path.exists():
+        return False
+
+    try:
+        with open(path, 'r', encoding='utf-8') as f:
+            for line in f:
+                try:
+                    if json.loads(line).get('type') == 'conversation_start':
+                        return True
+                except json.JSONDecodeError:
+                    continue
+    except OSError:
+        return False
+
+    return False
+
+
+def ensure_conversation_started(
+    conversation_id: str | None = None,
+    chatgpt_url: str | None = None,
+    title: str | None = None,
+    user_goal: str | None = None,
+    initial_instruction: str | None = None,
+    source_tool: str | None = None,
+) -> dict | None:
+    if not conversation_id:
+        return None
+
+    safe_id = sanitize_conversation_id(conversation_id)
+    if conversation_has_start(safe_id):
+        return {
+            'ok': True,
+            'conversation_id': safe_id,
+            'already_started': True,
+            'forced': False,
+        }
+
+    startup_browser_assist = chatgpt_startup_browser_assist(chatgpt_url)
+    log_path = append_conversation_event(safe_id, {
+        'type': 'conversation_start',
+        'title': title,
+        'user_goal': user_goal,
+        'initial_instruction': initial_instruction,
+        'chatgpt_url': chatgpt_url,
+        'startup_browser_assist': startup_browser_assist,
+        'forced': True,
+        'source_tool': source_tool,
+    })
+    return {
+        'ok': True,
+        'conversation_id': safe_id,
+        'already_started': False,
+        'forced': True,
+        'log_path': str(log_path),
+        'startup_browser_assist': startup_browser_assist,
+    }
+
 def resolve_share_path(path: str) -> Path:
     file_path = Path(path).expanduser()
 
@@ -278,6 +339,73 @@ def vision_log_path(prefix: str, suffix: str = 'png') -> Path:
 
 
 
+def chatgpt_startup_browser_assist(chatgpt_url: str | None = None) -> dict:
+    """Best-effort startup assist for ChatGPT conversations.
+
+    Opens or focuses the ChatGPT home page. Conversation-specific
+    redirection can be handled client-side, for example by TamperMonkey. This helper is intentionally non-fatal so conversation logging
+    continues even if Chrome or macOS GUI automation is unavailable.
+    """
+    # Always open/focus the ChatGPT home page. Any conversation-specific
+    # redirection is handled client-side, for example by TamperMonkey.
+    target_url = 'https://chatgpt.com/'
+
+    safe_target_url = json.dumps(target_url)
+    apple_script = '\n'.join([
+        f'set targetUrl to {safe_target_url}',
+        'set foundTab to false',
+        'set foundWindowIndex to 0',
+        'set foundTabIndex to 0',
+        'tell application "Google Chrome"',
+        'activate',
+        'if (count of windows) > 0 then',
+        'repeat with w from 1 to count of windows',
+        'repeat with t from 1 to count of tabs of window w',
+        'if URL of tab t of window w is targetUrl then',
+        'set foundTab to true',
+        'set foundWindowIndex to w',
+        'set foundTabIndex to t',
+        'exit repeat',
+        'end if',
+        'end repeat',
+        'if foundTab then exit repeat',
+        'end repeat',
+        'end if',
+        'if foundTab then',
+        'set active tab index of window foundWindowIndex to foundTabIndex',
+        'set index of window foundWindowIndex to 1',
+        'return "focused_existing"',
+        'else',
+        'if (count of windows) = 0 then make new window',
+        'tell window 1 to make new tab with properties {URL:targetUrl}',
+        'return "opened_new"',
+        'end if',
+        'end tell',
+    ])
+
+    try:
+        completed = subprocess.run(
+            ['osascript', '-e', apple_script],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        action = completed.stdout.strip()
+        return {
+            'ok': completed.returncode == 0,
+            'target_url': target_url,
+            'action': action or 'unknown',
+            'opened_new_tab': action == 'opened_new',
+            'focused_existing_same_url_tab': action == 'focused_existing',
+            'stderr': completed.stderr.strip() if completed.returncode != 0 else '',
+        }
+    except Exception as exc:
+        return {
+            'ok': False,
+            'error': str(exc),
+            'target_url': target_url,
+        }
+
 
 @mcp.tool()
 async def conversation_start(
@@ -285,17 +413,24 @@ async def conversation_start(
     title: str | None = None,
     user_goal: str | None = None,
     initial_instruction: str | None = None,
+    chatgpt_url: str | None = None,
 ) -> dict:
     conversation_id = sanitize_conversation_id(conversation_id or generate_conversation_id())
-    log_path = append_conversation_event(conversation_id, {
-        'type': 'conversation_start',
-        'title': title,
-        'user_goal': user_goal,
-        'initial_instruction': initial_instruction,
-    })
+    ensured = ensure_conversation_started(
+        conversation_id=conversation_id,
+        chatgpt_url=chatgpt_url,
+        title=title,
+        user_goal=user_goal,
+        initial_instruction=initial_instruction,
+        source_tool='conversation_start',
+    )
+    log_path = conversation_log_path(conversation_id)
     return {
         'conversation_id': conversation_id,
         'log_path': str(log_path),
+        'startup_browser_assist': (ensured or {}).get('startup_browser_assist'),
+        'already_started': (ensured or {}).get('already_started', False),
+        'forced': (ensured or {}).get('forced', False),
         'message': 'Use this conversation_id in subsequent MCP calls.'
     }
 
@@ -306,7 +441,9 @@ async def conversation_note(
     kind: ConversationKind,
     content: str,
     metadata: dict | None = None,
+    chatgpt_url: str | None = None,
 ) -> dict:
+    ensure_conversation_started(conversation_id, chatgpt_url, source_tool='conversation_note')
     normalized_kind = kind.strip().lower()
     if normalized_kind not in ALLOWED_CONVERSATION_KINDS:
         raise ValueError(f'invalid kind: {normalized_kind}')
@@ -326,7 +463,8 @@ async def conversation_note(
 
 
 @mcp.tool()
-async def auth_status() -> dict:
+async def auth_status(conversation_id: str | None = None, chatgpt_url: str | None = None) -> dict:
+    ensure_conversation_started(conversation_id, chatgpt_url, source_tool='auth_status')
     return {
         'oauth_enabled': ENABLE_OAUTH,
         'issuer': LOCAL_OAUTH_ISSUER,
@@ -336,7 +474,8 @@ async def auth_status() -> dict:
 
 
 @mcp.tool()
-async def public_file_share(path: str, download_name: str | None = None) -> dict:
+async def public_file_share(path: str, download_name: str | None = None, conversation_id: str | None = None, chatgpt_url: str | None = None) -> dict:
+    ensure_conversation_started(conversation_id, chatgpt_url, source_tool='public_file_share')
     resolved = resolve_share_path(path)
     share_id = secrets.token_urlsafe(32)
     shares = load_public_shares()
@@ -366,7 +505,8 @@ async def public_file_share(path: str, download_name: str | None = None) -> dict
 
 
 @mcp.tool()
-async def public_file_list() -> list[dict]:
+async def public_file_list(conversation_id: str | None = None, chatgpt_url: str | None = None) -> list[dict]:
+    ensure_conversation_started(conversation_id, chatgpt_url, source_tool='public_file_list')
     shares = load_public_shares()
 
     return [
@@ -383,7 +523,8 @@ async def public_file_list() -> list[dict]:
 
 
 @mcp.tool()
-async def public_file_revoke(share_id: str) -> dict:
+async def public_file_revoke(share_id: str, conversation_id: str | None = None, chatgpt_url: str | None = None) -> dict:
+    ensure_conversation_started(conversation_id, chatgpt_url, source_tool='public_file_revoke')
     shares = load_public_shares()
     removed = shares.pop(share_id, None)
 
@@ -408,45 +549,75 @@ async def public_file_revoke(share_id: str) -> dict:
 
 
 @mcp.tool()
-async def list_filesystem_available_tools() -> str:
+async def list_filesystem_available_tools(conversation_id: str | None = None, chatgpt_url: str | None = None) -> str:
+    ensure_conversation_started(conversation_id, chatgpt_url, source_tool='list_filesystem_available_tools')
     async with filesystem_client:
         return str(await filesystem_client.list_tools())
 
 
 @mcp.tool()
-async def list_puppeteer_available_tools() -> str:
+async def list_puppeteer_available_tools(conversation_id: str | None = None, chatgpt_url: str | None = None) -> str:
+    ensure_conversation_started(conversation_id, chatgpt_url, source_tool='list_puppeteer_available_tools')
     async with puppeteer_client:
         return str(await puppeteer_client.list_tools())
 
 
 @mcp.tool()
-async def filesystem_execute_tool(name: str, arguments: dict = {}) -> str:
+async def filesystem_execute_tool(
+    name: str,
+    arguments: dict = {},
+    conversation_id: str | None = None,
+    purpose: str | None = None,
+    chatgpt_url: str | None = None,
+) -> str:
+    tool_arguments = dict(arguments or {})
+    embedded_conversation_id = tool_arguments.pop('conversation_id', None)
+    embedded_chatgpt_url = tool_arguments.pop('chatgpt_url', None)
+    embedded_purpose = tool_arguments.pop('purpose', None)
+    conversation_id = conversation_id or embedded_conversation_id
+    chatgpt_url = chatgpt_url or embedded_chatgpt_url
+    purpose = purpose or embedded_purpose
+
+    ensure_conversation_started(conversation_id, chatgpt_url, source_tool='filesystem_execute_tool')
     log_action('filesystem_execute_tool', {
         'tool': name,
-        'arguments': arguments
+        'arguments': tool_arguments,
+        'conversation_id': conversation_id,
+        'purpose': purpose,
+        'chatgpt_url': chatgpt_url,
     })
 
     async with filesystem_client:
-        result = await filesystem_client.call_tool(name, arguments)
-        append_tool_conversation_event(conversation_id, 'filesystem_execute_tool', {'arguments': {'tool': name, 'purpose': purpose}, 'result_preview': str(result)[:1000]})
-        append_tool_conversation_event(conversation_id, 'puppeteer_execute_tool', {'arguments': {'tool': name, 'purpose': purpose}, 'result_preview': str(result)[:1000]})
+        result = await filesystem_client.call_tool(name, tool_arguments)
+        append_tool_conversation_event(conversation_id, 'filesystem_execute_tool', {
+            'arguments': {'tool': name, 'purpose': purpose},
+            'result_preview': str(result)[:1000],
+        })
         return str(result)
 
 
 @mcp.tool()
-async def puppeteer_execute_tool(name: str, arguments: dict = {}) -> str:
+async def puppeteer_execute_tool(name: str, arguments: dict = {}, conversation_id: str | None = None, purpose: str | None = None, chatgpt_url: str | None = None) -> str:
+    ensure_conversation_started(conversation_id, chatgpt_url, source_tool='puppeteer_execute_tool')
     log_action('puppeteer_execute_tool', {
         'tool': name,
-        'arguments': arguments
+        'arguments': arguments,
+        'conversation_id': conversation_id,
+        'purpose': purpose,
     })
 
     async with puppeteer_client:
         result = await puppeteer_client.call_tool(name, arguments)
+        append_tool_conversation_event(conversation_id, 'puppeteer_execute_tool', {
+            'arguments': {'tool': name, 'purpose': purpose},
+            'result_preview': str(result)[:1000],
+        })
         return str(result)
 
 
 @mcp.tool()
-async def vision_screen_size() -> dict:
+async def vision_screen_size(conversation_id: str | None = None, chatgpt_url: str | None = None) -> dict:
+    ensure_conversation_started(conversation_id, chatgpt_url, source_tool='vision_screen_size')
     pyautogui = get_pyautogui()
     size = pyautogui.size()
 
@@ -457,7 +628,8 @@ async def vision_screen_size() -> dict:
 
 
 @mcp.tool()
-async def vision_screenshot(region: dict | None = None, conversation_id: str | None = None, purpose: str | None = None) -> dict:
+async def vision_screenshot(region: dict | None = None, conversation_id: str | None = None, purpose: str | None = None, chatgpt_url: str | None = None) -> dict:
+    ensure_conversation_started(conversation_id, chatgpt_url, source_tool='vision_screenshot')
     pyautogui = get_pyautogui()
     normalized_region = normalize_region(region)
 
@@ -488,7 +660,8 @@ async def vision_screenshot(region: dict | None = None, conversation_id: str | N
 
 
 @mcp.tool()
-async def vision_screenshot_as_base64(region: dict | None = None, conversation_id: str | None = None, purpose: str | None = None) -> dict:
+async def vision_screenshot_as_base64(region: dict | None = None, conversation_id: str | None = None, purpose: str | None = None, chatgpt_url: str | None = None) -> dict:
+    ensure_conversation_started(conversation_id, chatgpt_url, source_tool='vision_screenshot_as_base64')
     pyautogui = get_pyautogui()
     normalized_region = normalize_region(region)
 
@@ -733,7 +906,9 @@ async def run_command(
     conversation_id: str | None = None,
     purpose: str | None = None,
     include_output_in_conversation_log: bool = False,
+    chatgpt_url: str | None = None,
 ) -> str:
+    ensure_conversation_started(conversation_id, chatgpt_url, source_tool='run_command')
     command_id = datetime.now(UTC).strftime('%Y%m%d_%H%M%S_%f')
     stream_log = STREAM_DIR / f'command_{command_id}.log'
 

@@ -42,8 +42,9 @@ run_interactive() {
     echo "║  ngrok tunnel will open in a moment…                   ║"
     echo "║  Press Ctrl+C to stop everything.                      ║"
     echo "╚══════════════════════════════════════════════════════════╝"
+    echo "⚡ caffeinate actif — le Mac ne s'endormira pas tant que le gateway tourne."
 
-    ngrok http "$NGROK_PORT"
+    caffeinate -i ngrok http "$NGROK_PORT"
 }
 
 # ── daemon ─────────────────────────────────────────────────────────
@@ -60,12 +61,12 @@ start_daemon() {
     SERVICES_PID=$!
     sleep 2
 
-    nohup ngrok http "$NGROK_PORT" > /dev/null 2>&1 &
+    nohup caffeinate -i ngrok http "$NGROK_PORT" > /dev/null 2>&1 &
     NGROK_PID=$!
 
     echo "$SERVICES_PID:$NGROK_PID" > "$PID_FILE"
     echo "✓ Gateway started  (PID $SERVICES_PID)"
-    echo "✓ ngrok tunnel     (PID $NGROK_PID)"
+    echo "✓ ngrok tunnel     (PID $NGROK_PID) [caffeinate actif]"
     echo ""
     echo "  Stop with:  ./run.sh stop"
     echo "  Status:     ./run.sh status"

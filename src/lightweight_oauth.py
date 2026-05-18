@@ -26,7 +26,7 @@ PRIVATE_KEY_FILE = DATA_DIR / "oauth_private_key.pem"
 
 ISSUER = os.getenv("OAUTH_ISSUER", "https://hull-envision-bunkbed.ngrok-free.dev/oauth")
 AUDIENCE = os.getenv("OAUTH_AUDIENCE", "https://mcp.local")
-TOKEN_TTL_SECONDS = int(os.getenv("OAUTH_TOKEN_TTL_SECONDS", "3600"))
+TOKEN_TTL_SECONDS = int(os.getenv("OAUTH_TOKEN_TTL_SECONDS", "31536000"))
 AUTO_REGISTER_AUTH_CLIENTS = os.getenv("OAUTH_AUTO_REGISTER_AUTH_CLIENTS", "true").lower() == "true"
 
 app = FastAPI(title="Lightweight MCP OAuth Server")
@@ -235,7 +235,7 @@ def token(
     if item["client_id"] != client_id or item["redirect_uri"] != redirect_uri:
         return JSONResponse({"error": "invalid_grant"}, status_code=400)
 
-    if time.time() - item["created_at"] > 300:
+    if time.time() - item["created_at"] > 900:
         return JSONResponse({"error": "invalid_grant", "error_description": "code expired"}, status_code=400)
 
     now = int(time.time())
