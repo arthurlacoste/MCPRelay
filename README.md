@@ -135,6 +135,7 @@ The generated URL becomes your `MCP_BASE_URL` in `config/.env`.
 | `keyboard_type` | Type text |
 | `keyboard_press` | Press a key |
 | `keyboard_hotkey` | Key combination |
+| `launch_agent` | Open a Chrome tab/window via AppleScript to launch an agent URL |
 
 ### 💻 Commands
 | Tool | Description |

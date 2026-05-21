@@ -408,6 +408,71 @@ def chatgpt_startup_browser_assist(chatgpt_url: str | None = None) -> dict:
 
 
 @mcp.tool()
+async def launch_agent(
+    agent_url: str,
+    new_window: bool = False,
+    conversation_id: str | None = None,
+    purpose: str | None = None,
+    chatgpt_url: str | None = None,
+) -> dict:
+    ensure_conversation_started(conversation_id, chatgpt_url, source_tool='launch_agent')
+
+    safe_target_url = json.dumps(agent_url)
+    mode = 'window' if new_window else 'tab'
+
+    apple_script = '\n'.join([
+        f'set targetUrl to {safe_target_url}',
+        f'set openMode to "{mode}"',
+        'tell application "Google Chrome"',
+        'activate',
+        'if openMode is "window" then',
+        'make new window',
+        'set URL of active tab of front window to targetUrl',
+        'return "opened_window"',
+        'else',
+        'if (count of windows) = 0 then make new window',
+        'tell front window to make new tab with properties {URL:targetUrl}',
+        'return "opened_tab"',
+        'end if',
+        'end tell',
+    ])
+
+    completed = subprocess.run(
+        ['osascript', '-e', apple_script],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    result = {
+        'ok': completed.returncode == 0,
+        'agent_url': agent_url,
+        'mode': mode,
+        'action': completed.stdout.strip() or 'unknown',
+        'stderr': completed.stderr.strip(),
+    }
+
+    log_action('launch_agent', {
+        'agent_url': agent_url,
+        'mode': mode,
+        'conversation_id': conversation_id,
+        'purpose': purpose,
+        **result,
+    })
+
+    append_tool_conversation_event(conversation_id, 'launch_agent', {
+        'arguments': {
+            'agent_url': agent_url,
+            'mode': mode,
+            'purpose': purpose,
+        },
+        'result_preview': str(result)[:1000],
+    })
+
+    return result
+
+
+@mcp.tool()
 async def conversation_start(
     conversation_id: str | None = None,
     title: str | None = None,
