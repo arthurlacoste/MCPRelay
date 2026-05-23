@@ -8,6 +8,9 @@ import subprocess
 import threading
 import base64
 import re
+import asyncio
+import contextlib
+import io
 from datetime import datetime, UTC
 from typing import Literal
 from pathlib import Path
@@ -24,7 +27,8 @@ from pydantic import AnyHttpUrl
 from starlette.routing import Mount
 
 BASE_DIR = Path(__file__).resolve().parent.parent
-load_dotenv(BASE_DIR / 'config' / '.env')
+load_dotenv(BASE_DIR / '.env')
+load_dotenv(BASE_DIR / 'config' / '.env', override=True)
 
 logging.basicConfig(level=logging.INFO)
 
@@ -950,6 +954,17 @@ async def keyboard_hotkey(keys: list[str], interval: float = 0.0) -> dict:
 
 
 MAX_OUTPUT_CHARS = 50_000
+OPENINTERPRETER_OUTPUT_CHARS = 50_000
+OPENINTERPRETER_DEFAULT_TIMEOUT_SECONDS = 300
+OPENINTERPRETER_DEEPSEEK_V4_MODEL = os.getenv(
+    'OPENINTERPRETER_DEEPSEEK_V4_MODEL',
+    'openai/deepseek-chat',
+)
+OPENINTERPRETER_DEEPSEEK_API_BASE = os.getenv(
+    'OPENINTERPRETER_DEEPSEEK_API_BASE',
+    'https://api.deepseek.com/v1',
+)
+OPENINTERPRETER_RUN_LOCK = threading.Lock()
 
 
 def stream_pipe(pipe, logfile, lines: list, prefix=''):
@@ -963,6 +978,224 @@ def stream_pipe(pipe, logfile, lines: list, prefix=''):
         lines.append(formatted)
 
     pipe.close()
+
+
+def clamp_openinterpreter_timeout(timeout_seconds: int | None) -> int:
+    if timeout_seconds is None:
+        return OPENINTERPRETER_DEFAULT_TIMEOUT_SECONDS
+
+    return max(1, min(int(timeout_seconds), 3600))
+
+
+def resolve_openinterpreter_api_key(api_key: str | None = None) -> str | None:
+    return (
+        api_key
+        or os.environ.get('DEEPSEEK_API_KEY')
+        or os.environ.get('OPENAI_API_KEY')
+        or os.environ.get('OPENAI_ADMIN_KEY')
+    )
+
+
+def run_openinterpreter_chat(
+    prompt: str,
+    model: str,
+    api_base: str,
+    api_key: str | None,
+    auto_run: bool,
+    llm_supports_functions: bool,
+    context_window: int,
+    max_tokens: int,
+    cwd: Path,
+) -> dict:
+    try:
+        from interpreter import interpreter
+    except ImportError as exc:
+        raise RuntimeError(
+            'OpenInterpreter is not installed in the gateway Python environment. '
+            'Install it in the same venv that runs src/mcp_gateway.py.'
+        ) from exc
+
+    selected_api_key = resolve_openinterpreter_api_key(api_key)
+    interpreter.llm.model = model
+    interpreter.llm.api_base = api_base
+    interpreter.llm.api_key = selected_api_key
+    interpreter.auto_run = auto_run
+    interpreter.disable_telemetry = True
+    interpreter.llm.context_window = int(context_window)
+    interpreter.llm.max_tokens = int(max_tokens)
+
+    if hasattr(interpreter.llm, 'supports_functions'):
+        interpreter.llm.supports_functions = llm_supports_functions
+
+    stdout = io.StringIO()
+    stderr = io.StringIO()
+
+    with OPENINTERPRETER_RUN_LOCK:
+        previous_cwd = Path.cwd()
+        previous_openai_api_key = os.environ.get('OPENAI_API_KEY')
+        previous_deepseek_api_key = os.environ.get('DEEPSEEK_API_KEY')
+        os.chdir(cwd)
+        try:
+            if selected_api_key:
+                os.environ['OPENAI_API_KEY'] = selected_api_key
+                os.environ['DEEPSEEK_API_KEY'] = selected_api_key
+
+            with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+                chat_result = interpreter.chat(prompt)
+        finally:
+            if previous_openai_api_key is None:
+                os.environ.pop('OPENAI_API_KEY', None)
+            else:
+                os.environ['OPENAI_API_KEY'] = previous_openai_api_key
+
+            if previous_deepseek_api_key is None:
+                os.environ.pop('DEEPSEEK_API_KEY', None)
+            else:
+                os.environ['DEEPSEEK_API_KEY'] = previous_deepseek_api_key
+
+            os.chdir(previous_cwd)
+
+    return {
+        'stdout': stdout.getvalue(),
+        'stderr': stderr.getvalue(),
+        'chat_result': chat_result,
+    }
+
+
+@mcp.tool()
+async def deepseek_v4_agent(
+    prompt: str,
+    conversation_id: str | None = None,
+    purpose: str | None = None,
+    model: str | None = None,
+    api_base: str | None = None,
+    api_key: str | None = None,
+    auto_run: bool = True,
+    llm_supports_functions: bool = True,
+    context_window: int = 4096,
+    max_tokens: int = 200,
+    timeout_seconds: int | None = None,
+    cwd: str | None = None,
+    include_output_in_conversation_log: bool = False,
+    chatgpt_url: str | None = None,
+) -> dict:
+    ensure_conversation_started(conversation_id, chatgpt_url, source_tool='deepseek_v4_agent')
+
+    if not prompt.strip():
+        raise ValueError('prompt must not be empty')
+
+    selected_model = model or OPENINTERPRETER_DEEPSEEK_V4_MODEL
+    selected_api_base = api_base or OPENINTERPRETER_DEEPSEEK_API_BASE
+    selected_api_key = resolve_openinterpreter_api_key(api_key)
+    timeout = clamp_openinterpreter_timeout(timeout_seconds)
+    working_directory = Path(cwd).expanduser().resolve() if cwd else BASE_DIR
+
+    log_action('deepseek_v4_agent_start', {
+        'model': selected_model,
+        'api_base': selected_api_base,
+        'auto_run': auto_run,
+        'llm_supports_functions': llm_supports_functions,
+        'context_window': context_window,
+        'max_tokens': max_tokens,
+        'timeout_seconds': timeout,
+        'cwd': str(working_directory),
+        'conversation_id': conversation_id,
+        'purpose': purpose,
+    })
+
+    try:
+        chat_payload = await asyncio.wait_for(
+            asyncio.to_thread(
+                run_openinterpreter_chat,
+                prompt=prompt,
+                model=selected_model,
+                api_base=selected_api_base,
+                api_key=selected_api_key,
+                auto_run=auto_run,
+                llm_supports_functions=llm_supports_functions,
+                context_window=context_window,
+                max_tokens=max_tokens,
+                cwd=working_directory,
+            ),
+            timeout=timeout,
+        )
+        stdout_text = chat_payload['stdout']
+        stderr_text = chat_payload['stderr']
+        chat_result = chat_payload['chat_result']
+        ok = True
+        error = None
+        returncode = 0
+    except RuntimeError as exc:
+        stdout_text = ''
+        stderr_text = str(exc)
+        chat_result = None
+        ok = False
+        error = 'openinterpreter_not_installed'
+        returncode = 1
+    except TimeoutError as exc:
+        stdout_text = ''
+        stderr_text = str(exc)
+        chat_result = None
+        ok = False
+        error = 'timeout'
+        returncode = 124
+
+    truncated = False
+    if len(stdout_text) > OPENINTERPRETER_OUTPUT_CHARS:
+        stdout_text = stdout_text[:OPENINTERPRETER_OUTPUT_CHARS] + '\n... [stdout truncated]'
+        truncated = True
+
+    if len(stderr_text) > OPENINTERPRETER_OUTPUT_CHARS:
+        stderr_text = stderr_text[:OPENINTERPRETER_OUTPUT_CHARS] + '\n... [stderr truncated]'
+        truncated = True
+
+    result = {
+        'ok': ok,
+        'model': selected_model,
+        'api_base': selected_api_base,
+        'cwd': str(working_directory),
+        'exit_code': returncode,
+        'stdout': stdout_text,
+        'stderr': stderr_text,
+        'chat_result': chat_result,
+        'truncated': truncated,
+    }
+
+    if error:
+        result['error'] = error
+
+    log_action('deepseek_v4_agent_end', {
+        'model': selected_model,
+        'exit_code': returncode,
+        'ok': ok,
+        'error': error,
+        'truncated': truncated,
+        'conversation_id': conversation_id,
+        'purpose': purpose,
+    })
+
+    append_tool_conversation_event(conversation_id, 'deepseek_v4_agent', {
+        'arguments': {
+            'purpose': purpose,
+            'model': selected_model,
+            'api_base': selected_api_base,
+            'auto_run': auto_run,
+            'llm_supports_functions': llm_supports_functions,
+            'context_window': context_window,
+            'max_tokens': max_tokens,
+            'timeout_seconds': timeout,
+            'cwd': str(working_directory),
+        },
+        'exit_code': returncode,
+        'result_included': include_output_in_conversation_log,
+        'output_preview': (
+            (stdout_text + '\n' + stderr_text)[:4000]
+            if include_output_in_conversation_log else None
+        ),
+        'error': error,
+    })
+
+    return result
 
 
 @mcp.tool()
@@ -1098,8 +1331,6 @@ async def run_command(
         parts.append(f'CREATED FILES ({len(created_files)}):')
         parts.extend(created_files[:50])
 
-    parts.append('')
-    parts.append(f'Full log: {stream_log}')
 
     if truncated:
         parts.append(f'\n⚠️  Output truncated at {MAX_OUTPUT_CHARS} characters per stream. See log file for full output.')

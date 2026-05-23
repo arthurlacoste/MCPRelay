@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         chatgpt-tools
 // @namespace    local.chatgpt.tools
-// @version      1.0.2
-// @description  Auto-send URL prompt, open first recent conversation, auto-click MCP primary action
+// @version      1.0.3
+// @description  Auto-send URL prompt, open first recent conversation, auto-click MCP primary actions
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
 // @run-at       document-end
@@ -215,7 +215,7 @@
 
   function initAutoClickMcpPrimaryAction() {
     const SETTLE_MS = 5000;
-    const MCP_NAME = 'MCP DL';
+    const MCP_NAMES = ['MCP DL', 'GitHub'];
     const MCP_MATCH_MODE = 'CONTAIN';
 
     function scrollBottom() {
@@ -244,11 +244,17 @@
     function matchesMcpName(text) {
       if (!text) return false;
 
-      if (MCP_MATCH_MODE === 'CONTAIN') {
-        return text.includes(MCP_NAME);
-      }
+      const normalizedText = text.toLowerCase();
 
-      return text.trim() === MCP_NAME;
+      return MCP_NAMES.some(name => {
+        const normalizedName = name.toLowerCase();
+
+        if (MCP_MATCH_MODE === 'CONTAIN') {
+          return normalizedText.includes(normalizedName);
+        }
+
+        return text.trim().toLowerCase() === normalizedName;
+      });
     }
 
     function findMcpCards() {

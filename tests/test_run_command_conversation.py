@@ -23,7 +23,7 @@ def test_run_command_writes_conversation_event(tmp_path, monkeypatch):
     assert payload['tool'] == 'run_command'
     assert payload['arguments']['purpose'] == 'test command'
     assert payload['exit_code'] == 0
-    assert 'logs/commands/' in payload['result_ref']
+    assert Path(payload['result_ref']).parent == tmp_path
 
 
 def test_run_command_no_output_by_default(tmp_path, monkeypatch):

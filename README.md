@@ -136,11 +136,24 @@ The generated URL becomes your `MCP_BASE_URL` in `config/.env`.
 | `keyboard_press` | Press a key |
 | `keyboard_hotkey` | Key combination |
 | `launch_agent` | Open a Chrome tab/window via AppleScript to launch an agent URL |
+| `deepseek_v4_agent` | Run an OpenInterpreter agent call with a DeepSeek V4-compatible model |
 
 ### 💻 Commands
 | Tool | Description |
 |---|---|
 | `run_command` | Execute a shell command with streaming |
+
+### 🤖 OpenInterpreter
+
+`deepseek_v4_agent` imports OpenInterpreter directly in the gateway Python
+process. Install OpenInterpreter in the same venv that runs `src/mcp_gateway.py`.
+It configures `interpreter.llm.model` from `OPENINTERPRETER_DEEPSEEK_V4_MODEL`
+or `openai/deepseek-chat`, and `interpreter.llm.api_base` from
+`OPENINTERPRETER_DEEPSEEK_API_BASE` or `https://api.deepseek.com/v1`.
+Set `DEEPSEEK_API_KEY` in `config/.env`, or pass `api_key` to the tool for a
+single call. The gateway also loads the project root `.env` and maps the
+resolved key to `OPENAI_API_KEY` during the call because LiteLLM expects that
+name for `openai/deepseek-chat`.
 
 ## 🧪 Tests
 
