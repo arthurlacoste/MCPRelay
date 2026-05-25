@@ -43,6 +43,7 @@ STREAM_DIR = BASE_DIR / 'logs' / 'commands'
 VISION_DIR = BASE_DIR / 'logs' / 'vision'
 CONVERSATION_DIR = BASE_DIR / 'logs' / 'conversations'
 PUBLIC_SHARES_FILE = BASE_DIR / 'data' / 'public_file_shares.json'
+DEEPSEEK_AGENT_PREPROMPT_FILE = BASE_DIR / 'config' / 'deepseek_agent_preprompt.md'
 STREAM_DIR.mkdir(parents=True, exist_ok=True)
 VISION_DIR.mkdir(parents=True, exist_ok=True)
 CONVERSATION_DIR.mkdir(parents=True, exist_ok=True)
@@ -1338,11 +1339,26 @@ def stream_pipe(pipe, logfile, lines: list, prefix=''):
     pipe.close()
 
 
-def clamp_openinterpreter_timeout(timeout_seconds: int | None) -> int:
-    if timeout_seconds is None:
-        return OPENINTERPRETER_DEFAULT_TIMEOUT_SECONDS
 
-    return max(1, min(int(timeout_seconds), 3600))
+def load_deepseek_agent_preprompt() -> str:
+    try:
+        return DEEPSEEK_AGENT_PREPROMPT_FILE.read_text(encoding='utf-8').strip()
+    except FileNotFoundError:
+        return ''
+
+
+def compose_deepseek_agent_prompt(prompt: str) -> str:
+    preprompt = load_deepseek_agent_preprompt()
+    user_prompt = prompt.strip()
+    if not preprompt:
+        return user_prompt
+    return preprompt + '\n\n## Mission utilisateur\n\n' + user_prompt
+
+def clamp_openinterpreter_timeout(timeout_seconds: int | None, hard_timeout_seconds: int = 3600) -> int:
+    if timeout_seconds is None:
+        timeout_seconds = OPENINTERPRETER_DEFAULT_TIMEOUT_SECONDS
+
+    return max(1, min(int(timeout_seconds), int(hard_timeout_seconds)))
 
 
 def resolve_openinterpreter_api_key(api_key: str | None = None) -> str | None:
@@ -1442,8 +1458,10 @@ async def deepseek_v4_agent(
         timeout_seconds = cfg.get('timeout_seconds')
     if max_tokens == 200:
         max_tokens = int(cfg.get('max_tokens', max_tokens))
+    max_tokens = min(int(max_tokens), int(cfg.get('hard_max_tokens', 6000)))
     if context_window == 4096:
         context_window = int(cfg.get('context_window', context_window))
+    context_window = min(int(context_window), int(cfg.get('hard_context_window', 16384)))
     if auto_run is True:
         auto_run = bool(cfg.get('auto_run_default', auto_run))
     if include_output_in_conversation_log is False:
@@ -1454,10 +1472,11 @@ async def deepseek_v4_agent(
     if not prompt.strip():
         raise ValueError('prompt must not be empty')
 
+    agent_prompt = compose_deepseek_agent_prompt(prompt)
     selected_model = model or OPENINTERPRETER_DEEPSEEK_V4_MODEL
     selected_api_base = api_base or OPENINTERPRETER_DEEPSEEK_API_BASE
     selected_api_key = resolve_openinterpreter_api_key(api_key)
-    timeout = clamp_openinterpreter_timeout(timeout_seconds)
+    timeout = clamp_openinterpreter_timeout(timeout_seconds, int(cfg.get('hard_timeout_seconds', 1200)))
     working_directory = Path(cwd).expanduser().resolve() if cwd else BASE_DIR
 
     log_action('deepseek_v4_agent_start', {
@@ -1477,7 +1496,7 @@ async def deepseek_v4_agent(
         chat_payload = await asyncio.wait_for(
             asyncio.to_thread(
                 run_openinterpreter_chat,
-                prompt=prompt,
+                prompt=agent_prompt,
                 model=selected_model,
                 api_base=selected_api_base,
                 api_key=selected_api_key,

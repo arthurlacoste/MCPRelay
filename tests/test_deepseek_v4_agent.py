@@ -38,13 +38,13 @@ def test_deepseek_v4_agent_calls_openinterpreter_in_process(monkeypatch, tmp_pat
     assert result['model'] == 'openai/deepseek-chat'
     assert result['api_base'] == 'https://api.deepseek.com/v1'
     assert result['stdout'] == 'done\n'
-    assert calls['prompt'] == 'Inspect this repository.'
+    assert calls['prompt'].endswith('Inspect this repository.')
     assert calls['model'] == 'openai/deepseek-chat'
     assert calls['api_base'] == 'https://api.deepseek.com/v1'
     assert calls['api_key'] == 'secret-test-key'
     assert calls['auto_run'] is False
-    assert calls['context_window'] == 4096
-    assert calls['max_tokens'] == 800
+    assert calls['context_window'] == 8192
+    assert calls['max_tokens'] == 4000
     assert calls['cwd'] == tmp_path.resolve()
     assert 'secret-test-key' not in str(result)
     assert calls['event'][0][1] == 'deepseek_v4_agent'
@@ -72,7 +72,7 @@ def test_deepseek_v4_agent_allows_model_and_api_base_override(monkeypatch):
     ))
 
     assert result['ok'] is True
-    assert calls['prompt'] == 'hello'
+    assert calls['prompt'].endswith('hello')
     assert calls['model'] == 'openrouter/deepseek/deepseek-v4'
     assert calls['api_base'] == 'https://openrouter.ai/api/v1'
     assert calls['llm_supports_functions'] is False
@@ -166,3 +166,67 @@ def test_deepseek_v4_agent_rejects_empty_prompt(monkeypatch):
         assert str(exc) == 'prompt must not be empty'
     else:
         raise AssertionError('expected ValueError')
+
+
+def test_deepseek_v4_agent_injects_configurable_preprompt(monkeypatch, tmp_path):
+    calls = {}
+
+    def fake_chat(**kwargs):
+        calls.update(kwargs)
+        return {'stdout': '', 'stderr': '', 'chat_result': None}
+
+    preprompt = tmp_path / 'deepseek_agent_preprompt.md'
+    preprompt.write_text('SYSTEM GUIDELINE', encoding='utf-8')
+
+    monkeypatch.setattr(mod, 'DEEPSEEK_AGENT_PREPROMPT_FILE', preprompt)
+    monkeypatch.setattr(mod, 'run_openinterpreter_chat', fake_chat)
+    monkeypatch.setattr(mod, 'ensure_conversation_started', lambda *args, **kwargs: None)
+    monkeypatch.setattr(mod, 'log_action', lambda *args, **kwargs: None)
+    monkeypatch.setattr(mod, 'append_tool_conversation_event', lambda *args, **kwargs: None)
+
+    result = asyncio.run(mod.deepseek_v4_agent(prompt='Do the task', purpose='unit test'))
+
+    assert result['ok'] is True
+    assert calls['prompt'].startswith('SYSTEM GUIDELINE')
+    assert '## Mission utilisateur' in calls['prompt']
+    assert 'Do the task' in calls['prompt']
+
+
+def test_deepseek_v4_agent_clamps_requested_limits(monkeypatch):
+    calls = {}
+
+    def fake_chat(**kwargs):
+        calls.update(kwargs)
+        return {'stdout': '', 'stderr': '', 'chat_result': None}
+
+    monkeypatch.setattr(mod, 'run_openinterpreter_chat', fake_chat)
+    monkeypatch.setattr(mod, 'ensure_conversation_started', lambda *args, **kwargs: None)
+    monkeypatch.setattr(mod, 'log_action', lambda *args, **kwargs: None)
+    monkeypatch.setattr(mod, 'append_tool_conversation_event', lambda *args, **kwargs: None)
+
+    original_get_tool_settings = mod.get_tool_settings
+
+    def fake_get_tool_settings(tool_name):
+        cfg = original_get_tool_settings(tool_name)
+        if tool_name == 'deepseek_v4_agent':
+            cfg = dict(cfg)
+            cfg.update({
+                'hard_max_tokens': 6000,
+                'hard_context_window': 16384,
+                'hard_timeout_seconds': 1200,
+            })
+        return cfg
+
+    monkeypatch.setattr(mod, 'get_tool_settings', fake_get_tool_settings)
+
+    result = asyncio.run(mod.deepseek_v4_agent(
+        prompt='hello',
+        purpose='unit test',
+        max_tokens=999999,
+        context_window=999999,
+        timeout_seconds=999999,
+    ))
+
+    assert result['ok'] is True
+    assert calls['max_tokens'] == 6000
+    assert calls['context_window'] == 16384
