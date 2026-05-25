@@ -26,7 +26,7 @@ def test_launch_agent_opens_chrome_tab(monkeypatch):
     result = asyncio.run(mod.launch_agent(
         agent_url='https://chatgpt.com/g/example-agent',
         conversation_id='conv-launch',
-        purpose='unit test',
+        purpose='unit test open chrome',
     ))
 
     assert result == {
@@ -60,6 +60,7 @@ def test_launch_agent_opens_new_window(monkeypatch):
     result = asyncio.run(mod.launch_agent(
         agent_url='https://example.test/agent',
         new_window=True,
+        purpose='unit test open chrome',
     ))
 
     assert result['ok'] is True
@@ -78,7 +79,7 @@ def test_launch_agent_reports_applescript_error(monkeypatch):
     monkeypatch.setattr(mod, 'log_action', lambda *args, **kwargs: None)
     monkeypatch.setattr(mod, 'append_tool_conversation_event', lambda *args, **kwargs: None)
 
-    result = asyncio.run(mod.launch_agent(agent_url='https://example.test/agent'))
+    result = asyncio.run(mod.launch_agent(agent_url='https://example.test/agent', purpose='unit test open chrome'))
 
     assert result['ok'] is False
     assert result['action'] == 'unknown'

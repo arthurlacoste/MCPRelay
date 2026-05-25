@@ -15,6 +15,7 @@ Then tunnel with ngrok:
 
 import os
 import signal
+import socket
 import subprocess
 import sys
 import time
@@ -25,6 +26,8 @@ SRC_DIR = BASE_DIR / "src"
 PYTHON = BASE_DIR / ".venv" / "bin" / "python"
 LOG_DIR = BASE_DIR / "logs" / "services"
 LOG_DIR.mkdir(exist_ok=True)
+GATEWAY_HOST = "0.0.0.0"
+GATEWAY_PORT = 8761
 
 # ── Single gateway: serves both MCP (port 8761 /mcp) and OAuth ──
 SERVICES = [
@@ -36,6 +39,16 @@ SERVICES = [
 ]
 
 processes = []
+
+
+def is_port_available(host: str, port: int) -> bool:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        try:
+            sock.bind((host, port))
+        except OSError:
+            return False
+    return True
 
 
 def ensure_venv():
@@ -100,6 +113,10 @@ def stop_all(*_):
 def main():
     ensure_venv()
     ensure_deps()
+
+    if not is_port_available(GATEWAY_HOST, GATEWAY_PORT):
+        print(f"gateway port {GATEWAY_PORT} is already in use; stop the existing gateway before starting a new one")
+        sys.exit(1)
 
     signal.signal(signal.SIGINT, stop_all)
     signal.signal(signal.SIGTERM, stop_all)

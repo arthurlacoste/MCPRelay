@@ -42,9 +42,9 @@ def test_deepseek_v4_agent_calls_openinterpreter_in_process(monkeypatch, tmp_pat
     assert calls['model'] == 'openai/deepseek-chat'
     assert calls['api_base'] == 'https://api.deepseek.com/v1'
     assert calls['api_key'] == 'secret-test-key'
-    assert calls['auto_run'] is True
+    assert calls['auto_run'] is False
     assert calls['context_window'] == 4096
-    assert calls['max_tokens'] == 200
+    assert calls['max_tokens'] == 800
     assert calls['cwd'] == tmp_path.resolve()
     assert 'secret-test-key' not in str(result)
     assert calls['event'][0][1] == 'deepseek_v4_agent'
@@ -65,6 +65,7 @@ def test_deepseek_v4_agent_allows_model_and_api_base_override(monkeypatch):
 
     result = asyncio.run(mod.deepseek_v4_agent(
         prompt='hello',
+        purpose='unit test',
         model='openrouter/deepseek/deepseek-v4',
         api_base='https://openrouter.ai/api/v1',
         llm_supports_functions=False,
@@ -91,7 +92,7 @@ def test_deepseek_v4_agent_uses_openai_api_key_env(monkeypatch):
     monkeypatch.delenv('DEEPSEEK_API_KEY', raising=False)
     monkeypatch.setenv('OPENAI_API_KEY', 'openai-env-key')
 
-    result = asyncio.run(mod.deepseek_v4_agent(prompt='hello'))
+    result = asyncio.run(mod.deepseek_v4_agent(prompt='hello', purpose='unit test'))
 
     assert result['ok'] is True
     assert calls['api_key'] == 'openai-env-key'
@@ -106,8 +107,9 @@ def test_run_openinterpreter_chat_maps_key_for_litellm(monkeypatch, tmp_path):
         def __init__(self):
             self.llm = FakeLLM()
 
-        def chat(self, prompt):
+        def chat(self, prompt, display=True):
             assert prompt == 'hello'
+            assert display is False
             assert os.environ['OPENAI_API_KEY'] == 'deepseek-key'
             assert os.environ['DEEPSEEK_API_KEY'] == 'deepseek-key'
             return [{'role': 'assistant', 'content': 'ok'}]
@@ -148,7 +150,7 @@ def test_deepseek_v4_agent_reports_missing_openinterpreter(monkeypatch):
     monkeypatch.setattr(mod, 'log_action', lambda *args, **kwargs: None)
     monkeypatch.setattr(mod, 'append_tool_conversation_event', lambda *args, **kwargs: None)
 
-    result = asyncio.run(mod.deepseek_v4_agent(prompt='hello'))
+    result = asyncio.run(mod.deepseek_v4_agent(prompt='hello', purpose='unit test'))
 
     assert result['ok'] is False
     assert result['exit_code'] == 1
@@ -159,7 +161,7 @@ def test_deepseek_v4_agent_rejects_empty_prompt(monkeypatch):
     monkeypatch.setattr(mod, 'ensure_conversation_started', lambda *args, **kwargs: None)
 
     try:
-        asyncio.run(mod.deepseek_v4_agent(prompt='  '))
+        asyncio.run(mod.deepseek_v4_agent(prompt='  ', purpose='unit test'))
     except ValueError as exc:
         assert str(exc) == 'prompt must not be empty'
     else:

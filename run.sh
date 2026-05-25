@@ -79,7 +79,7 @@ stop_daemon() {
         exit 0
     fi
 
-    read -r SERVICES_PID NGROK_PID < "$PID_FILE"
+    IFS=: read -r SERVICES_PID NGROK_PID < "$PID_FILE"
 
     echo "⟶ stopping ngrok (PID $NGROK_PID)…"
     kill "$NGROK_PID" 2>/dev/null || true
@@ -109,7 +109,7 @@ status() {
         exit 0
     fi
 
-    read -r SERVICES_PID NGROK_PID < "$PID_FILE"
+    IFS=: read -r SERVICES_PID NGROK_PID < "$PID_FILE"
 
     if kill -0 "$SERVICES_PID" 2>/dev/null; then
         echo "✓ Gateway running  (PID $SERVICES_PID)"
