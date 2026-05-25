@@ -1,6 +1,6 @@
 # ── Sensitive files ──────────────────────────────────────────────
 .env
-config/
+config/settings.yaml
 
 # ── Data (OAuth secrets, tokens, file shares) ────────────────────
 data/
