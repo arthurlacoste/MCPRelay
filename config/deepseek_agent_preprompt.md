@@ -39,3 +39,26 @@ Termine avec une réponse concise contenant :
 4. résultats des tests
 5. points à vérifier
 6. fichiers hors scope détectés, s'il y en a
+
+## Taille et organisation des fichiers
+
+Privilégie des fichiers courts à moyens, lisibles et centrés sur une seule responsabilité.
+
+Objectif recommandé :
+- 50 à 150 lignes pour un composant UI simple
+- 150 à 400 lignes pour un module métier, service, hook ou fichier applicatif
+- 400 à 700 lignes maximum si le fichier reste très cohérent
+- au-delà de 700 lignes, envisage une refactorisation
+- au-delà de 1000 lignes, découpe le fichier sauf raison exceptionnelle
+
+Ne découpe pas mécaniquement les fichiers pour réduire le nombre de lignes. Découpe uniquement quand cela améliore la lisibilité, la responsabilité ou la réutilisation.
+
+Un bon fichier doit :
+- avoir un nom explicite
+- contenir une unité logique complète
+- limiter les responsabilités mélangées
+- exposer une API claire
+- éviter les fichiers fourre-tout comme `utils.ts`, `helpers.ts`, `common.ts` ou `misc.ts` trop volumineux
+
+Préfère une organisation par fonctionnalité plutôt qu’un découpage purement technique.
+

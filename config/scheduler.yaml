@@ -1,0 +1,134 @@
+# Scheduler & Watchdog Configuration
+# Pour agents locaux avec cron
+
+version: 1
+
+# Limites d'exécution
+agents:
+  max_concurrent_local: 2  # Ollama local uniquement
+  max_concurrent_external: 1  # APIs (Deepseek, etc.)
+  max_total: 3  # Grand total
+  queue_strategy: fifo  # fifo ou priority
+
+# Watchdog: détection de boucles
+watchdog:
+  enabled: true
+  check_interval_seconds: 300  # 5 minutes
+  hard_timeout_seconds: 3600  # 1h timeout absolu
+  
+  # Seuils de détection
+  loop_detection:
+    enabled: true
+    duplication_threshold: 0.60  # >60% lignes dupliquées = boucle
+    error_threshold: 0.40  # >40% erreurs = problème
+    progress_similarity: 0.70  # >70% output overlap = pas de progrès
+    
+  # Patterns spécifiques (regex, case-insensitive)
+  patterns:
+    # Qwen-specific retry loops
+    - pattern: "(retry|retrying|attempt|try again).*\\d{3,}"
+      reason: "Infinite retry (3+ digits)"
+      severity: high
+    
+    # Same error repeating
+    - pattern: "(?:Error|Exception|Traceback).*(?=\\n)(?:.*\\n){0,5}(?:Error|Exception|Traceback)"
+      reason: "Same error repeating"
+      severity: high
+    
+    # Output duplication
+    - pattern: "(.{50,})\\n.*\\1"
+      reason: "Same output block repeated"
+      severity: medium
+    
+    # Timeout chaining
+    - pattern: "timeout.*timeout.*timeout"
+      reason: "Chained timeouts"
+      severity: high
+    
+    # Ollama connection loss loop
+    - pattern: "(Failed to connect|connection refused|Ollama.*error).*(?:.*\\n){2,10}(Failed to connect|connection refused)"
+      reason: "Ollama connection loop"
+      severity: critical
+    
+    # Memory exhaustion
+    - pattern: "(CUDA out of memory|memory error|out of memory|malloc failed).*retry"
+      reason: "Memory exhaustion with retry"
+      severity: critical
+    
+    # Qwen-specific planning loop
+    - pattern: "Let me try.*(?:Error|timeout).*Let me try"
+      reason: "Qwen planning loop"
+      severity: medium
+
+# Scheduler: source des tâches
+scheduler:
+  task_sources:
+    - type: json_file
+      path: "config/tasks.json"  # Pour v1
+      enabled: true
+      
+    - type: apple_notes
+      hashtag: "#iatasks"
+      state_file: "data/apple_notes_tasks_state.json"
+      auto_run: true
+      enabled: true
+  
+  # Agent par défaut
+  defaults:
+    provider: "ollama"
+    model: "ollama/qwen3.5:35b-a3b-coding-nvfp4"
+    cwd: null  # Hérité de la tâche
+    agent_timeout_seconds: 300  # 5 min par défaut
+    wait_timeout_seconds: 10
+    context_window: 8192
+    max_tokens: 4000
+    auto_run: false
+
+# Retry policy
+retry:
+  enabled: true
+  max_attempts: 3
+  backoff_seconds: [5, 15, 60]  # 5s, then 15s, then 1m
+  retryable_statuses:
+    - "timeout_soft"
+    - "failed"
+  non_retryable_statuses:
+    - "timeout_hard"
+    - "cancelled"
+    - "stale"
+  # Only retry if certain error patterns
+  retry_on_patterns:
+    - "timeout"
+    - "connection.*refused"
+    - "temporarily unavailable"
+
+# Metrics collection
+metrics:
+  enabled: true
+  output_file: "logs/metrics.jsonl"
+  record_events:
+    - agent_submitted
+    - agent_completed
+    - agent_failed
+    - loop_detected
+    - watchdog_kill
+    - retry_attempt
+  
+  # Alert thresholds
+  alerts:
+    loop_detection_per_hour: 5  # Alert if >5 loops/hour
+    failure_rate: 0.30  # Alert if >30% agents fail
+
+# Local notifications
+notifications:
+  enabled: true
+  macos: true
+  include_url: true
+  include_stdout_chars: 220
+
+# Logging
+logging:
+  level: INFO
+  scheduler_log: "logs/scheduler.log"
+  watchdog_log: "logs/watchdog.log"
+  metrics_log: "logs/metrics.jsonl"

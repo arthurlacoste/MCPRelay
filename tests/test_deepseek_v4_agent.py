@@ -1,4 +1,5 @@
 import asyncio
+import io
 import os
 from pathlib import Path
 import sys
@@ -11,6 +12,7 @@ import mcp_gateway as mod
 
 def test_deepseek_v4_agent_calls_openinterpreter_in_process(monkeypatch, tmp_path):
     calls = {}
+    events = []
 
     def fake_chat(**kwargs):
         calls.update(kwargs)
@@ -23,7 +25,7 @@ def test_deepseek_v4_agent_calls_openinterpreter_in_process(monkeypatch, tmp_pat
     monkeypatch.setattr(mod, 'run_openinterpreter_chat', fake_chat)
     monkeypatch.setattr(mod, 'ensure_conversation_started', lambda *args, **kwargs: None)
     monkeypatch.setattr(mod, 'log_action', lambda *args, **kwargs: None)
-    monkeypatch.setattr(mod, 'append_tool_conversation_event', lambda *args, **kwargs: calls.setdefault('event', (args, kwargs)))
+    monkeypatch.setattr(mod, 'append_tool_conversation_event', lambda *args, **kwargs: events.append((args, kwargs)))
 
     result = asyncio.run(mod.deepseek_v4_agent(
         prompt='Inspect this repository.',
@@ -47,8 +49,37 @@ def test_deepseek_v4_agent_calls_openinterpreter_in_process(monkeypatch, tmp_pat
     assert calls['max_tokens'] == 4000
     assert calls['cwd'] == tmp_path.resolve()
     assert 'secret-test-key' not in str(result)
-    assert calls['event'][0][1] == 'deepseek_v4_agent'
-    assert calls['event'][0][2]['arguments']['purpose'] == 'unit test'
+    assert [event[0][2]['status'] for event in events] == ['started', 'completed']
+    assert events[0][0][1] == 'deepseek_v4_agent'
+    assert events[0][0][2]['arguments']['purpose'] == 'unit test'
+
+
+def test_deepseek_v4_agent_logs_cancelled_conversation_event(monkeypatch):
+    events = []
+
+    async def fake_to_thread(*args, **kwargs):
+        raise asyncio.CancelledError()
+
+    monkeypatch.setattr(mod.asyncio, 'to_thread', fake_to_thread)
+    monkeypatch.setattr(mod, 'ensure_conversation_started', lambda *args, **kwargs: None)
+    monkeypatch.setattr(mod, 'log_action', lambda *args, **kwargs: None)
+    monkeypatch.setattr(mod, 'append_tool_conversation_event', lambda *args, **kwargs: events.append((args, kwargs)))
+
+    try:
+        asyncio.run(mod.deepseek_v4_agent(
+            prompt='hello',
+            conversation_id='conv-cancel',
+            purpose='unit test',
+            timeout_seconds=30,
+        ))
+    except asyncio.CancelledError:
+        pass
+    else:
+        raise AssertionError('expected CancelledError')
+
+    assert [event[0][2]['status'] for event in events] == ['started', 'cancelled']
+    assert events[1][0][0] == 'conv-cancel'
+    assert events[1][0][2]['error'] == 'cancelled'
 
 
 def test_deepseek_v4_agent_allows_model_and_api_base_override(monkeypatch):
@@ -106,13 +137,16 @@ def test_run_openinterpreter_chat_maps_key_for_litellm(monkeypatch, tmp_path):
     class FakeInterpreter:
         def __init__(self):
             self.llm = FakeLLM()
+            self.messages = [{'role': 'assistant', 'content': 'ok'}]
+            self.last_messages_count = 0
 
-        def chat(self, prompt, display=True):
+        def chat(self, prompt, display=True, stream=False):
             assert prompt == 'hello'
             assert display is False
+            assert stream is True
             assert os.environ['OPENAI_API_KEY'] == 'deepseek-key'
             assert os.environ['DEEPSEEK_API_KEY'] == 'deepseek-key'
-            return [{'role': 'assistant', 'content': 'ok'}]
+            yield {'role': 'assistant', 'type': 'message', 'content': 'ok'}
 
     fake_interpreter = FakeInterpreter()
     fake_module = types.ModuleType('interpreter')
@@ -139,6 +173,49 @@ def test_run_openinterpreter_chat_maps_key_for_litellm(monkeypatch, tmp_path):
     assert fake_interpreter.llm.api_key == 'deepseek-key'
     assert 'OPENAI_API_KEY' not in os.environ
     assert 'DEEPSEEK_API_KEY' not in os.environ
+
+
+def test_run_openinterpreter_chat_tees_stdout_and_stderr(monkeypatch, tmp_path):
+    class FakeLLM:
+        pass
+
+    class FakeInterpreter:
+        def __init__(self):
+            self.llm = FakeLLM()
+            self.auto_run = None
+            self.disable_telemetry = False
+            self.messages = [{'role': 'assistant', 'content': 'ok'}]
+            self.last_messages_count = 0
+
+        def chat(self, prompt, display=True, stream=False):
+            print('live stdout')
+            print('live stderr', file=sys.stderr)
+            yield {'role': 'assistant', 'type': 'message', 'content': 'streamed answer'}
+
+    fake_module = types.ModuleType('interpreter')
+    fake_module.interpreter = FakeInterpreter()
+    monkeypatch.setitem(sys.modules, 'interpreter', fake_module)
+    stdout_target = io.StringIO()
+    stderr_target = io.StringIO()
+
+    result = mod.run_openinterpreter_chat(
+        prompt='hello',
+        model='openai/deepseek-chat',
+        api_base='https://api.deepseek.com/v1',
+        api_key=None,
+        auto_run=True,
+        llm_supports_functions=True,
+        context_window=4096,
+        max_tokens=200,
+        cwd=tmp_path,
+        stdout_target=stdout_target,
+        stderr_target=stderr_target,
+    )
+
+    assert result['stdout'] == 'live stdout\nstreamed answer'
+    assert result['stderr'] == 'live stderr\n'
+    assert stdout_target.getvalue() == 'live stdout\nstreamed answer'
+    assert stderr_target.getvalue() == 'live stderr\n'
 
 
 def test_deepseek_v4_agent_reports_missing_openinterpreter(monkeypatch):
@@ -230,3 +307,65 @@ def test_deepseek_v4_agent_clamps_requested_limits(monkeypatch):
     assert result['ok'] is True
     assert calls['max_tokens'] == 6000
     assert calls['context_window'] == 16384
+
+
+def test_deepseek_v4_agent_uses_ollama_defaults(monkeypatch, tmp_path):
+    calls = {}
+
+    def fake_chat(**kwargs):
+        calls.update(kwargs)
+        return {'stdout': 'ok', 'stderr': '', 'chat_result': []}
+
+    monkeypatch.setattr(mod, 'run_openinterpreter_chat', fake_chat)
+    monkeypatch.setattr(mod, 'ensure_conversation_started', lambda *args, **kwargs: None)
+    monkeypatch.setattr(mod, 'log_action', lambda *args, **kwargs: None)
+    monkeypatch.setattr(mod, 'append_tool_conversation_event', lambda *args, **kwargs: None)
+
+    result = asyncio.run(mod.deepseek_v4_agent(
+        prompt='hello',
+        purpose='unit test',
+        provider='ollama',
+        cwd=str(tmp_path),
+    ))
+
+    assert result['ok'] is True
+    assert result['provider'] == 'ollama'
+    assert result['model'] == 'ollama/qwen3.5:35b-a3b-coding-nvfp4'
+    assert result['api_base'] == 'http://localhost:11434'
+    assert calls['provider'] == 'ollama'
+    assert calls['api_key'] is None
+
+
+def test_run_openinterpreter_chat_ollama_does_not_set_deepseek_key(monkeypatch, tmp_path):
+    class FakeLLM:
+        pass
+
+    class FakeInterpreter:
+        def __init__(self):
+            self.llm = FakeLLM()
+            self.messages = []
+            self.last_messages_count = 0
+
+        def chat(self, prompt, display=True, stream=False):
+            assert 'DEEPSEEK_API_KEY' not in os.environ
+            yield {'role': 'assistant', 'type': 'message', 'content': 'ok'}
+
+    fake_module = types.ModuleType('interpreter')
+    fake_module.interpreter = FakeInterpreter()
+    monkeypatch.setitem(sys.modules, 'interpreter', fake_module)
+    monkeypatch.delenv('DEEPSEEK_API_KEY', raising=False)
+
+    result = mod.run_openinterpreter_chat(
+        prompt='hello',
+        model='ollama/qwen3.5:35b-a3b-coding-nvfp4',
+        api_base='http://localhost:11434',
+        api_key=None,
+        auto_run=True,
+        llm_supports_functions=True,
+        context_window=4096,
+        max_tokens=200,
+        cwd=tmp_path,
+        provider='ollama',
+    )
+
+    assert result['stdout'] == 'ok'

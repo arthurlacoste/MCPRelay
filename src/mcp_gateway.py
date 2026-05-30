@@ -17,7 +17,7 @@ from typing import Literal
 from pathlib import Path
 
 from dotenv import load_dotenv
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from fastmcp import FastMCP
 from fastmcp.client import Client
 from fastmcp.client.transports import StdioTransport
@@ -25,7 +25,20 @@ from fastmcp.server.auth import RemoteAuthProvider
 from fastmcp.server.auth.providers.jwt import JWTVerifier
 from lightweight_oauth import app as oauth_app
 from pydantic import AnyHttpUrl
-from starlette.routing import Mount
+from starlette.routing import Mount, Route
+from agent_manager import AgentManager, AgentSpec
+from agent_manager.deepseek_runtime import (
+    OPENINTERPRETER_DEEPSEEK_API_BASE,
+    OPENINTERPRETER_DEEPSEEK_V4_MODEL,
+    openinterpreter_defaults_for_provider,
+    normalize_agent_provider,
+    clamp_openinterpreter_timeout,
+    compose_deepseek_agent_prompt,
+    resolve_openinterpreter_api_key,
+    run_openinterpreter_chat,
+)
+from agent_manager.web import create_agents_app
+from agent_metrics import get_metrics_instance
 
 try:
     import yaml
@@ -506,6 +519,10 @@ mcp = ConfigAwareFastMCP(
     **mcp_kwargs
 )
 
+AGENT_MANAGER = AgentManager.from_settings(BASE_DIR, load_settings())
+AGENT_MANAGER.recover()
+AGENT_MANAGER.start_scheduler_thread()
+
 
 @oauth_app.get('/public-files/{share_id}')
 def serve_public_file(share_id: str):
@@ -527,6 +544,67 @@ def serve_public_file(share_id: str):
     )
 
 
+def redirect_agents_root(_request):
+    return RedirectResponse('/agents/', status_code=307)
+
+
+def load_scheduler_config() -> dict:
+    config_path = BASE_DIR / 'config' / 'scheduler.yaml'
+    if not config_path.exists():
+        return {}
+    if yaml is None:
+        return {}
+    with open(config_path, 'r', encoding='utf-8') as f:
+        return yaml.safe_load(f) or {}
+
+
+def scheduler_health(_request):
+    scheduler_config = load_scheduler_config()
+    counts = AGENT_MANAGER.store.count_by_status()
+    metrics = get_metrics_instance(BASE_DIR, scheduler_config)
+    alerts = metrics.check_alerts(scheduler_config)
+    running = counts.get('running', 0)
+    queued = counts.get('queued', 0)
+    failed = counts.get('failed', 0) + counts.get('timeout_soft', 0) + counts.get('timeout_hard', 0)
+    payload = {
+        'ok': True,
+        'mode': 'local',
+        'scheduler': {
+            'configured': bool(scheduler_config),
+            'task_sources': scheduler_config.get('scheduler', {}).get('task_sources', []),
+            'retry_enabled': scheduler_config.get('retry', {}).get('enabled', True),
+            'max_retry_attempts': scheduler_config.get('retry', {}).get('max_attempts', 3),
+        },
+        'watchdog': {
+            'enabled': scheduler_config.get('watchdog', {}).get('enabled', True),
+            'check_interval_seconds': scheduler_config.get('watchdog', {}).get('check_interval_seconds', 300),
+            'hard_timeout_seconds': scheduler_config.get('watchdog', {}).get('hard_timeout_seconds', 3600),
+            'loop_patterns': len(scheduler_config.get('watchdog', {}).get('patterns', [])),
+        },
+        'agents': {
+            'running': running,
+            'queued': queued,
+            'failed_or_timed_out': failed,
+            'counts': counts,
+            'max_running_agents': AGENT_MANAGER.max_running_agents,
+        },
+        'metrics': {
+            'enabled': scheduler_config.get('metrics', {}).get('enabled', True),
+            'output_file': str(metrics.output_file),
+            'recent_counts_1h': metrics.count_recent_events(hours=1),
+            'alerts': alerts,
+        },
+    }
+    return JSONResponse(payload)
+
+
+if setting('agents.web_enabled', True):
+    mcp._additional_http_routes.append(Route('/agents', endpoint=redirect_agents_root, methods=['GET']))
+    mcp._additional_http_routes.append(
+        Mount(setting('agents.web_path', '/agents'), app=create_agents_app(AGENT_MANAGER), name='agents')
+    )
+
+mcp._additional_http_routes.append(Route('/scheduler/health', endpoint=scheduler_health, methods=['GET']))
 mcp._additional_http_routes.append(Mount('/', app=oauth_app, name='oauth'))
 
 filesystem_transport = StdioTransport(
@@ -1313,17 +1391,6 @@ async def keyboard_hotkey(keys: list[str], interval: float = 0.0) -> dict:
 
 
 MAX_OUTPUT_CHARS = 50_000
-OPENINTERPRETER_OUTPUT_CHARS = 50_000
-OPENINTERPRETER_DEFAULT_TIMEOUT_SECONDS = 300
-OPENINTERPRETER_DEEPSEEK_V4_MODEL = os.getenv(
-    'OPENINTERPRETER_DEEPSEEK_V4_MODEL',
-    'openai/deepseek-chat',
-)
-OPENINTERPRETER_DEEPSEEK_API_BASE = os.getenv(
-    'OPENINTERPRETER_DEEPSEEK_API_BASE',
-    'https://api.deepseek.com/v1',
-)
-OPENINTERPRETER_RUN_LOCK = threading.Lock()
 
 
 def stream_pipe(pipe, logfile, lines: list, prefix=''):
@@ -1337,7 +1404,6 @@ def stream_pipe(pipe, logfile, lines: list, prefix=''):
         lines.append(formatted)
 
     pipe.close()
-
 
 
 def load_deepseek_agent_preprompt() -> str:
@@ -1354,87 +1420,6 @@ def compose_deepseek_agent_prompt(prompt: str) -> str:
         return user_prompt
     return preprompt + '\n\n## Mission utilisateur\n\n' + user_prompt
 
-def clamp_openinterpreter_timeout(timeout_seconds: int | None, hard_timeout_seconds: int = 3600) -> int:
-    if timeout_seconds is None:
-        timeout_seconds = OPENINTERPRETER_DEFAULT_TIMEOUT_SECONDS
-
-    return max(1, min(int(timeout_seconds), int(hard_timeout_seconds)))
-
-
-def resolve_openinterpreter_api_key(api_key: str | None = None) -> str | None:
-    return (
-        api_key
-        or os.environ.get('DEEPSEEK_API_KEY')
-        or os.environ.get('OPENAI_API_KEY')
-        or os.environ.get('OPENAI_ADMIN_KEY')
-    )
-
-
-def run_openinterpreter_chat(
-    prompt: str,
-    model: str,
-    api_base: str,
-    api_key: str | None,
-    auto_run: bool,
-    llm_supports_functions: bool,
-    context_window: int,
-    max_tokens: int,
-    cwd: Path,
-) -> dict:
-    try:
-        from interpreter import interpreter
-    except ImportError as exc:
-        raise RuntimeError(
-            'OpenInterpreter is not installed in the gateway Python environment. '
-            'Install it in the same venv that runs src/mcp_gateway.py.'
-        ) from exc
-
-    selected_api_key = resolve_openinterpreter_api_key(api_key)
-    interpreter.llm.model = model
-    interpreter.llm.api_base = api_base
-    interpreter.llm.api_key = selected_api_key
-    interpreter.auto_run = auto_run
-    interpreter.disable_telemetry = True
-    interpreter.llm.context_window = int(context_window)
-    interpreter.llm.max_tokens = int(max_tokens)
-
-    if hasattr(interpreter.llm, 'supports_functions'):
-        interpreter.llm.supports_functions = llm_supports_functions
-
-    stdout = io.StringIO()
-    stderr = io.StringIO()
-
-    with OPENINTERPRETER_RUN_LOCK:
-        previous_cwd = Path.cwd()
-        previous_openai_api_key = os.environ.get('OPENAI_API_KEY')
-        previous_deepseek_api_key = os.environ.get('DEEPSEEK_API_KEY')
-        os.chdir(cwd)
-        try:
-            if selected_api_key:
-                os.environ['OPENAI_API_KEY'] = selected_api_key
-                os.environ['DEEPSEEK_API_KEY'] = selected_api_key
-
-            with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
-                chat_result = interpreter.chat(prompt, display=False)
-        finally:
-            if previous_openai_api_key is None:
-                os.environ.pop('OPENAI_API_KEY', None)
-            else:
-                os.environ['OPENAI_API_KEY'] = previous_openai_api_key
-
-            if previous_deepseek_api_key is None:
-                os.environ.pop('DEEPSEEK_API_KEY', None)
-            else:
-                os.environ['DEEPSEEK_API_KEY'] = previous_deepseek_api_key
-
-            os.chdir(previous_cwd)
-
-    return {
-        'stdout': stdout.getvalue(),
-        'stderr': stderr.getvalue(),
-        'chat_result': chat_result,
-    }
-
 
 @mcp.tool()
 async def deepseek_v4_agent(
@@ -1444,6 +1429,7 @@ async def deepseek_v4_agent(
     model: str | None = None,
     api_base: str | None = None,
     api_key: str | None = None,
+    provider: str = 'deepseek',
     auto_run: bool = True,
     llm_supports_functions: bool = True,
     context_window: int = 4096,
@@ -1473,13 +1459,28 @@ async def deepseek_v4_agent(
         raise ValueError('prompt must not be empty')
 
     agent_prompt = compose_deepseek_agent_prompt(prompt)
-    selected_model = model or OPENINTERPRETER_DEEPSEEK_V4_MODEL
-    selected_api_base = api_base or OPENINTERPRETER_DEEPSEEK_API_BASE
-    selected_api_key = resolve_openinterpreter_api_key(api_key)
+    selected_provider = normalize_agent_provider(provider)
+    default_model, default_api_base = openinterpreter_defaults_for_provider(selected_provider)
+    selected_model = model or default_model
+    selected_api_base = api_base or default_api_base
+    selected_api_key = resolve_openinterpreter_api_key(api_key, selected_provider)
     timeout = clamp_openinterpreter_timeout(timeout_seconds, int(cfg.get('hard_timeout_seconds', 1200)))
     working_directory = Path(cwd).expanduser().resolve() if cwd else BASE_DIR
+    conversation_arguments = {
+        'purpose': purpose,
+        'provider': selected_provider,
+        'model': selected_model,
+        'api_base': selected_api_base,
+        'auto_run': auto_run,
+        'llm_supports_functions': llm_supports_functions,
+        'context_window': context_window,
+        'max_tokens': max_tokens,
+        'timeout_seconds': timeout,
+        'cwd': str(working_directory),
+    }
 
     log_action('deepseek_v4_agent_start', {
+        'provider': selected_provider,
         'model': selected_model,
         'api_base': selected_api_base,
         'auto_run': auto_run,
@@ -1491,6 +1492,13 @@ async def deepseek_v4_agent(
         'conversation_id': conversation_id,
         'purpose': purpose,
     })
+    append_tool_conversation_event(conversation_id, 'deepseek_v4_agent', {
+        'status': 'started',
+        'arguments': conversation_arguments,
+        'result_included': False,
+        'output_preview': None,
+        'error': None,
+    })
 
     try:
         chat_payload = await asyncio.wait_for(
@@ -1501,6 +1509,7 @@ async def deepseek_v4_agent(
                 api_base=selected_api_base,
                 api_key=selected_api_key,
                 auto_run=auto_run,
+                provider=selected_provider,
                 llm_supports_functions=llm_supports_functions,
                 context_window=context_window,
                 max_tokens=max_tokens,
@@ -1528,6 +1537,21 @@ async def deepseek_v4_agent(
         ok = False
         error = 'timeout'
         returncode = 124
+    except asyncio.CancelledError:
+        log_action('deepseek_v4_agent_cancelled', {
+            'model': selected_model,
+            'conversation_id': conversation_id,
+            'purpose': purpose,
+        })
+        append_tool_conversation_event(conversation_id, 'deepseek_v4_agent', {
+            'status': 'cancelled',
+            'arguments': conversation_arguments,
+            'exit_code': 130,
+            'result_included': False,
+            'output_preview': None,
+            'error': 'cancelled',
+        })
+        raise
 
     stdout_text, stdout_truncated = truncate_text_for_settings(stdout_text, 'stdout')
     stderr_text, stderr_truncated = truncate_text_for_settings(stderr_text, 'stderr')
@@ -1535,6 +1559,8 @@ async def deepseek_v4_agent(
 
     result = {
         'ok': ok,
+        'provider': selected_provider,
+        'provider': selected_provider,
         'model': selected_model,
         'api_base': selected_api_base,
         'cwd': str(working_directory),
@@ -1559,17 +1585,8 @@ async def deepseek_v4_agent(
     })
 
     append_tool_conversation_event(conversation_id, 'deepseek_v4_agent', {
-        'arguments': {
-            'purpose': purpose,
-            'model': selected_model,
-            'api_base': selected_api_base,
-            'auto_run': auto_run,
-            'llm_supports_functions': llm_supports_functions,
-            'context_window': context_window,
-            'max_tokens': max_tokens,
-            'timeout_seconds': timeout,
-            'cwd': str(working_directory),
-        },
+        'status': 'completed' if ok else 'failed',
+        'arguments': conversation_arguments,
         'exit_code': returncode,
         'result_included': include_output_in_conversation_log,
         'output_preview': (
@@ -1579,6 +1596,294 @@ async def deepseek_v4_agent(
         'error': error,
     })
 
+    return result
+
+
+def agent_tool_started(tool_name: str, conversation_id: str | None, arguments: dict):
+    append_tool_conversation_event(conversation_id, tool_name, {
+        'status': 'started',
+        'arguments': arguments,
+        'result_included': False,
+        'output_preview': None,
+        'error': None,
+    })
+
+
+def agent_tool_completed(tool_name: str, conversation_id: str | None, arguments: dict, result: dict, include_result: bool = False):
+    append_tool_conversation_event(conversation_id, tool_name, {
+        'status': 'completed',
+        'arguments': arguments,
+        'result': result if include_result else None,
+        'result_included': include_result,
+        'output_preview': None,
+        'error': None,
+    })
+
+
+def agent_tool_error(tool_name: str, conversation_id: str | None, arguments: dict, exc: Exception):
+    append_tool_conversation_event(conversation_id, tool_name, {
+        'status': 'error',
+        'arguments': arguments,
+        'result_included': False,
+        'output_preview': None,
+        'error': str(exc),
+    })
+
+
+@mcp.tool()
+async def deepseek_agent_submit(
+    prompt: str,
+    conversation_id: str | None = None,
+    purpose: str | None = None,
+    cwd: str | None = None,
+    model: str | None = None,
+    api_base: str | None = None,
+    provider: str = 'deepseek',
+    auto_run: bool | None = None,
+    llm_supports_functions: bool = True,
+    context_window: int | None = None,
+    max_tokens: int | None = None,
+    wait_timeout_seconds: int | None = None,
+    agent_timeout_seconds: int | None = None,
+    include_output_in_conversation_log: bool | None = None,
+    chatgpt_url: str | None = None,
+) -> dict:
+    cfg = get_tool_settings('deepseek_agent_submit')
+    arguments = {
+        'purpose': purpose,
+        'cwd': cwd,
+        'provider': provider,
+        'model': model,
+        'api_base': api_base,
+        'auto_run': auto_run,
+        'llm_supports_functions': llm_supports_functions,
+        'context_window': context_window,
+        'max_tokens': max_tokens,
+        'wait_timeout_seconds': wait_timeout_seconds,
+        'agent_timeout_seconds': agent_timeout_seconds,
+        'include_output_in_conversation_log': include_output_in_conversation_log,
+    }
+    prepare_tool_call('deepseek_agent_submit', {'prompt': prompt, **arguments}, purpose)
+    ensure_conversation_started(conversation_id, chatgpt_url, source_tool='deepseek_agent_submit')
+    agent_tool_started('deepseek_agent_submit', conversation_id, arguments)
+    try:
+        selected_provider = normalize_agent_provider(provider)
+        default_model, default_api_base = openinterpreter_defaults_for_provider(selected_provider)
+        spec = AgentSpec(
+            prompt=prompt,
+            provider=selected_provider,
+            purpose=purpose,
+            cwd=cwd,
+            model=model or default_model,
+            api_base=api_base or default_api_base,
+            auto_run=bool(auto_run) if auto_run is not None else bool(get_tool_settings('deepseek_v4_agent').get('auto_run_default', False)),
+            llm_supports_functions=llm_supports_functions,
+            context_window=int(context_window or get_tool_settings('deepseek_v4_agent').get('context_window', 8192)),
+            max_tokens=int(max_tokens or get_tool_settings('deepseek_v4_agent').get('max_tokens', 4000)),
+            wait_timeout_seconds=int(wait_timeout_seconds or cfg.get('default_wait_timeout_seconds', setting('agents.default_wait_timeout_seconds', 10))),
+            agent_timeout_seconds=agent_timeout_seconds if agent_timeout_seconds is not None else cfg.get('default_agent_timeout_seconds'),
+            conversation_id=conversation_id,
+            chatgpt_url=chatgpt_url,
+            metadata={
+                'source_tool': 'deepseek_agent_submit',
+                'include_output_in_conversation_log': (
+                    include_output_in_conversation_log
+                    if include_output_in_conversation_log is not None
+                    else cfg.get('include_output_in_conversation_log_default', False)
+                ),
+            },
+        )
+        result = AGENT_MANAGER.submit(spec)
+        log_action('deepseek_agent_submit', {'agent_id': result['agent_id'], 'conversation_id': conversation_id, 'purpose': purpose})
+        agent_tool_completed('deepseek_agent_submit', conversation_id, arguments, result)
+        return result
+    except Exception as exc:
+        agent_tool_error('deepseek_agent_submit', conversation_id, arguments, exc)
+        raise
+
+
+@mcp.tool()
+async def deepseek_agent_list(
+    status: str | None = None,
+    limit: int = 50,
+    include_completed: bool = True,
+    conversation_id: str | None = None,
+    chatgpt_url: str | None = None,
+) -> dict:
+    arguments = {'status': status, 'limit': limit, 'include_completed': include_completed}
+    prepare_tool_call('deepseek_agent_list', arguments, None)
+    ensure_conversation_started(conversation_id, chatgpt_url, source_tool='deepseek_agent_list')
+    result = AGENT_MANAGER.list(status=status, limit=limit, include_completed=include_completed)
+    log_action('deepseek_agent_list', {'status': status, 'limit': limit, 'conversation_id': conversation_id})
+    agent_tool_completed('deepseek_agent_list', conversation_id, arguments, {'count': len(result['agents'])})
+    return result
+
+
+@mcp.tool()
+async def deepseek_agent_get(
+    agent_id: str,
+    include_prompt: bool = True,
+    include_result: bool = True,
+    conversation_id: str | None = None,
+    chatgpt_url: str | None = None,
+) -> dict:
+    arguments = {'agent_id': agent_id, 'include_prompt': include_prompt, 'include_result': include_result}
+    prepare_tool_call('deepseek_agent_get', arguments, None)
+    ensure_conversation_started(conversation_id, chatgpt_url, source_tool='deepseek_agent_get')
+    result = AGENT_MANAGER.get(agent_id, include_prompt=include_prompt, include_result=include_result)
+    log_action('deepseek_agent_get', {'agent_id': agent_id, 'conversation_id': conversation_id})
+    agent_tool_completed('deepseek_agent_get', conversation_id, arguments, {'agent_id': agent_id, 'status': result['agent']['status']})
+    return result
+
+
+@mcp.tool()
+async def deepseek_agent_logs(
+    agent_id: str,
+    stream: Literal["stdout", "stderr", "events"] = "stdout",
+    tail: int = 200,
+    conversation_id: str | None = None,
+    chatgpt_url: str | None = None,
+) -> dict:
+    cfg = get_tool_settings('deepseek_agent_logs')
+    max_tail = int(cfg.get('max_tail_lines', 2000))
+    tail = min(max(1, int(tail or cfg.get('default_tail_lines', 200))), max_tail)
+    arguments = {'agent_id': agent_id, 'stream': stream, 'tail': tail}
+    prepare_tool_call('deepseek_agent_logs', arguments, None)
+    ensure_conversation_started(conversation_id, chatgpt_url, source_tool='deepseek_agent_logs')
+    result = AGENT_MANAGER.logs(agent_id, stream=stream, tail=tail)
+    log_action('deepseek_agent_logs', {'agent_id': agent_id, 'stream': stream, 'tail': tail, 'conversation_id': conversation_id})
+    agent_tool_completed('deepseek_agent_logs', conversation_id, arguments, {'agent_id': agent_id, 'stream': stream, 'tail': tail})
+    return result
+
+
+@mcp.tool()
+async def deepseek_agent_cancel(
+    agent_id: str,
+    force: bool = False,
+    conversation_id: str | None = None,
+    purpose: str | None = None,
+    chatgpt_url: str | None = None,
+) -> dict:
+    arguments = {'agent_id': agent_id, 'force': force, 'purpose': purpose}
+    prepare_tool_call('deepseek_agent_cancel', arguments, purpose)
+    ensure_conversation_started(conversation_id, chatgpt_url, source_tool='deepseek_agent_cancel')
+    try:
+        result = AGENT_MANAGER.cancel(agent_id, force=force)
+        log_action('deepseek_agent_cancel', {'agent_id': agent_id, 'force': force, 'conversation_id': conversation_id, 'purpose': purpose})
+        agent_tool_completed('deepseek_agent_cancel', conversation_id, arguments, result)
+        return result
+    except Exception as exc:
+        agent_tool_error('deepseek_agent_cancel', conversation_id, arguments, exc)
+        raise
+
+
+@mcp.tool()
+async def deepseek_agent_update(
+    agent_id: str,
+    prompt: str | None = None,
+    purpose: str | None = None,
+    cwd: str | None = None,
+    model: str | None = None,
+    api_base: str | None = None,
+    context_window: int | None = None,
+    max_tokens: int | None = None,
+    retry_after_update: bool = False,
+    conversation_id: str | None = None,
+    chatgpt_url: str | None = None,
+) -> dict:
+    arguments = {
+        'agent_id': agent_id,
+        'purpose': purpose,
+        'cwd': cwd,
+        'provider': provider,
+        'model': model,
+        'api_base': api_base,
+        'context_window': context_window,
+        'max_tokens': max_tokens,
+        'retry_after_update': retry_after_update,
+    }
+    prepare_tool_call('deepseek_agent_update', {'prompt': prompt, **arguments}, purpose)
+    ensure_conversation_started(conversation_id, chatgpt_url, source_tool='deepseek_agent_update')
+    try:
+        result = AGENT_MANAGER.update(
+            agent_id,
+            prompt=prompt,
+            purpose=purpose,
+            cwd=cwd,
+            model=model,
+            api_base=api_base,
+            context_window=context_window,
+            max_tokens=max_tokens,
+        )
+        if retry_after_update:
+            retry_result = AGENT_MANAGER.retry(agent_id, clone=True, purpose=purpose)
+            result['retry'] = retry_result
+        log_action('deepseek_agent_update', {'agent_id': agent_id, 'conversation_id': conversation_id, 'purpose': purpose})
+        agent_tool_completed('deepseek_agent_update', conversation_id, arguments, {'agent_id': agent_id, 'retry_created': bool(result.get('retry'))})
+        return result
+    except Exception as exc:
+        agent_tool_error('deepseek_agent_update', conversation_id, arguments, exc)
+        raise
+
+
+@mcp.tool()
+async def deepseek_agent_retry(
+    agent_id: str,
+    prompt_override: str | None = None,
+    clone: bool = True,
+    conversation_id: str | None = None,
+    purpose: str | None = None,
+    chatgpt_url: str | None = None,
+) -> dict:
+    arguments = {'agent_id': agent_id, 'clone': clone, 'purpose': purpose, 'prompt_override': bool(prompt_override)}
+    prepare_tool_call('deepseek_agent_retry', {'prompt_override': prompt_override, **arguments}, purpose)
+    ensure_conversation_started(conversation_id, chatgpt_url, source_tool='deepseek_agent_retry')
+    try:
+        result = AGENT_MANAGER.retry(agent_id, prompt_override=prompt_override, clone=clone, purpose=purpose)
+        log_action('deepseek_agent_retry', {'old_agent_id': agent_id, 'new_agent_id': result['new_agent_id'], 'conversation_id': conversation_id, 'purpose': purpose})
+        agent_tool_completed('deepseek_agent_retry', conversation_id, arguments, {
+            'old_agent_id': agent_id,
+            'new_agent_id': result['new_agent_id'],
+            'parent_id': result.get('parent_id'),
+        })
+        return result
+    except Exception as exc:
+        agent_tool_error('deepseek_agent_retry', conversation_id, arguments, exc)
+        raise
+
+
+@mcp.tool()
+async def deepseek_agent_cleanup(
+    older_than_days: int = 14,
+    statuses: list[str] | None = None,
+    dry_run: bool = True,
+    conversation_id: str | None = None,
+    purpose: str | None = None,
+    chatgpt_url: str | None = None,
+) -> dict:
+    arguments = {'older_than_days': older_than_days, 'statuses': statuses, 'dry_run': dry_run, 'purpose': purpose}
+    prepare_tool_call('deepseek_agent_cleanup', arguments, purpose)
+    ensure_conversation_started(conversation_id, chatgpt_url, source_tool='deepseek_agent_cleanup')
+    try:
+        result = AGENT_MANAGER.cleanup(older_than_days=older_than_days, statuses=statuses, dry_run=dry_run)
+        log_action('deepseek_agent_cleanup', {'count': result['count'], 'dry_run': dry_run, 'conversation_id': conversation_id, 'purpose': purpose})
+        agent_tool_completed('deepseek_agent_cleanup', conversation_id, arguments, {'count': result['count'], 'dry_run': dry_run})
+        return result
+    except Exception as exc:
+        agent_tool_error('deepseek_agent_cleanup', conversation_id, arguments, exc)
+        raise
+
+
+@mcp.tool()
+async def deepseek_agent_settings_get(
+    conversation_id: str | None = None,
+    chatgpt_url: str | None = None,
+) -> dict:
+    prepare_tool_call('deepseek_agent_settings_get', {}, None)
+    ensure_conversation_started(conversation_id, chatgpt_url, source_tool='deepseek_agent_settings_get')
+    result = AGENT_MANAGER.settings_payload()
+    log_action('deepseek_agent_settings_get', {'conversation_id': conversation_id})
+    agent_tool_completed('deepseek_agent_settings_get', conversation_id, {}, {'enabled': result['enabled']})
     return result
 
 
