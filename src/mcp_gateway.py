@@ -997,7 +997,7 @@ async def run_command(
         },
         'exit_code': process.returncode,
         'created_files': created_files[:200],
-        'result_ref': str(stream_log),
+        'result_ref': f'logs/commands/{stream_log.name}',
         'result_included': include_output_in_conversation_log,
         'output_preview': (
             (stdout_text + '\n' + stderr_text)[:4000]

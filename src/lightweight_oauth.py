@@ -235,7 +235,7 @@ def token(
     if item["client_id"] != client_id or item["redirect_uri"] != redirect_uri:
         return JSONResponse({"error": "invalid_grant"}, status_code=400)
 
-    if time.time() - item["created_at"] > 900:
+    if time.time() - item["created_at"] > 300:
         return JSONResponse({"error": "invalid_grant", "error_description": "code expired"}, status_code=400)
 
     now = int(time.time())
