@@ -20,6 +20,7 @@ from fastmcp.client.transports import StdioTransport
 from fastmcp.server.auth import RemoteAuthProvider
 from fastmcp.server.auth.providers.jwt import JWTVerifier
 from lightweight_oauth import app as oauth_app
+from tool_registry import configurable_tool, is_downstream_enabled
 from pydantic import AnyHttpUrl
 from starlette.routing import Mount
 
@@ -407,7 +408,7 @@ def chatgpt_startup_browser_assist(chatgpt_url: str | None = None) -> dict:
         }
 
 
-@mcp.tool()
+@configurable_tool(mcp)
 async def conversation_start(
     conversation_id: str | None = None,
     title: str | None = None,
@@ -435,7 +436,7 @@ async def conversation_start(
     }
 
 
-@mcp.tool()
+@configurable_tool(mcp)
 async def conversation_note(
     conversation_id: str,
     kind: ConversationKind,
@@ -462,7 +463,7 @@ async def conversation_note(
     }
 
 
-@mcp.tool()
+@configurable_tool(mcp)
 async def auth_status(conversation_id: str | None = None, chatgpt_url: str | None = None) -> dict:
     ensure_conversation_started(conversation_id, chatgpt_url, source_tool='auth_status')
     return {
@@ -473,7 +474,7 @@ async def auth_status(conversation_id: str | None = None, chatgpt_url: str | Non
     }
 
 
-@mcp.tool()
+@configurable_tool(mcp)
 async def public_file_share(path: str, download_name: str | None = None, conversation_id: str | None = None, chatgpt_url: str | None = None) -> dict:
     ensure_conversation_started(conversation_id, chatgpt_url, source_tool='public_file_share')
     resolved = resolve_share_path(path)
@@ -504,7 +505,7 @@ async def public_file_share(path: str, download_name: str | None = None, convers
     }
 
 
-@mcp.tool()
+@configurable_tool(mcp)
 async def public_file_list(conversation_id: str | None = None, chatgpt_url: str | None = None) -> list[dict]:
     ensure_conversation_started(conversation_id, chatgpt_url, source_tool='public_file_list')
     shares = load_public_shares()
@@ -522,7 +523,7 @@ async def public_file_list(conversation_id: str | None = None, chatgpt_url: str 
     ]
 
 
-@mcp.tool()
+@configurable_tool(mcp)
 async def public_file_revoke(share_id: str, conversation_id: str | None = None, chatgpt_url: str | None = None) -> dict:
     ensure_conversation_started(conversation_id, chatgpt_url, source_tool='public_file_revoke')
     shares = load_public_shares()
@@ -548,21 +549,23 @@ async def public_file_revoke(share_id: str, conversation_id: str | None = None, 
     }
 
 
-@mcp.tool()
+@configurable_tool(mcp)
 async def list_filesystem_available_tools(conversation_id: str | None = None, chatgpt_url: str | None = None) -> str:
     ensure_conversation_started(conversation_id, chatgpt_url, source_tool='list_filesystem_available_tools')
     async with filesystem_client:
-        return str(await filesystem_client.list_tools())
+        tools = await filesystem_client.list_tools()
+        return str([tool for tool in tools if is_downstream_enabled('filesystem', tool.name)])
 
 
-@mcp.tool()
+@configurable_tool(mcp)
 async def list_puppeteer_available_tools(conversation_id: str | None = None, chatgpt_url: str | None = None) -> str:
     ensure_conversation_started(conversation_id, chatgpt_url, source_tool='list_puppeteer_available_tools')
     async with puppeteer_client:
-        return str(await puppeteer_client.list_tools())
+        tools = await puppeteer_client.list_tools()
+        return str([tool for tool in tools if is_downstream_enabled('puppeteer', tool.name)])
 
 
-@mcp.tool()
+@configurable_tool(mcp)
 async def filesystem_execute_tool(
     name: str,
     arguments: dict = {},
@@ -570,6 +573,9 @@ async def filesystem_execute_tool(
     purpose: str | None = None,
     chatgpt_url: str | None = None,
 ) -> str:
+    if not is_downstream_enabled('filesystem', name):
+        raise ValueError(f'filesystem tool disabled: {name}')
+
     tool_arguments = dict(arguments or {})
     embedded_conversation_id = tool_arguments.pop('conversation_id', None)
     embedded_chatgpt_url = tool_arguments.pop('chatgpt_url', None)
@@ -596,8 +602,11 @@ async def filesystem_execute_tool(
         return str(result)
 
 
-@mcp.tool()
+@configurable_tool(mcp)
 async def puppeteer_execute_tool(name: str, arguments: dict = {}, conversation_id: str | None = None, purpose: str | None = None, chatgpt_url: str | None = None) -> str:
+    if not is_downstream_enabled('puppeteer', name):
+        raise ValueError(f'puppeteer tool disabled: {name}')
+
     ensure_conversation_started(conversation_id, chatgpt_url, source_tool='puppeteer_execute_tool')
     log_action('puppeteer_execute_tool', {
         'tool': name,
@@ -615,7 +624,7 @@ async def puppeteer_execute_tool(name: str, arguments: dict = {}, conversation_i
         return str(result)
 
 
-@mcp.tool()
+@configurable_tool(mcp)
 async def vision_screen_size(conversation_id: str | None = None, chatgpt_url: str | None = None) -> dict:
     ensure_conversation_started(conversation_id, chatgpt_url, source_tool='vision_screen_size')
     pyautogui = get_pyautogui()
@@ -627,7 +636,7 @@ async def vision_screen_size(conversation_id: str | None = None, chatgpt_url: st
     }
 
 
-@mcp.tool()
+@configurable_tool(mcp)
 async def vision_screenshot(region: dict | None = None, conversation_id: str | None = None, purpose: str | None = None, chatgpt_url: str | None = None) -> dict:
     ensure_conversation_started(conversation_id, chatgpt_url, source_tool='vision_screenshot')
     pyautogui = get_pyautogui()
@@ -659,7 +668,7 @@ async def vision_screenshot(region: dict | None = None, conversation_id: str | N
     }
 
 
-@mcp.tool()
+@configurable_tool(mcp)
 async def vision_screenshot_as_base64(region: dict | None = None, conversation_id: str | None = None, purpose: str | None = None, chatgpt_url: str | None = None) -> dict:
     ensure_conversation_started(conversation_id, chatgpt_url, source_tool='vision_screenshot_as_base64')
     pyautogui = get_pyautogui()
@@ -693,7 +702,7 @@ async def vision_screenshot_as_base64(region: dict | None = None, conversation_i
     }
 
 
-@mcp.tool()
+@configurable_tool(mcp)
 async def mouse_position() -> dict:
     pyautogui = get_pyautogui()
     position = pyautogui.position()
@@ -704,7 +713,7 @@ async def mouse_position() -> dict:
     }
 
 
-@mcp.tool()
+@configurable_tool(mcp)
 async def mouse_move(x: int, y: int, duration: float = 0.0) -> dict:
     pyautogui = get_pyautogui()
     pyautogui.moveTo(int(x), int(y), duration=clamp_duration(duration))
@@ -718,7 +727,7 @@ async def mouse_move(x: int, y: int, duration: float = 0.0) -> dict:
     }
 
 
-@mcp.tool()
+@configurable_tool(mcp)
 async def mouse_click_at(
     x: int,
     y: int,
@@ -757,7 +766,7 @@ async def mouse_click_at(
     }
 
 
-@mcp.tool()
+@configurable_tool(mcp)
 async def mouse_click_current(
     button: str = 'left',
     clicks: int = 1,
@@ -786,7 +795,7 @@ async def mouse_click_current(
     }
 
 
-@mcp.tool()
+@configurable_tool(mcp)
 async def mouse_drag(x: int, y: int, duration: float = 0.2, button: str = 'left') -> dict:
     pyautogui = get_pyautogui()
     safe_button = validate_button(button)
@@ -806,7 +815,7 @@ async def mouse_drag(x: int, y: int, duration: float = 0.2, button: str = 'left'
     }
 
 
-@mcp.tool()
+@configurable_tool(mcp)
 async def mouse_scroll(clicks: int, x: int | None = None, y: int | None = None) -> dict:
     pyautogui = get_pyautogui()
     safe_clicks = max(-100, min(int(clicks), 100))
@@ -830,7 +839,7 @@ async def mouse_scroll(clicks: int, x: int | None = None, y: int | None = None) 
     }
 
 
-@mcp.tool()
+@configurable_tool(mcp)
 async def keyboard_type(text: str, interval: float = 0.0) -> dict:
     pyautogui = get_pyautogui()
     safe_interval = max(0.0, min(float(interval), 1.0))
@@ -846,7 +855,7 @@ async def keyboard_type(text: str, interval: float = 0.0) -> dict:
     }
 
 
-@mcp.tool()
+@configurable_tool(mcp)
 async def keyboard_press(key: str, presses: int = 1, interval: float = 0.0) -> dict:
     pyautogui = get_pyautogui()
     safe_presses = max(1, min(int(presses), 50))
@@ -865,7 +874,7 @@ async def keyboard_press(key: str, presses: int = 1, interval: float = 0.0) -> d
     }
 
 
-@mcp.tool()
+@configurable_tool(mcp)
 async def keyboard_hotkey(keys: list[str], interval: float = 0.0) -> dict:
     if not keys:
         raise ValueError('keys must not be empty')
@@ -900,7 +909,7 @@ def stream_pipe(pipe, logfile, lines: list, prefix=''):
     pipe.close()
 
 
-@mcp.tool()
+@configurable_tool(mcp)
 async def run_command(
     command: str,
     conversation_id: str | None = None,
