@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         chatgpt-tools
 // @namespace    local.chatgpt.tools
-// @version      1.0.3
-// @description  Auto-send URL prompt, open first recent conversation, auto-click MCP primary actions
+// @version      1.0.0
+// @description  Auto-send URL prompt, open first recent conversation, auto-click MCP primary action
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
 // @run-at       document-end
@@ -22,7 +22,6 @@
 
   const isVisible = (el) => {
     if (!el || !(el instanceof Element)) return false;
-
     const r = el.getBoundingClientRect();
     const s = getComputedStyle(el);
 
@@ -54,7 +53,6 @@
 
     const storageKey = `chatgpt-autosend:${location.href}`;
     if (sessionStorage.getItem(storageKey)) return;
-
     sessionStorage.setItem(storageKey, '1');
 
     function findSendButton() {
@@ -102,7 +100,7 @@
   }
 
   function initOpenFirstRecentOnHome() {
-    // Important : ne pas quitter la page si on est venu avec ?prompt=...
+    // Important: ne pas quitter la page si on est venu avec ?prompt=...
     if (hasUrlPrompt()) return;
 
     const TAG = '[TM Latest Strict]';
@@ -115,10 +113,7 @@
     }
 
     function isHome() {
-      return (
-        location.origin === 'https://chatgpt.com' &&
-        location.pathname === '/'
-      );
+      return location.origin === 'https://chatgpt.com' && location.pathname === '/';
     }
 
     function recentlyOpened() {
@@ -127,21 +122,7 @@
     }
 
     function getFirstRecentLinkStrict() {
-      const history = document.querySelector('#history');
-      if (!history) return null;
-
-      return (
-        history.querySelector('ul > li:first-child a[href^="/c/"][data-sidebar-item="true"]') ||
-        history.querySelector('ul > li:first-child a[href^="/c/"]')
-      );
-    }
-
-    function getFirstRecentLinkFallback() {
-      return (
-        document.querySelector('#history a[href^="/c/"][data-sidebar-item="true"]') ||
-        document.querySelector('#history a[href^="/c/"]') ||
-        document.querySelector('a[data-sidebar-item="true"][href^="/c/"]')
-      );
+      return document.querySelector('#history > ul > li:first-child > a[href^="/c/"]');
     }
 
     function getLabel(link) {
@@ -156,7 +137,7 @@
         return true;
       }
 
-      const link = getFirstRecentLinkStrict() || getFirstRecentLinkFallback();
+      const link = getFirstRecentLinkStrict();
 
       if (!link) {
         log('pas encore de premier lien Recents', reason);
@@ -164,15 +145,9 @@
       }
 
       const href = link.getAttribute('href');
-
-      if (!href || !href.startsWith('/c/')) {
-        log('lien ignoré, href invalide', { href });
-        return false;
-      }
-
       const url = new URL(href, location.origin).toString();
 
-      log('premier lien récent trouvé', {
+      log('premier lien strict trouvé', {
         reason,
         label: getLabel(link),
         href,
@@ -215,7 +190,7 @@
 
   function initAutoClickMcpPrimaryAction() {
     const SETTLE_MS = 5000;
-    const MCP_NAMES = ['MCP DL', 'GitHub'];
+    const MCP_NAME = 'MCP DL';
     const MCP_MATCH_MODE = 'CONTAIN';
 
     function scrollBottom() {
@@ -243,18 +218,8 @@
 
     function matchesMcpName(text) {
       if (!text) return false;
-
-      const normalizedText = text.toLowerCase();
-
-      return MCP_NAMES.some(name => {
-        const normalizedName = name.toLowerCase();
-
-        if (MCP_MATCH_MODE === 'CONTAIN') {
-          return normalizedText.includes(normalizedName);
-        }
-
-        return text.trim().toLowerCase() === normalizedName;
-      });
+      if (MCP_MATCH_MODE === 'CONTAIN') return text.includes(MCP_NAME);
+      return text.trim() === MCP_NAME;
     }
 
     function findMcpCards() {
@@ -266,29 +231,16 @@
     }
 
     function findPrimaryRightButton(card) {
-      const directPrimary = card.querySelector(
-        '[data-testid="tool-action-buttons"] button.btn-primary'
-      );
+      const footer = [...card.querySelectorAll('div')]
+        .find(el => {
+          const className = String(el.className || '');
 
-      if (directPrimary && isVisible(directPrimary) && !directPrimary.disabled) {
-        return directPrimary;
-      }
-
-      const footer =
-        card.querySelector('[data-testid="tool-action-buttons"]') ||
-        [...card.querySelectorAll('div')]
-          .find(el => {
-            const className = String(el.className || '');
-
-            return (
-              el.querySelector('button') &&
-              (
-                className.includes('justify-end') ||
-                className.includes('gap-3') ||
-                className.includes('flex')
-              )
-            );
-          });
+          return (
+            className.includes('justify-end') &&
+            className.includes('gap-3') &&
+            el.querySelector('button')
+          );
+        });
 
       if (!footer) return null;
 
@@ -305,14 +257,14 @@
     async function actOnCard(card) {
       if (card.dataset.autoMcpClicked === '1') return;
 
+      card.dataset.autoMcpClicked = '1';
+
       await sleep(SETTLE_MS);
 
       if (!document.body.contains(card) || !isVisible(card)) return;
 
       const button = findPrimaryRightButton(card);
       if (!button) return;
-
-      card.dataset.autoMcpClicked = '1';
 
       fireClick(button);
 
