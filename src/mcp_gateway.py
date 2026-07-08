@@ -55,6 +55,10 @@ MCP_AUDIENCE = os.getenv(
 )
 
 ENABLE_OAUTH = os.getenv('ENABLE_OAUTH', 'true').lower() == 'true'
+CHATGPT_STARTUP_BROWSER_ASSIST = os.getenv(
+    'CHATGPT_STARTUP_BROWSER_ASSIST',
+    'false',
+).lower() in {'1', 'true', 'yes', 'on'}
 
 
 
@@ -343,13 +347,24 @@ def vision_log_path(prefix: str, suffix: str = 'png') -> Path:
 def chatgpt_startup_browser_assist(chatgpt_url: str | None = None) -> dict:
     """Best-effort startup assist for ChatGPT conversations.
 
-    Opens or focuses the ChatGPT home page. Conversation-specific
-    redirection can be handled client-side, for example by TamperMonkey. This helper is intentionally non-fatal so conversation logging
-    continues even if Chrome or macOS GUI automation is unavailable.
+    Disabled by default so starting/logging a conversation never opens or
+    focuses Chrome unless explicitly opted in with CHATGPT_STARTUP_BROWSER_ASSIST.
+    Conversation-specific redirection can be handled client-side, for example
+    by TamperMonkey. This helper is intentionally non-fatal so conversation
+    logging continues even if Chrome or macOS GUI automation is unavailable.
     """
-    # Always open/focus the ChatGPT home page. Any conversation-specific
-    # redirection is handled client-side, for example by TamperMonkey.
     target_url = 'https://chatgpt.com/'
+
+    if not CHATGPT_STARTUP_BROWSER_ASSIST:
+        return {
+            'ok': True,
+            'enabled': False,
+            'target_url': target_url,
+            'action': 'disabled',
+            'opened_new_tab': False,
+            'focused_existing_same_url_tab': False,
+        }
+
 
     safe_target_url = json.dumps(target_url)
     apple_script = '\n'.join([
