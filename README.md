@@ -1,6 +1,8 @@
 # myMCP — Local MCP Gateway
 
-A local MCP (Model Context Protocol) gateway with vision, filesystem, puppeteer tools and built-in OAuth authentication.
+A local MCP (Model Context Protocol) gateway with vision, filesystem, browser automation, shell access, file sharing and built-in OAuth authentication.
+
+The goal of this tool is to let ChatGPT work through your local machine and browser instead of pushing everything through OpenAI or Codex context.
 
 ---
 
@@ -266,19 +268,6 @@ curl http://localhost:8762/oauth/jwks.json
 - Command logs contain all input/output — do not expose logs
 
 
-## ChatGPT Userscript Helpers
+## 📝 License
 
-This project also includes a small merged userscript for ChatGPT automation.
-
-Features:
-- Auto-send prompts from `?prompt=` URLs
-- Auto-open the latest conversation from the homepage
-- Auto-approve MCP action cards
-
-Example:
-
-```txt
-https://chatgpt.com/?prompt=Explain%20this%20repository
-```
-
-The script is designed for Tampermonkey / Violentmonkey and is intentionally lightweight.
+This project is licensed under the MIT License. 
