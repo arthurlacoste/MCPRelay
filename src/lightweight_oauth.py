@@ -16,8 +16,7 @@ from fastapi import FastAPI, Form, Request
 from fastapi.responses import JSONResponse, RedirectResponse
 
 BASE_DIR = Path(__file__).resolve().parent.parent
-load_dotenv(BASE_DIR / ".env")
-load_dotenv(BASE_DIR / "config" / ".env", override=True)
+load_dotenv(BASE_DIR / "config" / ".env")
 
 DATA_DIR = BASE_DIR / "data"
 DATA_DIR.mkdir(exist_ok=True)
@@ -28,7 +27,6 @@ PRIVATE_KEY_FILE = DATA_DIR / "oauth_private_key.pem"
 ISSUER = os.getenv("OAUTH_ISSUER", "https://hull-envision-bunkbed.ngrok-free.dev/oauth")
 AUDIENCE = os.getenv("OAUTH_AUDIENCE", "https://mcp.local")
 TOKEN_TTL_SECONDS = int(os.getenv("OAUTH_TOKEN_TTL_SECONDS", "31536000"))
-AUTHORIZATION_CODE_TTL_SECONDS = int(os.getenv("OAUTH_CODE_TTL_SECONDS", "300"))
 AUTO_REGISTER_AUTH_CLIENTS = os.getenv("OAUTH_AUTO_REGISTER_AUTH_CLIENTS", "true").lower() == "true"
 
 app = FastAPI(title="Lightweight MCP OAuth Server")
@@ -237,7 +235,7 @@ def token(
     if item["client_id"] != client_id or item["redirect_uri"] != redirect_uri:
         return JSONResponse({"error": "invalid_grant"}, status_code=400)
 
-    if time.time() - item["created_at"] > AUTHORIZATION_CODE_TTL_SECONDS:
+    if time.time() - item["created_at"] > 300:
         return JSONResponse({"error": "invalid_grant", "error_description": "code expired"}, status_code=400)
 
     now = int(time.time())

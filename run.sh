@@ -18,22 +18,7 @@ NGROK_PORT=8761     # unified gateway sert MCP + OAuth sur ce port
 _cleanup() {
     echo ""
     echo "⟶ arrêt du gateway…"
-
-    # 1. Tue tous les processus ngrok (pas seulement le foreground)
-    pkill -f "ngrok http" 2>/dev/null || true
-
-    # 2. Tue le processus start_services.py
     kill "$SERVICES_PID" 2>/dev/null && wait "$SERVICES_PID" 2>/dev/null || true
-
-    # 3. Tue le processus mcp_gateway.py s'il est encore en vie (orphelin)
-    pkill -f "mcp_gateway.py" 2>/dev/null || true
-
-    # 4. Force release du port 8761
-    lsof -ti :$NGROK_PORT 2>/dev/null | xargs kill -9 2>/dev/null || true
-
-    # 5. Nettoie le PID file s'il existe
-    rm -f "$PID_FILE"
-
     echo "✓ gateway arrêté"
 }
 
@@ -41,13 +26,6 @@ _cleanup() {
 run_interactive() {
     cd "$PROJECT_DIR"
     source .venv/bin/activate
-
-    # Nettoie les éventuels processus résiduels d'un arrêt brutal
-    pkill -f "ngrok http" 2>/dev/null || true
-    pkill -f "mcp_gateway.py" 2>/dev/null || true
-    lsof -ti :$NGROK_PORT 2>/dev/null | xargs kill -9 2>/dev/null || true
-    rm -f "$PID_FILE"
-    sleep 1
 
     # Lance le gateway en arrière-plan
     python3 start_services.py &
@@ -101,7 +79,7 @@ stop_daemon() {
         exit 0
     fi
 
-    IFS=: read -r SERVICES_PID NGROK_PID < "$PID_FILE"
+    read -r SERVICES_PID NGROK_PID < "$PID_FILE"
 
     echo "⟶ stopping ngrok (PID $NGROK_PID)…"
     kill "$NGROK_PID" 2>/dev/null || true
@@ -131,7 +109,7 @@ status() {
         exit 0
     fi
 
-    IFS=: read -r SERVICES_PID NGROK_PID < "$PID_FILE"
+    read -r SERVICES_PID NGROK_PID < "$PID_FILE"
 
     if kill -0 "$SERVICES_PID" 2>/dev/null; then
         echo "✓ Gateway running  (PID $SERVICES_PID)"

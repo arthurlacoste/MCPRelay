@@ -22,7 +22,7 @@ from fastapi.testclient import TestClient
 os.environ.setdefault("OAUTH_ISSUER", "https://test.local/oauth")
 os.environ.setdefault("OAUTH_AUDIENCE", "https://test.local/mcp")
 os.environ.setdefault("OAUTH_KEY_ID", "test-key-id")
-os.environ.setdefault("OAUTH_TOKEN_TTL_SECONDS", "31536000")
+os.environ.setdefault("OAUTH_TOKEN_TTL_SECONDS", "3600")
 os.environ.setdefault("OAUTH_AUTO_REGISTER_AUTH_CLIENTS", "true")
 
 # -------------------------------------------------------------------

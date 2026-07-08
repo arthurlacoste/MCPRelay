@@ -1,0 +1,24 @@
+# Default: absent value = enabled.
+
+[tools]
+run_command = true
+public_file_share = true
+public_file_list = true
+public_file_revoke = true
+launch_agent = true
+
+[downstream_mcp.filesystem]
+enabled = true
+
+[downstream_mcp.filesystem.tools]
+read_file = true
+write_file = true
+list_directory = true
+
+[downstream_mcp.puppeteer]
+enabled = true
+
+[downstream_mcp.puppeteer.tools]
+navigate = true
+screenshot = true
+click = true

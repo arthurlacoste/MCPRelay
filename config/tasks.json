@@ -1,5 +1,0 @@
-{
-  "name": "Daily Status Report",
-  "description": "Generate a daily status report for ongoing tasks",
-  "prompt": "Please analyze the project status and generate a brief status report including:\n1. Current progress on scheduled tasks\n2. Any blocking issues or errors\n3. Next steps and recommendations\n\nFocus on actionable items and clear communication."
-}

@@ -198,7 +198,7 @@ class TestToken:
         assert resp.status_code == 200
         body = resp.json()
         assert body["token_type"] == "Bearer"
-        assert body["expires_in"] == 31536000
+        assert body["expires_in"] == 3600
         assert "access_token" in body
         assert "id_token" in body
         assert "openid" in body["scope"]
