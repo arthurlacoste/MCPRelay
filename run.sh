@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # ─────────────────────────────────────────────────────────────────────
 # run.sh  –  MCP Gateway + ngrok tunnel manager
 #
@@ -12,14 +12,14 @@ set -euo pipefail
 
 PROJECT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PID_FILE="/tmp/mcp_gateway.pid"
-NGROK_PORT=8761     # unified gateway sert MCP + OAuth sur ce port
+NGROK_PORT=8761
 
 # ── helpers ─────────────────────────────────────────────────────────
 _cleanup() {
     echo ""
-    echo "⟶ arrêt du gateway…"
+    echo "⟶ stopping gateway…"
     kill "$SERVICES_PID" 2>/dev/null && wait "$SERVICES_PID" 2>/dev/null || true
-    echo "✓ gateway arrêté"
+    echo "✓ gateway stopped"
 }
 
 # ── interactive (Ctrl+C stop) ──────────────────────────────────────
@@ -27,7 +27,6 @@ run_interactive() {
     cd "$PROJECT_DIR"
     source .venv/bin/activate
 
-    # Lance le gateway en arrière-plan
     python3 start_services.py &
     SERVICES_PID=$!
     trap _cleanup EXIT INT TERM
@@ -42,9 +41,13 @@ run_interactive() {
     echo "║  ngrok tunnel will open in a moment…                   ║"
     echo "║  Press Ctrl+C to stop everything.                      ║"
     echo "╚══════════════════════════════════════════════════════════╝"
-    echo "⚡ caffeinate actif — le Mac ne s'endormira pas tant que le gateway tourne."
-
-    caffeinate -i ngrok http "$NGROK_PORT"
+    if command -v caffeinate >/dev/null 2>&1; then
+        echo "⚡ caffeinate active — sleep is inhibited while MCPRelay runs."
+        caffeinate -i ngrok http "$NGROK_PORT"
+    else
+        echo "ℹ Sleep inhibition inactive. See docs for Linux alternatives."
+        ngrok http "$NGROK_PORT"
+    fi
 }
 
 # ── daemon ─────────────────────────────────────────────────────────
@@ -61,12 +64,18 @@ start_daemon() {
     SERVICES_PID=$!
     sleep 2
 
-    nohup caffeinate -i ngrok http "$NGROK_PORT" > /dev/null 2>&1 &
+    if command -v caffeinate >/dev/null 2>&1; then
+        nohup caffeinate -i ngrok http "$NGROK_PORT" > /dev/null 2>&1 &
+        KEEP_AWAKE_LABEL="caffeinate active"
+    else
+        nohup ngrok http "$NGROK_PORT" > /dev/null 2>&1 &
+        KEEP_AWAKE_LABEL="sleep inhibition inactive"
+    fi
     NGROK_PID=$!
 
     echo "$SERVICES_PID:$NGROK_PID" > "$PID_FILE"
     echo "✓ Gateway started  (PID $SERVICES_PID)"
-    echo "✓ ngrok tunnel     (PID $NGROK_PID) [caffeinate actif]"
+    echo "✓ ngrok tunnel     (PID $NGROK_PID) [$KEEP_AWAKE_LABEL]"
     echo ""
     echo "  Stop with:  ./run.sh stop"
     echo "  Status:     ./run.sh status"
@@ -79,7 +88,7 @@ stop_daemon() {
         exit 0
     fi
 
-    read -r SERVICES_PID NGROK_PID < "$PID_FILE"
+    IFS=: read -r SERVICES_PID NGROK_PID < "$PID_FILE"
 
     echo "⟶ stopping ngrok (PID $NGROK_PID)…"
     kill "$NGROK_PID" 2>/dev/null || true
@@ -87,7 +96,6 @@ stop_daemon() {
     echo "⟶ stopping gateway (PID $SERVICES_PID)…"
     kill "$SERVICES_PID" 2>/dev/null || true
 
-    # Attendre que le processus se termine vraiment
     for i in 1 2 3 4 5; do
         if ! kill -0 "$SERVICES_PID" 2>/dev/null; then
             break
@@ -95,7 +103,6 @@ stop_daemon() {
         sleep 1
     done
 
-    # Force kill si nécessaire
     kill -9 "$SERVICES_PID" 2>/dev/null || true
 
     rm -f "$PID_FILE"
@@ -109,7 +116,7 @@ status() {
         exit 0
     fi
 
-    read -r SERVICES_PID NGROK_PID < "$PID_FILE"
+    IFS=: read -r SERVICES_PID NGROK_PID < "$PID_FILE"
 
     if kill -0 "$SERVICES_PID" 2>/dev/null; then
         echo "✓ Gateway running  (PID $SERVICES_PID)"
@@ -138,7 +145,6 @@ case "${1:-}" in
     stop)    stop_daemon  ;;
     status)  status       ;;
     *)
-        # Si un argument inconnu est passé, on montre l'aide
         if [ $# -gt 0 ]; then
             echo "Usage: $0 {start|stop|status}"
             echo ""
