@@ -9,7 +9,11 @@ data/
 logs/
 
 # ── Docs (plans, notes internes) ─────────────────────────────────
-docs/
+# Installation + comptes-rendus doivent rester versionnés.
+docs/*
+!docs/installation.md
+!docs/assets/
+!docs/assets/*.webp
 
 # ── Archives / backups ───────────────────────────────────────────
 archive/
@@ -25,4 +29,3 @@ __pycache__/
 # ── macOS ────────────────────────────────────────────────────────
 .DS_Store
 node_modules/*
-docs/

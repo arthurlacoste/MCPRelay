@@ -34,6 +34,7 @@ STREAM_DIR = BASE_DIR / 'logs' / 'commands'
 VISION_DIR = BASE_DIR / 'logs' / 'vision'
 CONVERSATION_DIR = BASE_DIR / 'logs' / 'conversations'
 PUBLIC_SHARES_FILE = BASE_DIR / 'data' / 'public_file_shares.json'
+COMMAND_SCAN_ROOT = Path(os.getenv('MCP_COMMAND_SCAN_ROOT', str(BASE_DIR)))
 STREAM_DIR.mkdir(parents=True, exist_ok=True)
 VISION_DIR.mkdir(parents=True, exist_ok=True)
 CONVERSATION_DIR.mkdir(parents=True, exist_ok=True)
@@ -87,6 +88,16 @@ def log_action(action: str, payload: dict | None = None):
 
     with open(LOG_FILE, 'a', encoding='utf-8') as f:
         f.write(json.dumps(entry, ensure_ascii=False) + '\n')
+
+
+def snapshot_files(root: Path) -> set[str]:
+    files: set[str] = set()
+
+    for current_root, _, filenames in os.walk(root):
+        current_path = Path(current_root)
+        files.update(str(current_path / filename) for filename in filenames)
+
+    return files
 
 
 def load_public_shares() -> dict:
@@ -936,14 +947,7 @@ async def run_command(
     command_id = datetime.now(UTC).strftime('%Y%m%d_%H%M%S_%f')
     stream_log = STREAM_DIR / f'command_{command_id}.log'
 
-    before_scan = subprocess.run(
-        'find /Users/art/Dropbox/dev -type f',
-        shell=True,
-        capture_output=True,
-        text=True
-    )
-
-    before_files = set(before_scan.stdout.splitlines())
+    before_files = snapshot_files(COMMAND_SCAN_ROOT)
 
     log_action('run_command_start', {
         'command': command,
@@ -989,14 +993,7 @@ async def run_command(
     stdout_text = ''.join(stdout_lines)
     stderr_text = ''.join(stderr_lines)
 
-    after_scan = subprocess.run(
-        'find /Users/art/Dropbox/dev -type f',
-        shell=True,
-        capture_output=True,
-        text=True
-    )
-
-    after_files = set(after_scan.stdout.splitlines())
+    after_files = snapshot_files(COMMAND_SCAN_ROOT)
     created_files = sorted(list(after_files - before_files))
 
     with open(stream_log, 'a', encoding='utf-8') as f:

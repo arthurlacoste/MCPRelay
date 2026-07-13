@@ -1,108 +1,12 @@
-# myMCP — Local MCP Gateway
+# MCPRelay — Local MCP Gateway
 
 A local MCP (Model Context Protocol) gateway with vision, filesystem, browser automation, shell access, file sharing and built-in OAuth authentication.
 
 The goal of this tool is to let ChatGPT work through your local machine and browser instead of pushing everything through OpenAI or Codex context.
 
----
+## Installation and usage
 
-## 📦 Prerequisites
-
-- Python 3.10+
-- Node.js 18+ (for `npx`)
-- [ngrok](https://ngrok.com/) (to expose the service over HTTPS)
-- **Screen Recording** permission (macOS) for vision/screenshot tools
-
----
-
-## 🚀 Installation
-
-### 1. Create the venv and install dependencies
-
-```bash
-# From the project root
-python3 -m venv .venv
-source .venv/bin/activate
-
-# Install dependencies
-pip install fastmcp python-dotenv fastapi uvicorn pyjwt cryptography python-multipart pyautogui pillow
-```
-
-### 2. Configure environment variables
-
-Create a `config/.env` file at the root (or copy an existing `.env`):
-
-```bash
-# Required
-MCP_BASE_URL=https://your-subdomain.ngrok-free.dev
-
-# OAuth (optional, defaults provided)
-OAUTH_ISSUER=https://your-subdomain.ngrok-free.dev/oauth
-OAUTH_AUDIENCE=https://mcp.local
-OAUTH_PORT=8762
-OAUTH_TOKEN_TTL_SECONDS=3600
-
-# OAuth on/off
-ENABLE_OAUTH=true
-
-# OAuth key (auto-generated if missing)
-OAUTH_KEY_ID=local-dev-key
-```
-
-> ⚠️ `MCP_BASE_URL` and `OAUTH_ISSUER` must point to your ngrok URL.
-
----
-
-## 🏁 Getting Started
-
-### Option A — `run.sh` all-in-one (recommended)
-
-```bash
-# Interactive mode — Ctrl+C stops gateway + ngrok
-./run.sh
-
-# Daemon mode (background)
-./run.sh start
-
-# Stop the daemon
-./run.sh stop
-
-# Check daemon status
-./run.sh status
-```
-
-The script handles everything: venv activation, gateway startup, ngrok tunnel.
-
-### Option B — Simple automated launch
-
-```bash
-python3 start_services.py
-```
-
-Starts the single **Gateway** service (MCP + OAuth integrated) on port `8761`.
-
-Logs are written to `logs/services/gateway.log`.
-
-### Option C — Manual launch
-
-```bash
-source .venv/bin/activate
-python3 src/mcp_gateway.py
-# → http://localhost:8761/mcp
-# → http://localhost:8761/oauth/...
-```
-
----
-
-## 🌐 Exposing via ngrok
-
-```bash
-# A single tunnel is enough — the gateway serves MCP + OAuth on the same port
-ngrok http 8761
-# → https://xxxx-xxxx-xxxx.ngrok-free.dev
-```
-
-The generated URL becomes your `MCP_BASE_URL` in `config/.env`.
+See the **[installation and usage guide](docs/installation.md)**.
 
 ---
 
@@ -180,86 +84,6 @@ pytest tests/ -v
 
 ---
 
-## 📂 Project Structure
-
-```
-myMCP/
-├── config/
-│   └── .env                 # Environment variables
-├── data/
-│   ├── oauth_clients.json
-│   ├── oauth_codes.json
-│   ├── oauth_private_key.pem
-│   └── public_file_shares.json
-├── logs/
-│   ├── commands/            # Executed command logs
-│   ├── services/            # Gateway logs
-│   └── vision/              # Screenshots
-├── src/
-│   ├── mcp_gateway.py       # Unified MCP + OAuth server (port 8761)
-│   └── lightweight_oauth.py # OAuth module (imported by the gateway)
-├── tests/
-│   ├── conftest.py          # Shared fixtures
-│   ├── test_oauth.py        # 29 OAuth unit tests
-│   └── test_mcp_endpoint.py # 7 MCP integration tests
-├── docs/
-│   └── plans-dev/           # Development plans
-├── run.sh                   # All-in-one manager (interactive + daemon)
-├── start_services.py        # Single service launcher
-├── pytest.ini               # Pytest configuration
-├── .env                     # Environment variables (fallback)
-└── README.md
-```
-
----
-
-## 🔗 Connecting from an MCP Client
-
-### Example with ChatGPT (OAuth connector)
-
-1. Start ngrok on port **8761**
-2. Set `MCP_BASE_URL` to your ngrok URL
-3. In ChatGPT, use the URL:
-   ```
-   https://your-url.ngrok-free.dev/mcp
-   ```
-4. OAuth is handled automatically via the endpoint mounted at `/oauth`
-
-### Example with `fastmcp` CLI
-
-```bash
-fastmcp dev src/mcp_gateway.py
-```
-
-Or directly over HTTP:
-
-```bash
-curl -X POST https://your-url.ngrok-free.dev/mcp \
-  -H "Content-Type: application/json" \
-  -d '{
-    "jsonrpc": "2.0",
-    "method": "tools/list",
-    "id": 1
-  }'
-```
-
----
-
-## 🧪 Verify Everything is Running
-
-```bash
-# OAuth service health
-curl http://localhost:8762/oauth/health
-
-# OAuth metadata
-curl http://localhost:8762/oauth/.well-known/oauth-authorization-server
-
-# JWKS
-curl http://localhost:8762/oauth/jwks.json
-```
-
----
-
 ## ⚠️ Security
 
 - `run_command` executes shell commands **without restrictions** — use with caution
@@ -270,4 +94,4 @@ curl http://localhost:8762/oauth/jwks.json
 
 ## 📝 License
 
-This project is licensed under the MIT License. 
+This project is licensed under the MIT License.

@@ -23,7 +23,16 @@ from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent
 SRC_DIR = BASE_DIR / "src"
-PYTHON = BASE_DIR / ".venv" / "bin" / "python"
+
+
+def venv_python_path(base_dir: Path, platform_name: str = os.name) -> Path:
+    if platform_name == "nt":
+        return base_dir / ".venv" / "Scripts" / "python.exe"
+    return base_dir / ".venv" / "bin" / "python"
+
+
+PYTHON = venv_python_path(BASE_DIR)
+REQUIREMENTS = BASE_DIR / "requirements.txt"
 LOG_DIR = BASE_DIR / "logs" / "services"
 LOG_DIR.mkdir(exist_ok=True)
 GATEWAY_HOST = "0.0.0.0"
@@ -63,15 +72,8 @@ def ensure_deps():
         "-m",
         "pip",
         "install",
-        "fastmcp",
-        "python-dotenv",
-        "fastapi",
-        "uvicorn",
-        "pyjwt",
-        "cryptography",
-        "python-multipart",
-        "pyautogui",
-        "pillow",
+        "-r",
+        str(REQUIREMENTS),
     ])
 
 
