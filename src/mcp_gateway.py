@@ -19,6 +19,7 @@ from fastmcp.client import Client
 from fastmcp.client.transports import StdioTransport
 from fastmcp.server.auth import RemoteAuthProvider
 from fastmcp.server.auth.providers.jwt import JWTVerifier
+from filesystem_config import get_filesystem_roots
 from lightweight_oauth import app as oauth_app
 from tool_registry import configurable_tool, is_downstream_enabled
 from pydantic import AnyHttpUrl
@@ -35,6 +36,7 @@ VISION_DIR = BASE_DIR / 'logs' / 'vision'
 CONVERSATION_DIR = BASE_DIR / 'logs' / 'conversations'
 PUBLIC_SHARES_FILE = BASE_DIR / 'data' / 'public_file_shares.json'
 COMMAND_SCAN_ROOT = Path(os.getenv('MCP_COMMAND_SCAN_ROOT', str(BASE_DIR)))
+FILESYSTEM_ROOTS = get_filesystem_roots(BASE_DIR)
 STREAM_DIR.mkdir(parents=True, exist_ok=True)
 VISION_DIR.mkdir(parents=True, exist_ok=True)
 CONVERSATION_DIR.mkdir(parents=True, exist_ok=True)
@@ -288,7 +290,7 @@ filesystem_transport = StdioTransport(
     args=[
         '-y',
         '@modelcontextprotocol/server-filesystem',
-        '/Users/art/Dropbox/dev/'
+        *FILESYSTEM_ROOTS,
     ]
 )
 

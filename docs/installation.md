@@ -137,9 +137,14 @@ MCP_AUDIENCE=https://mcp.local
 OAUTH_TOKEN_TTL_SECONDS=3600
 OAUTH_AUTO_REGISTER_AUTH_CLIENTS=true
 ENABLE_OAUTH=true
+MCP_FILESYSTEM_ROOTS=/absolute/path/to/allowed/files
 ```
 
 All three public URL values must use the exact same ngrok domain. Do not append `/mcp` to `MCP_BASE_URL`.
+
+`MCP_FILESYSTEM_ROOTS` controls which directories the filesystem tools can access.
+Separate multiple paths with `:` on macOS/Linux and `;` on Windows. If omitted,
+access defaults to the volume root (`/` on macOS/Linux).
 
 Git ignores `config/.env`. Never add the ngrok token to it.
 

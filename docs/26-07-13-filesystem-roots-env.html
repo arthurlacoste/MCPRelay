@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <title>Configuration des racines filesystem par environnement</title>
+</head>
+<body>
+  <main>
+    <h1>Racines filesystem configurables</h1>
+    <p>Date : 13 juillet 2026.</p>
+
+    <h2>Travail réalisé</h2>
+    <p>La racine codée en dur a été remplacée par <code>MCP_FILESYSTEM_ROOTS</code>.</p>
+    <p>Plusieurs dossiers sont acceptés. Le séparateur est <code>:</code> sur macOS/Linux et <code>;</code> sur Windows.</p>
+    <p>Sans variable, l’accès couvre la racine du volume : <code>/</code> sur macOS/Linux.</p>
+
+    <h2>Pourquoi</h2>
+    <p>Éviter un chemin utilisateur dans le code. Permettre une configuration locale sans modifier les sources.</p>
+
+    <h2>Fichiers concernés</h2>
+    <ul>
+      <li><code>src/filesystem_config.py</code></li>
+      <li><code>src/mcp_gateway.py</code></li>
+      <li><code>tests/test_filesystem_config.py</code></li>
+      <li><code>.env.example</code></li>
+      <li><code>docs/installation.md</code></li>
+    </ul>
+
+    <h2>Tests</h2>
+    <p><code>tests/test_filesystem_config.py</code> : 3 tests réussis.</p>
+    <p>Suite complète : 54 tests réussis, 1 avertissement de dépréciation Authlib externe.</p>
+    <p>Aucune capture : changement de configuration sans interface utilisateur.</p>
+
+    <h2>Risques et contexte</h2>
+    <p>Chaque racine donne aux outils filesystem un accès en lecture et écriture. Le défaut <code>/</code> expose tout ce que le compte système peut lire ou modifier.</p>
+    <p>Un redémarrage de MCPRelay est requis après modification de <code>config/.env</code>.</p>
+
+    <h2>Axes de progression</h2>
+    <ol>
+      <li>Valider au démarrage que chaque racine existe.</li>
+      <li>Refuser les racines trop larges avec une option de sécurité stricte.</li>
+      <li>Afficher les racines actives dans un outil de diagnostic.</li>
+      <li>Ajouter un test de démarrage Windows dans la CI.</li>
+    </ol>
+  </main>
+</body>
+</html>
