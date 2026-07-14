@@ -5,7 +5,7 @@ Use Ubuntu in WSL. Do not run these commands from PowerShell.
 ## One-script installation
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/arthurlacoste/MCPRelay/main/install-wsl.sh -o /tmp/install-mcprelay.sh
+curl -fsSL https://raw.githubusercontent.com/arthurlacoste/MCPRelay/main/scripts/install-wsl.sh -o /tmp/install-mcprelay.sh
 bash /tmp/install-mcprelay.sh
 ```
 
@@ -33,7 +33,14 @@ cd ~/MCPRelay
 ./run.sh
 ```
 
-Keep the terminal open. On the free ngrok plan, the public URL may change after restarting. When that happens, update the public URL values in `config/.env` and update the MCP server URL in ChatGPT.
+Keep the terminal open. On the free ngrok plan, the public URL may change after restarting. When that happens, run:
+
+```bash
+cd ~/MCPRelay
+bash scripts/change-ngrok-token.sh
+```
+
+Then update the MCP server URL in ChatGPT.
 
 ## ChatGPT settings
 
