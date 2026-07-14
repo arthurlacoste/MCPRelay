@@ -26,6 +26,29 @@ cleanup_ngrok() {
     kill "$TEMP_NGROK_PID" 2>/dev/null || true
   fi
 }
+
+fix_obsolete_bullseye_backports() {
+  local source_file backup_file changed=0
+  local -a apt_sources=(/etc/apt/sources.list /etc/apt/sources.list.d/*.list)
+
+  for source_file in "${apt_sources[@]}"; do
+    [ -f "$source_file" ] || continue
+    grep -Eq '^[[:space:]]*deb(-src)?[[:space:]].*[[:space:]]bullseye-backports([[:space:]]|$)' "$source_file" || continue
+
+    backup_file="${source_file}.mcprelay-backup"
+    sudo cp -n "$source_file" "$backup_file"
+    sudo sed -Ei \
+      '/^[[:space:]]*deb(-src)?[[:space:]].*[[:space:]]bullseye-backports([[:space:]]|$)/s/^/# Disabled by MCPRelay installer: /' \
+      "$source_file"
+    warn "Disabled obsolete bullseye-backports entries in $source_file"
+    changed=1
+  done
+
+  if [ "$changed" -eq 1 ]; then
+    echo "Backups were saved with the .mcprelay-backup suffix."
+  fi
+}
+
 trap cleanup_ngrok EXIT
 
 is_wsl || die "Run this script inside Ubuntu/WSL, not PowerShell."
@@ -37,6 +60,13 @@ echo "GUI automation from WSL can be limited. Filesystem, shell, OAuth and MCP w
 
 INSTALL_DIR="$(prompt_default "Installation directory" "$DEFAULT_INSTALL_DIR")"
 FILESYSTEM_ROOTS="$(prompt_default "Directories exposed to MCPRelay" "$HOME")"
+
+if [ "$FILESYSTEM_ROOTS" = "/" ]; then
+  warn "You selected /. MCPRelay will be able to access the entire WSL filesystem."
+fi
+
+info "Checking Debian package sources"
+fix_obsolete_bullseye_backports
 
 info "Installing system packages"
 sudo apt-get update
