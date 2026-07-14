@@ -7,6 +7,8 @@ NODE_VERSION="22"
 PYTHON_VERSION="3.12"
 NGROK_PORT="8761"
 NGROK_LOG="/tmp/mcprelay-ngrok-install.log"
+DOCS_URL="https://github.com/arthurlacoste/MCPRelay/blob/main/docs/installation.md#12-add-the-mcp-dl-plugin"
+CHATGPT_CONNECTOR_URL="https://chatgpt.com/plugins#settings/Connectors?create-connector=true&redirectAfter=%2Fplugins"
 
 info() { printf '\n\033[1;34m%s\033[0m\n' "$*"; }
 ok() { printf '\033[1;32m✓ %s\033[0m\n' "$*"; }
@@ -23,11 +25,28 @@ prompt_default() {
   printf '%s' "${value:-$default}"
 }
 
+prompt_yes_no() {
+  local prompt="$1" default="${2:-y}" answer
+  read -r -p "$prompt [$default]: " answer
+  answer="${answer:-$default}"
+  [[ "$answer" =~ ^[Yy]([Ee][Ss])?$ ]]
+}
+
 cleanup_ngrok() {
   if [ -n "${TEMP_NGROK_PID:-}" ]; then
     kill "$TEMP_NGROK_PID" 2>/dev/null || true
     wait "$TEMP_NGROK_PID" 2>/dev/null || true
   fi
+}
+
+wait_for_ngrok_release() {
+  for _ in $(seq 1 15); do
+    if ! curl -fsS http://127.0.0.1:4040/api/tunnels >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 1
+  done
+  sleep 2
 }
 
 fix_obsolete_bullseye_backports() {
@@ -172,6 +191,7 @@ info "Creating Python $PYTHON_VERSION environment"
 rm -rf .venv
 uv venv --python "$PYTHON_VERSION" .venv
 uv pip install --python .venv/bin/python -r requirements.txt
+mkdir -p logs/services
 ok "Python dependencies installed with $(.venv/bin/python --version)"
 
 info "Connecting ngrok"
@@ -224,6 +244,7 @@ ok "Configuration saved"
 
 cleanup_ngrok
 TEMP_NGROK_PID=""
+wait_for_ngrok_release
 
 info "Installation complete"
 printf '%s\n' \
@@ -234,17 +255,27 @@ printf '%s\n' \
   "Description: Local computer tools through MCPRelay"
 
 echo
-echo "Start MCPRelay:"
-echo "  cd \"$INSTALL_DIR\" && ./run.sh"
+echo "ChatGPT setup guide:"
+echo "  $DOCS_URL"
 echo
-echo "Then in ChatGPT web:"
-echo "  Settings > Apps > Advanced settings > Developer mode"
-echo "  Add a custom MCP app/plugin with:"
-echo "    Server URL: $PUBLIC_URL/mcp"
-echo "    Authentication: OAuth"
+echo "Open the ChatGPT connector form:"
+echo "  $CHATGPT_CONNECTOR_URL"
 echo
-echo "The free ngrok URL can change after restart. If it changes, update:"
-echo "  $INSTALL_DIR/config/.env"
-echo "  and the Server URL in ChatGPT."
+echo "Enter:"
+echo "  Server URL: $PUBLIC_URL/mcp"
+echo "  Authentication: OAuth"
 echo
+echo "ChatGPT does not currently expose documented URL parameters to prefill these fields."
+echo "The free ngrok URL can change after restart. Update config/.env and ChatGPT when it changes."
 echo "WSL note: keep Windows awake and unlocked while MCPRelay is running."
+
+if prompt_yes_no "Start MCPRelay now?" "y"; then
+  echo
+  echo "Starting MCPRelay. Press Ctrl+C to stop it."
+  trap - EXIT
+  exec ./run.sh
+fi
+
+echo
+echo "Start later with:"
+echo "  cd \"$INSTALL_DIR\" && ./run.sh"
