@@ -1,4 +1,3 @@
-import asyncio
 import json
 from pathlib import Path
 import sys
@@ -12,11 +11,11 @@ def test_run_command_writes_conversation_event(tmp_path, monkeypatch):
     monkeypatch.setattr(mod, 'CONVERSATION_DIR', tmp_path)
     monkeypatch.setattr(mod, 'STREAM_DIR', tmp_path)
 
-    result = asyncio.run(mod.run_command(
+    result = mod.run_command(
         command=f'"{sys.executable}" -c "import sys; print(\'hello\'); print(\'error\', file=sys.stderr)"',
         conversation_id='conv-test',
         purpose='test command'
-    ))
+    )
 
     payload = json.loads((tmp_path / 'conv-test.jsonl').read_text().splitlines()[-1])
     stream_log = next(tmp_path.glob('command_*.log')).read_text()
@@ -40,9 +39,9 @@ def test_run_command_does_not_scan_created_files(tmp_path, monkeypatch):
     monkeypatch.setattr(mod, 'STREAM_DIR', tmp_path)
     created_file = tmp_path / 'created.txt'
 
-    result = asyncio.run(mod.run_command(
+    result = mod.run_command(
         command=f'"{sys.executable}" -c "import os; from pathlib import Path; os.chdir(r\'{tmp_path}\'); Path(\'created.txt\').write_text(\'created\')"'
-    ))
+    )
 
     assert created_file.read_text() == 'created'
     assert str(created_file) not in result
@@ -53,10 +52,10 @@ def test_run_command_no_output_by_default(tmp_path, monkeypatch):
     monkeypatch.setattr(mod, 'CONVERSATION_DIR', tmp_path)
     monkeypatch.setattr(mod, 'STREAM_DIR', tmp_path)
 
-    asyncio.run(mod.run_command(
+    mod.run_command(
         command=f'"{sys.executable}" -c "print(\'hidden\')"',
         conversation_id='conv-hidden'
-    ))
+    )
 
     payload = json.loads((tmp_path / 'conv-hidden.jsonl').read_text().splitlines()[-1])
     assert payload['result_included'] is False
@@ -67,7 +66,7 @@ def test_run_command_action_log_has_no_created_files(tmp_path, monkeypatch):
     actions = []
     monkeypatch.setattr(mod, 'log_action', lambda action, payload=None: actions.append((action, payload)))
 
-    asyncio.run(mod.run_command(command=f'"{sys.executable}" -c "print(\'output\')"'))
+    mod.run_command(command=f'"{sys.executable}" -c "print(\'output\')"')
 
     end_payload = next(payload for action, payload in actions if action == 'run_command_end')
     assert end_payload['exit_code'] == 0
