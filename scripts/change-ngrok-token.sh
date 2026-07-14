@@ -14,12 +14,12 @@ elif [ -f "$HOME/MCPRelay/run.sh" ]; then
   PROJECT_DIR="$HOME/MCPRelay"
 else
   printf 'Error: MCPRelay project not found. Pass its path as the first argument.\n' >&2
-  printf 'Example: bash change-ngrok-token.sh "$HOME/MCPRelay"\n' >&2
   exit 1
 fi
 
 ENV_FILE="$PROJECT_DIR/config/.env"
 NGROK_PORT="8761"
+NGROK_API_PORT="4041"
 NGROK_LOG="/tmp/mcprelay-ngrok-change.log"
 
 info() { printf '\n\033[1;34m%s\033[0m\n' "$*"; }
@@ -45,13 +45,13 @@ ok "ngrok token updated"
 
 info "Discovering the new public endpoint"
 : > "$NGROK_LOG"
-ngrok http "$NGROK_PORT" --log=stdout > "$NGROK_LOG" 2>&1 &
+ngrok http "$NGROK_PORT" --web-addr="127.0.0.1:$NGROK_API_PORT" --log=stdout > "$NGROK_LOG" 2>&1 &
 NGROK_PID=$!
 trap 'kill "$NGROK_PID" 2>/dev/null || true; wait "$NGROK_PID" 2>/dev/null || true' EXIT
 
 PUBLIC_URL=""
 for _ in $(seq 1 20); do
-  PUBLIC_URL="$(curl -fsS http://127.0.0.1:4040/api/tunnels 2>/dev/null \
+  PUBLIC_URL="$(curl -fsS "http://127.0.0.1:$NGROK_API_PORT/api/tunnels" 2>/dev/null \
     | jq -r '.tunnels[]? | select(.proto == "https") | .public_url' \
     | head -n1 || true)"
   [ -n "$PUBLIC_URL" ] && break
@@ -61,7 +61,7 @@ done
 
 if [ -z "$PUBLIC_URL" ]; then
   cat "$NGROK_LOG" >&2 || true
-  die "Could not obtain the new ngrok HTTPS URL."
+  die "Could not obtain the new ngrok HTTPS URL. Stop any running MCPRelay/ngrok process and retry."
 fi
 
 ok "New public URL: $PUBLIC_URL"
@@ -89,7 +89,6 @@ echo "Backup: $ENV_FILE.bak"
 echo
 echo "New MCP URL: $PUBLIC_URL/mcp"
 echo "Update the ChatGPT connector with this URL."
-echo "Open connector settings:"
 echo "https://chatgpt.com/plugins#settings/Connectors?create-connector=true&redirectAfter=%2Fplugins"
 echo
 echo "The temporary ngrok tunnel will now stop. Start MCPRelay with:"
