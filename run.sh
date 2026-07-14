@@ -7,6 +7,7 @@ PID_FILE="/tmp/mcp_gateway.pid"
 NGROK_PORT=8761
 CONFIG_FILE="$PROJECT_DIR/config/.env"
 NGROK_LOG="/tmp/mcprelay-ngrok-run.log"
+NGROK_INSPECT_URL="http://127.0.0.1:4040"
 CHATGPT_CONNECTOR_URL="https://chatgpt.com/plugins#settings/Connectors?create-connector=true&redirectAfter=%2Fplugins"
 
 info() { printf '\n\033[1;34m%s\033[0m\n' "$*"; }
@@ -15,9 +16,20 @@ warn() { printf '\033[1;33m! %s\033[0m\n' "$*"; }
 die() { printf '\033[1;31mError: %s\033[0m\n' "$*" >&2; exit 1; }
 
 env_value() {
-    local key="$1"
+    local key="$1" line value=""
     [ -f "$CONFIG_FILE" ] || return 0
-    sed -n "s/^${key}=//p" "$CONFIG_FILE" | tail -n1
+
+    while IFS= read -r line || [ -n "$line" ]; do
+        line="${line%$'\r'}"
+        line="${line#"${line%%[![:space:]]*}"}"
+        if [[ "$line" =~ ^export[[:space:]]+(.+)$ ]]; then
+            line="${BASH_REMATCH[1]}"
+        fi
+        if [[ "$line" =~ ^${key}[[:space:]]*=(.*)$ ]]; then
+            value="${BASH_REMATCH[1]}"
+        fi
+    done < "$CONFIG_FILE"
+    printf '%s' "$value"
 }
 
 set_env_values() {
@@ -40,6 +52,69 @@ set_env_values() {
 
     mv "$tmp" "$CONFIG_FILE"
     chmod 600 "$CONFIG_FILE"
+}
+
+ensure_env_notes() {
+    local renew_note="# Rotate OAuth access secret: ./run.sh renew-secret"
+    [ -f "$CONFIG_FILE" ] || return 0
+    grep -Fqx "$renew_note" "$CONFIG_FILE" || printf '\n%s\n' "$renew_note" >> "$CONFIG_FILE"
+    chmod 600 "$CONFIG_FILE"
+}
+
+show_ngrok_inspector() {
+    printf '  ngrok inspector → %s\n' "$NGROK_INSPECT_URL"
+}
+
+show_banner() {
+    local line index=0
+    local -a colors=(31 33 32 36 34 35)
+
+    while IFS= read -r line; do
+        if [ -t 1 ]; then
+            printf '\033[1;%sm%s\033[0m\n' "${colors[$index]}" "$line"
+        else
+            printf '%s\n' "$line"
+        fi
+        index=$(( (index + 1) % ${#colors[@]} ))
+    done <<'EOF'
+oooooo     oooo ooooo  .oooooo..o ooooo   .oooooo.   ooooo      ooo
+ `888.     .8'  `888' d8P'    `Y8 `888'  d8P'  `Y8b  `888b.     `8'
+  `888.   .8'    888  Y88bo.       888  888      888  8 `88b.    8
+   `888. .8'     888   `"Y8888o.   888  888      888  8   `88b.  8
+    `888.8'      888       `"Y88b  888  888      888  8     `88b.8
+     `888'       888  oo     .d8P  888  `88b    d88'  8       `888
+      `8'       o888o 8""88888P'  o888o  `Y8bood8P'  o8o        `8
+
+formerly MCPRelay, made with <3 by arthak
+
+EOF
+}
+
+clear_screen() {
+    if [ -t 1 ]; then
+        printf '\033[2J\033[H'
+    fi
+}
+
+show_connection_details() {
+    local public_url access_secret
+    public_url="$(env_value MCP_BASE_URL)"
+    access_secret="$(env_value OAUTH_ACCESS_SECRET)"
+
+    if [ -z "$public_url" ] || [ -z "$access_secret" ]; then
+        warn "OAuth setup incomplete. Run: ./run.sh setup"
+        return 1
+    fi
+
+    info "Connection details"
+    printf 'Public MCP:      %s/mcp\n' "$public_url"
+    printf 'Public OAuth:    %s/oauth\n' "$public_url"
+    printf 'Local MCP:       http://127.0.0.1:%s/mcp\n' "$NGROK_PORT"
+    printf 'Local OAuth:     http://127.0.0.1:%s/oauth\n' "$NGROK_PORT"
+    printf 'OAuth health:    http://127.0.0.1:%s/oauth/health\n' "$NGROK_PORT"
+    printf 'ngrok inspector: %s\n' "$NGROK_INSPECT_URL"
+    printf 'ChatGPT setup:   %s\n' "$CHATGPT_CONNECTOR_URL"
+    printf 'Access secret:   %s\n' "$access_secret"
 }
 
 prompt_ngrok_token() {
@@ -79,33 +154,40 @@ open_temporary_ngrok() {
 }
 
 ensure_onboarding() {
-    local public_url access_secret access_hash
-
-    command -v ngrok >/dev/null 2>&1 || die "ngrok is required. Install it before running MCPRelay."
-    command -v curl >/dev/null 2>&1 || die "curl is required."
-    [ -x "$PROJECT_DIR/.venv/bin/python" ] || die "Missing .venv. Complete the installation first."
-    mkdir -p "$PROJECT_DIR/config"
+    local renew_secret="${1:-false}" public_url access_secret access_hash
 
     public_url="$(env_value MCP_BASE_URL)"
     access_secret="$(env_value OAUTH_ACCESS_SECRET)"
     access_hash="$(env_value OAUTH_ACCESS_SECRET_HASH)"
 
-    if [ -n "$public_url" ] && [ -n "$access_secret" ] && [[ "$access_hash" == \$argon2id\$* ]]; then
+    if [ "$renew_secret" != true ] && [ -n "$public_url" ] && [ -n "$access_secret" ] && [[ "$access_hash" == \$argon2id\$* ]]; then
+        ensure_env_notes
         return 0
     fi
 
-    info "First-run setup"
+    [ -x "$PROJECT_DIR/.venv/bin/python" ] || die "Missing .venv. Complete the installation first."
+    mkdir -p "$PROJECT_DIR/config"
 
-    if ! ngrok config check >/dev/null 2>&1; then
-        prompt_ngrok_token || die "The ngrok authtoken cannot be empty."
+    if [ "$renew_secret" = true ]; then
+        warn "Renewing OAuth access secret."
+        access_secret=""
+    else
+        warn "OAuth configuration incomplete. Starting setup."
+        command -v ngrok >/dev/null 2>&1 || die "ngrok is required. Install it before running MCPRelay."
+        command -v curl >/dev/null 2>&1 || die "curl is required."
+
+        info "First-run setup"
+        if ! ngrok config check >/dev/null 2>&1; then
+            prompt_ngrok_token || die "The ngrok authtoken cannot be empty."
+        fi
+
+        info "Detecting your ngrok URL"
+        public_url="$(open_temporary_ngrok)" || {
+            cat "$NGROK_LOG" >&2 || true
+            die "Could not obtain the ngrok HTTPS URL. Check your ngrok token."
+        }
+        ok "Public URL: $public_url"
     fi
-
-    info "Detecting your ngrok URL"
-    public_url="$(open_temporary_ngrok)" || {
-        cat "$NGROK_LOG" >&2 || true
-        die "Could not obtain the ngrok HTTPS URL. Check your ngrok token."
-    }
-    ok "Public URL: $public_url"
 
     if [ -z "$access_secret" ]; then
         access_secret="$($PROJECT_DIR/.venv/bin/python -c 'import secrets; print(secrets.token_urlsafe(32))')"
@@ -126,56 +208,30 @@ ensure_onboarding() {
         OAUTH_AUTO_REGISTER_AUTH_CLIENTS "true" \
         ENABLE_OAUTH "true" \
         CHATGPT_STARTUP_BROWSER_ASSIST "false"
+    ensure_env_notes
 
-    printf '\nMCPRelay is configured.\n\n'
-    printf 'Connector URL: %s/mcp\n' "$public_url"
-    printf 'Access secret: %s\n' "$access_secret"
-    printf 'ChatGPT setup: %s\n\n' "$CHATGPT_CONNECTOR_URL"
+    printf '\nMCPRelay is configured.\n'
+    show_connection_details
+    printf '\n'
     printf 'The access secret is stored locally in config/.env with mode 600.\n'
-}
-
-_cleanup() {
-    echo ""
-    echo "⟶ stopping gateway…"
-    kill "${SERVICES_PID:-}" 2>/dev/null && wait "${SERVICES_PID:-}" 2>/dev/null || true
-    echo "✓ gateway stopped"
 }
 
 run_interactive() {
     cd "$PROJECT_DIR"
     ensure_onboarding
     source .venv/bin/activate
-
-    python3 start_services.py &
-    SERVICES_PID=$!
-    trap _cleanup EXIT INT TERM
-    sleep 2
-
-    echo "╔══════════════════════════════════════════════════════════╗"
-    echo "║  MCP Gateway ready                                     ║"
-    echo "║    MCP   → http://localhost:$NGROK_PORT/mcp               ║"
-    echo "║    OAuth → http://localhost:$NGROK_PORT/oauth/...        ║"
-    echo "║                                                        ║"
-    echo "║  ngrok tunnel will open in a moment…                   ║"
-    echo "║  Press Ctrl+C to stop everything.                      ║"
-    echo "╚══════════════════════════════════════════════════════════╝"
-    if command -v caffeinate >/dev/null 2>&1; then
-        echo "⚡ caffeinate active — sleep is inhibited while MCPRelay runs."
-        caffeinate -i ngrok http "$NGROK_PORT"
-    else
-        echo "ℹ Sleep inhibition inactive. See docs for Linux alternatives."
-        ngrok http "$NGROK_PORT"
-    fi
+    "$PROJECT_DIR/.venv/bin/python" "$PROJECT_DIR/src/interactive_launcher.py"
 }
 
 start_daemon() {
+    cd "$PROJECT_DIR"
+    ensure_onboarding
+
     if [ -f "$PID_FILE" ]; then
         echo "✗ Daemon already running (PID file $PID_FILE exists)"
         exit 1
     fi
 
-    cd "$PROJECT_DIR"
-    ensure_onboarding
     source .venv/bin/activate
 
     nohup python3 start_services.py > /dev/null 2>&1 &
@@ -194,6 +250,7 @@ start_daemon() {
     echo "$SERVICES_PID:$NGROK_PID" > "$PID_FILE"
     echo "✓ Gateway started  (PID $SERVICES_PID)"
     echo "✓ ngrok tunnel     (PID $NGROK_PID) [$KEEP_AWAKE_LABEL]"
+    show_ngrok_inspector
     echo ""
     echo "  Stop with:  ./run.sh stop"
     echo "  Status:     ./run.sh status"
@@ -237,6 +294,7 @@ status() {
 
     if kill -0 "$NGROK_PID" 2>/dev/null; then
         echo "✓ ngrok tunnel     (PID $NGROK_PID)"
+        show_ngrok_inspector
     else
         echo "✗ ngrok not running"
     fi
@@ -248,13 +306,18 @@ status() {
     echo "    $SERVICES_PID:$NGROK_PID"
 }
 
+clear_screen
+show_banner
+
 case "${1:-}" in
     start)   start_daemon ;;
     stop)    stop_daemon  ;;
     status)  status       ;;
+    setup)   ensure_onboarding ;;
+    renew-secret) ensure_onboarding true ;;
     *)
         if [ $# -gt 0 ]; then
-            echo "Usage: $0 {start|stop|status}"
+            echo "Usage: $0 {start|stop|status|setup|renew-secret}"
             echo ""
             echo "  (no arg)  Interactive mode – Ctrl+C stops everything"
             exit 1

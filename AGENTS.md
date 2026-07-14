@@ -13,11 +13,12 @@ myMCP/
 ├── AGENTS.md                         # Agent and maintainer context
 ├── README.md                         # Short user-facing overview
 ├── requirements.txt                  # Canonical pinned Python dependencies
-├── .env.example                      # Documented environment variables
 ├── config/
+│   ├── .env.example                  # Documented environment variables
 │   └── tools.toml.example            # Optional MCP tool enable/disable config
 ├── src/
 │   ├── mcp_gateway.py                # MCP server, tools, logging, file sharing
+│   ├── interactive_launcher.py       # POSIX interactive process/key supervisor
 │   ├── lightweight_oauth.py          # OAuth/OIDC endpoints and JWT creation
 │   ├── tool_registry.py              # Configurable tool registry
 │   └── userscript/

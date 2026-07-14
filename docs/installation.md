@@ -116,14 +116,14 @@ macOS or Linux:
 
 ```bash
 mkdir -p config
-cp .env.example config/.env
+cp config/.env.example config/.env
 ```
 
 Windows PowerShell:
 
 ```powershell
 New-Item -ItemType Directory -Force config | Out-Null
-Copy-Item .env.example config/.env
+Copy-Item config/.env.example config/.env
 ```
 
 Edit `config/.env`:
@@ -134,6 +134,7 @@ OAUTH_ISSUER=https://example.ngrok-free.dev/oauth
 LOCAL_OAUTH_ISSUER=https://example.ngrok-free.dev/oauth
 OAUTH_AUDIENCE=https://mcp.local
 MCP_AUDIENCE=https://mcp.local
+OAUTH_ACCESS_SECRET=YOUR_READABLE_SECRET
 OAUTH_ACCESS_SECRET_HASH=$argon2id$YOUR_HASH
 OAUTH_TOKEN_TTL_SECONDS=2592000
 OAUTH_LOGIN_MAX_ATTEMPTS=5
@@ -169,7 +170,15 @@ Git ignores `config/.env`. Never add the ngrok token to it.
 ./run.sh
 ```
 
-This starts the gateway and ngrok. When available, `run.sh` automatically uses macOS `caffeinate` to prevent sleep. `Ctrl+C` stops both.
+This starts the gateway and ngrok. On first launch, `run.sh` repairs missing OAuth setup, then prints the connector URL and newly generated access secret. Save that secret. Later launches reuse it without printing it again.
+
+Gateway and ngrok output stay in log files. The terminal shows only their status, so setup values remain easy to copy. When available, `run.sh` automatically uses macOS `caffeinate` to prevent sleep. `Ctrl+C` stops both.
+
+While interactive mode is running, press `m` without Enter to show all local and public URLs, the ChatGPT setup page, and the OAuth access secret.
+
+On macOS, Linux, and WSL, `run.sh` delegates interactive keys and process shutdown to a small Python supervisor. `Ctrl+C` terminates ngrok, the gateway supervisor, MCP, and OAuth together.
+
+Inspect requests, headers, and responses in the local ngrok interface: [http://127.0.0.1:4040](http://127.0.0.1:4040). `run.sh`, `run.sh start`, and `run.sh status` print this URL while ngrok is running.
 
 ### Linux
 
@@ -187,7 +196,7 @@ This starts the gateway and ngrok. When available, `run.sh` automatically uses m
 
 This starts the gateway and ngrok. `Ctrl+C` stops the launcher and its process tree.
 
-Keep this terminal open while using `mcp dl` in ChatGPT. Copy the HTTPS URL displayed by ngrok.
+Keep this terminal open while using `mcp dl` in ChatGPT.
 
 Background mode is available on macOS and Linux:
 
@@ -196,6 +205,16 @@ Background mode is available on macOS and Linux:
 ./run.sh status
 ./run.sh stop
 ```
+
+Repair incomplete setup or rotate the readable OAuth secret:
+
+```bash
+./run.sh setup
+./run.sh renew-secret
+```
+
+`renew-secret` prints the new secret once. Restart running services afterward.
+The generated `config/.env` also keeps `# Rotate OAuth access secret: ./run.sh renew-secret` as a local reminder.
 
 Manual alternative on macOS and Linux:
 
@@ -364,7 +383,13 @@ ChatGPT automatically registers an OAuth client and opens `/oauth/authorize`. MC
 
 ### Rotate or revoke OAuth access
 
-To change the secret, generate a new Argon2id hash, replace `OAUTH_ACCESS_SECRET_HASH`, and restart MCPRelay. This blocks new authorizations but existing tokens remain valid until `OAUTH_TOKEN_TTL_SECONDS` expires.
+On macOS or Linux, rotate the readable secret and its Argon2id hash together:
+
+```bash
+./run.sh renew-secret
+```
+
+Save the printed secret, then restart MCPRelay. This blocks new authorizations with the old secret, but existing tokens remain valid until `OAUTH_TOKEN_TTL_SECONDS` expires.
 
 For emergency revocation, stop MCPRelay, delete `data/oauth_private_key.pem`, and restart. A new signing key is generated and every previously issued token becomes invalid.
 
