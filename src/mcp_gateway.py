@@ -5,6 +5,7 @@ import json
 import logging
 import os
 import secrets
+import signal
 import subprocess
 import threading
 import base64
@@ -912,6 +913,10 @@ def keyboard_hotkey(keys: list[str], interval: float = 0.0) -> dict:
 
 
 MAX_OUTPUT_CHARS = 50_000
+DEFAULT_COMMAND_TIMEOUT_SECONDS = float(os.getenv('MCP_COMMAND_TIMEOUT_SECONDS', '300'))
+MAX_CONCURRENT_COMMANDS = max(1, int(os.getenv('MCP_MAX_CONCURRENT_COMMANDS', '4')))
+COMMAND_KILL_GRACE_SECONDS = 1.0
+COMMAND_SEMAPHORE = threading.BoundedSemaphore(MAX_CONCURRENT_COMMANDS)
 
 
 def stream_pipe(pipe, logfile, lines: list, prefix=''):
@@ -927,115 +932,166 @@ def stream_pipe(pipe, logfile, lines: list, prefix=''):
     pipe.close()
 
 
+def _popen_process_group_options() -> dict:
+    if os.name == 'nt':
+        return {'creationflags': subprocess.CREATE_NEW_PROCESS_GROUP}
+    return {'start_new_session': True}
+
+
+def terminate_process_tree(process: subprocess.Popen, grace_seconds: float = COMMAND_KILL_GRACE_SECONDS) -> None:
+    if process.poll() is not None:
+        return
+
+    if os.name == 'nt':
+        subprocess.run(
+            ['taskkill', '/PID', str(process.pid), '/T', '/F'],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        return
+
+    try:
+        os.killpg(process.pid, signal.SIGTERM)
+    except ProcessLookupError:
+        return
+
+    try:
+        process.wait(timeout=grace_seconds)
+        return
+    except subprocess.TimeoutExpired:
+        pass
+
+    try:
+        os.killpg(process.pid, signal.SIGKILL)
+    except ProcessLookupError:
+        pass
+
+
 @configurable_tool(mcp)
 def run_command(
     command: str,
     conversation_id: str | None = None,
     purpose: str | None = None,
     include_output_in_conversation_log: bool = False,
+    timeout_seconds: float = DEFAULT_COMMAND_TIMEOUT_SECONDS,
     chatgpt_url: str | None = None,
 ) -> str:
-    ensure_conversation_started(conversation_id, chatgpt_url, source_tool='run_command')
-    command_id = datetime.now(UTC).strftime('%Y%m%d_%H%M%S_%f')
-    stream_log = STREAM_DIR / f'command_{command_id}.log'
+    safe_timeout = max(0.1, min(float(timeout_seconds), 86_400.0))
 
-    log_action('run_command_start', {
-        'command': command,
-        'stream_log': str(stream_log),
-        'conversation_id': conversation_id,
-        'purpose': purpose,
-    })
+    with COMMAND_SEMAPHORE:
+        ensure_conversation_started(conversation_id, chatgpt_url, source_tool='run_command')
+        command_id = datetime.now(UTC).strftime('%Y%m%d_%H%M%S_%f')
+        stream_log = STREAM_DIR / f'command_{command_id}.log'
 
-    with open(stream_log, 'w', encoding='utf-8') as f:
-        f.write(f'COMMAND:\n{command}\n\n')
-
-    process = subprocess.Popen(
-        command,
-        shell=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-        bufsize=1,
-        universal_newlines=True
-    )
-
-    stdout_lines: list[str] = []
-    stderr_lines: list[str] = []
-
-    stdout_thread = threading.Thread(
-        target=stream_pipe,
-        args=(process.stdout, stream_log, stdout_lines, '')
-    )
-
-    stderr_thread = threading.Thread(
-        target=stream_pipe,
-        args=(process.stderr, stream_log, stderr_lines, '[stderr] ')
-    )
-
-    stdout_thread.start()
-    stderr_thread.start()
-
-    process.wait()
-
-    stdout_thread.join()
-    stderr_thread.join()
-
-    stdout_text = ''.join(stdout_lines)
-    stderr_text = ''.join(stderr_lines)
-
-    with open(stream_log, 'a', encoding='utf-8') as f:
-        f.write(f'\n\nEXIT CODE: {process.returncode}\n')
-
-    log_action('run_command_end', {
-        'command': command,
-        'exit_code': process.returncode,
-        'stream_log': str(stream_log),
-    })
-
-    append_tool_conversation_event(conversation_id, 'run_command', {
-        'arguments': {
+        log_action('run_command_start', {
             'command': command,
+            'stream_log': str(stream_log),
+            'conversation_id': conversation_id,
             'purpose': purpose,
-        },
-        'exit_code': process.returncode,
-        'result_ref': f'logs/commands/{stream_log.name}',
-        'result_included': include_output_in_conversation_log,
-        'output_preview': (
-            (stdout_text + '\n' + stderr_text)[:4000]
-            if include_output_in_conversation_log else None
-        ),
-    })
+            'timeout_seconds': safe_timeout,
+        })
 
-    truncated = False
+        with open(stream_log, 'w', encoding='utf-8') as f:
+            f.write(f'COMMAND:\n{command}\n\n')
 
-    if len(stdout_text) > MAX_OUTPUT_CHARS:
-        stdout_text = stdout_text[:MAX_OUTPUT_CHARS] + '\n… [stdout truncated]'
-        truncated = True
+        process = subprocess.Popen(
+            command,
+            shell=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            bufsize=1,
+            universal_newlines=True,
+            **_popen_process_group_options(),
+        )
 
-    if len(stderr_text) > MAX_OUTPUT_CHARS:
-        stderr_text = stderr_text[:MAX_OUTPUT_CHARS] + '\n… [stderr truncated]'
-        truncated = True
+        stdout_lines: list[str] = []
+        stderr_lines: list[str] = []
+        stdout_thread = threading.Thread(
+            target=stream_pipe,
+            args=(process.stdout, stream_log, stdout_lines, ''),
+            daemon=True,
+        )
+        stderr_thread = threading.Thread(
+            target=stream_pipe,
+            args=(process.stderr, stream_log, stderr_lines, '[stderr] '),
+            daemon=True,
+        )
+        stdout_thread.start()
+        stderr_thread.start()
 
-    parts = [
-        f'COMMAND: {command}',
-        f'EXIT CODE: {process.returncode}',
-        '',
-        'STDOUT:',
-        stdout_text,
-    ]
+        timed_out = False
+        try:
+            process.wait(timeout=safe_timeout)
+        except subprocess.TimeoutExpired:
+            timed_out = True
+            terminate_process_tree(process)
+            process.wait()
 
-    if stderr_text:
-        parts.append('')
-        parts.append('STDERR:')
-        parts.append(stderr_text)
+        stdout_thread.join(timeout=COMMAND_KILL_GRACE_SECONDS + 1)
+        stderr_thread.join(timeout=COMMAND_KILL_GRACE_SECONDS + 1)
 
-    parts.append('')
-    parts.append(f'Full log: {stream_log}')
+        stdout_text = ''.join(stdout_lines)
+        stderr_text = ''.join(stderr_lines)
+        exit_code = process.returncode
 
-    if truncated:
-        parts.append(f'\n⚠️  Output truncated at {MAX_OUTPUT_CHARS} characters per stream. See log file for full output.')
+        with open(stream_log, 'a', encoding='utf-8') as f:
+            if timed_out:
+                f.write(f'\n\nTIMED OUT AFTER: {safe_timeout:g}s\n')
+            f.write(f'\nEXIT CODE: {exit_code}\n')
 
-    return '\n'.join(parts)
+        log_action('run_command_end', {
+            'command': command,
+            'exit_code': exit_code,
+            'stream_log': str(stream_log),
+            'timed_out': timed_out,
+            'timeout_seconds': safe_timeout,
+        })
+
+        append_tool_conversation_event(conversation_id, 'run_command', {
+            'arguments': {
+                'command': command,
+                'purpose': purpose,
+                'timeout_seconds': safe_timeout,
+            },
+            'exit_code': exit_code,
+            'timed_out': timed_out,
+            'result_ref': f'logs/commands/{stream_log.name}',
+            'result_included': include_output_in_conversation_log,
+            'output_preview': (
+                (stdout_text + '\n' + stderr_text)[:4000]
+                if include_output_in_conversation_log else None
+            ),
+        })
+
+        truncated = False
+        if len(stdout_text) > MAX_OUTPUT_CHARS:
+            stdout_text = stdout_text[:MAX_OUTPUT_CHARS] + '\n… [stdout truncated]'
+            truncated = True
+        if len(stderr_text) > MAX_OUTPUT_CHARS:
+            stderr_text = stderr_text[:MAX_OUTPUT_CHARS] + '\n… [stderr truncated]'
+            truncated = True
+
+        parts = [
+            f'COMMAND: {command}',
+            f'EXIT CODE: {exit_code}',
+        ]
+        if timed_out:
+            parts.append(f'TIMED OUT AFTER: {safe_timeout:g}s')
+        parts.extend(['', 'STDOUT:', stdout_text])
+
+        if stderr_text:
+            parts.extend(['', 'STDERR:', stderr_text])
+
+        parts.extend(['', f'Full log: {stream_log}'])
+        if truncated:
+            parts.append(
+                f'\nOutput truncated at {MAX_OUTPUT_CHARS} characters per stream. '
+                'See log file for full output.'
+            )
+
+        return '\n'.join(parts)
 
 
 if __name__ == '__main__':

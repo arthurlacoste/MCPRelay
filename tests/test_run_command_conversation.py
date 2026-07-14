@@ -1,6 +1,11 @@
 import json
+import os
+import shlex
+import time
 from pathlib import Path
 import sys
+
+import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / 'src'))
 
@@ -71,3 +76,63 @@ def test_run_command_action_log_has_no_created_files(tmp_path, monkeypatch):
     end_payload = next(payload for action, payload in actions if action == 'run_command_end')
     assert end_payload['exit_code'] == 0
     assert 'created_files' not in end_payload
+
+
+def test_run_command_timeout_is_reported(tmp_path, monkeypatch):
+    monkeypatch.setattr(mod, 'STREAM_DIR', tmp_path)
+    command = f'"{sys.executable}" -c "import time; time.sleep(5)"'
+
+    result = mod.run_command(command=command, timeout_seconds=0.2)
+    stream_log = next(tmp_path.glob('command_*.log')).read_text()
+
+    assert 'TIMED OUT AFTER: 0.2s' in result
+    assert 'TIMED OUT AFTER: 0.2s' in stream_log
+
+
+def test_run_command_timeout_is_logged_in_conversation(tmp_path, monkeypatch):
+    monkeypatch.setattr(mod, 'CONVERSATION_DIR', tmp_path)
+    monkeypatch.setattr(mod, 'STREAM_DIR', tmp_path)
+
+    mod.run_command(
+        command=f'"{sys.executable}" -c "import time; time.sleep(5)"',
+        conversation_id='timeout-test',
+        timeout_seconds=0.2,
+    )
+
+    payload = json.loads((tmp_path / 'timeout-test.jsonl').read_text().splitlines()[-1])
+    assert payload['timed_out'] is True
+    assert payload['arguments']['timeout_seconds'] == 0.2
+
+
+def test_timeout_kills_child_process(tmp_path, monkeypatch):
+    if os.name == 'nt':
+        pytest.skip('POSIX process-group assertion')
+
+    monkeypatch.setattr(mod, 'STREAM_DIR', tmp_path)
+    pid_file = tmp_path / 'child.pid'
+    child_code = (
+        "import os,time,pathlib; "
+        f"pathlib.Path(r'{pid_file}').write_text(str(os.getpid())); "
+        "time.sleep(30)"
+    )
+    parent_code = (
+        "import subprocess,sys,time; "
+        f"subprocess.Popen([sys.executable, '-c', {child_code!r}]); "
+        "time.sleep(30)"
+    )
+
+    mod.run_command(
+        command=f'"{sys.executable}" -c {shlex.quote(parent_code)}',
+        timeout_seconds=0.4,
+    )
+
+    child_pid = int(pid_file.read_text())
+    deadline = time.monotonic() + 2
+    while time.monotonic() < deadline:
+        try:
+            os.kill(child_pid, 0)
+        except ProcessLookupError:
+            break
+        time.sleep(0.05)
+    else:
+        pytest.fail(f'child process {child_pid} survived timeout')
