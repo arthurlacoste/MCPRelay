@@ -189,8 +189,9 @@ ok "Repository ready at $INSTALL_DIR"
 
 info "Creating Python $PYTHON_VERSION environment"
 rm -rf .venv
-uv venv --python "$PYTHON_VERSION" .venv
+uv venv --python "$PYTHON_VERSION" --seed .venv
 uv pip install --python .venv/bin/python -r requirements.txt
+.venv/bin/python -m pip --version >/dev/null || die "pip was not installed in the virtual environment."
 mkdir -p logs/services
 ok "Python dependencies installed with $(.venv/bin/python --version)"
 
