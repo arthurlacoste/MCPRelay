@@ -34,11 +34,10 @@ def venv_python_path(base_dir: Path, platform_name: str = os.name) -> Path:
 PYTHON = venv_python_path(BASE_DIR)
 REQUIREMENTS = BASE_DIR / "requirements.txt"
 LOG_DIR = BASE_DIR / "logs" / "services"
-LOG_DIR.mkdir(exist_ok=True)
+LOG_DIR.mkdir(parents=True, exist_ok=True)
 GATEWAY_HOST = "0.0.0.0"
 GATEWAY_PORT = 8761
 
-# ── Single gateway: serves both MCP (port 8761 /mcp) and OAuth ──
 SERVICES = [
     {
         "name": "gateway",
