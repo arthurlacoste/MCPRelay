@@ -6,6 +6,7 @@ DEFAULT_INSTALL_DIR="$HOME/MCPRelay"
 NODE_VERSION="22"
 PYTHON_VERSION="3.12"
 NGROK_PORT="8761"
+NGROK_LOG="/tmp/mcprelay-ngrok-install.log"
 
 info() { printf '\n\033[1;34m%s\033[0m\n' "$*"; }
 ok() { printf '\033[1;32m✓ %s\033[0m\n' "$*"; }
@@ -25,6 +26,7 @@ prompt_default() {
 cleanup_ngrok() {
   if [ -n "${TEMP_NGROK_PID:-}" ]; then
     kill "$TEMP_NGROK_PID" 2>/dev/null || true
+    wait "$TEMP_NGROK_PID" 2>/dev/null || true
   fi
 }
 
@@ -33,7 +35,6 @@ fix_obsolete_bullseye_backports() {
 
   while IFS= read -r -d '' source_file; do
     grep -q 'bullseye-backports' "$source_file" || continue
-
     backup_file="${source_file}.mcprelay-backup"
     sudo cp -n "$source_file" "$backup_file"
 
@@ -67,6 +68,40 @@ fix_obsolete_bullseye_backports() {
   fi
 }
 
+prompt_ngrok_token() {
+  local token
+  echo "Create an account at: https://dashboard.ngrok.com/signup"
+  echo "Get the token at:    https://dashboard.ngrok.com/get-started/your-authtoken"
+  read -r -s -p "Paste your ngrok authtoken: " token
+  echo
+  [ -n "$token" ] || return 1
+  ngrok config add-authtoken "$token" >/dev/null
+  unset token
+}
+
+open_ngrok_tunnel() {
+  local public_url=""
+  : > "$NGROK_LOG"
+  ngrok http "$NGROK_PORT" --log=stdout > "$NGROK_LOG" 2>&1 &
+  TEMP_NGROK_PID=$!
+
+  for _ in $(seq 1 20); do
+    public_url="$(curl -fsS http://127.0.0.1:4040/api/tunnels 2>/dev/null \
+      | jq -r '.tunnels[]? | select(.proto == "https") | .public_url' \
+      | head -n1 || true)"
+    [ -n "$public_url" ] && {
+      printf '%s' "$public_url"
+      return 0
+    }
+    kill -0 "$TEMP_NGROK_PID" 2>/dev/null || break
+    sleep 1
+  done
+
+  cleanup_ngrok
+  TEMP_NGROK_PID=""
+  return 1
+}
+
 trap cleanup_ngrok EXIT
 
 is_wsl || die "Run this script inside Ubuntu/WSL, not PowerShell."
@@ -88,14 +123,7 @@ fix_obsolete_bullseye_backports
 
 info "Installing system packages"
 sudo apt-get update
-sudo apt-get install -y \
-  ca-certificates \
-  curl \
-  git \
-  jq \
-  build-essential \
-  python3-tk \
-  scrot
+sudo apt-get install -y ca-certificates curl git jq build-essential python3-tk scrot
 ok "System packages installed"
 
 info "Installing Node.js $NODE_VERSION with nvm"
@@ -103,7 +131,6 @@ if [ ! -s "$HOME/.nvm/nvm.sh" ]; then
   curl -fsSL https://raw.githubusercontent.com/nvm-sh/nvm/master/install.sh | bash
 fi
 export NVM_DIR="$HOME/.nvm"
-# shellcheck source=/dev/null
 . "$NVM_DIR/nvm.sh"
 nvm install "$NODE_VERSION"
 nvm alias default "$NODE_VERSION"
@@ -148,35 +175,33 @@ uv pip install --python .venv/bin/python -r requirements.txt
 ok "Python dependencies installed with $(.venv/bin/python --version)"
 
 info "Connecting ngrok"
-if ! ngrok config check >/dev/null 2>&1; then
-  echo "Create an account at: https://dashboard.ngrok.com/signup"
-  echo "Get the token at:    https://dashboard.ngrok.com/get-started/your-authtoken"
-  read -r -s -p "Paste your ngrok authtoken: " NGROK_AUTHTOKEN
-  echo
-  [ -n "$NGROK_AUTHTOKEN" ] || die "ngrok token cannot be empty."
-  ngrok config add-authtoken "$NGROK_AUTHTOKEN" >/dev/null
-  unset NGROK_AUTHTOKEN
-fi
-ngrok config check >/dev/null
-ok "ngrok account connected"
-
-info "Opening a temporary ngrok tunnel"
-ngrok http "$NGROK_PORT" --log=stdout > /tmp/mcprelay-ngrok-install.log 2>&1 &
-TEMP_NGROK_PID=$!
-
 PUBLIC_URL=""
-for _ in $(seq 1 30); do
-  PUBLIC_URL="$(curl -fsS http://127.0.0.1:4040/api/tunnels 2>/dev/null \
-    | jq -r '.tunnels[]? | select(.proto == "https") | .public_url' \
-    | head -n1 || true)"
-  [ -n "$PUBLIC_URL" ] && break
-  sleep 1
+for attempt in 1 2 3; do
+  if [ "$attempt" -gt 1 ] || ! ngrok config check >/dev/null 2>&1; then
+    prompt_ngrok_token || {
+      warn "The ngrok token cannot be empty."
+      continue
+    }
+  fi
+
+  info "Opening a temporary ngrok tunnel"
+  if PUBLIC_URL="$(open_ngrok_tunnel)"; then
+    break
+  fi
+
+  if grep -q 'ERR_NGROK_105\|authentication failed' "$NGROK_LOG"; then
+    warn "The saved ngrok authtoken is invalid. Copy the full token from the ngrok dashboard."
+    continue
+  fi
+
+  cat "$NGROK_LOG" >&2 || true
+  die "Could not obtain the ngrok HTTPS URL."
 done
 
-if [ -z "$PUBLIC_URL" ]; then
-  cat /tmp/mcprelay-ngrok-install.log >&2 || true
-  die "Could not obtain the ngrok HTTPS URL."
-fi
+[ -n "$PUBLIC_URL" ] || {
+  cat "$NGROK_LOG" >&2 || true
+  die "ngrok authentication failed after 3 attempts."
+}
 ok "Public URL: $PUBLIC_URL"
 
 info "Writing config/.env"
@@ -197,8 +222,7 @@ EOF
 chmod 600 config/.env
 ok "Configuration saved"
 
-kill "$TEMP_NGROK_PID" 2>/dev/null || true
-wait "$TEMP_NGROK_PID" 2>/dev/null || true
+cleanup_ngrok
 TEMP_NGROK_PID=""
 
 info "Installation complete"
