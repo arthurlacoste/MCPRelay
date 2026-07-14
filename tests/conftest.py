@@ -7,6 +7,7 @@ touch real data.
 """
 
 import os
+import re
 import sys
 import tempfile
 from pathlib import Path
@@ -14,6 +15,7 @@ from collections.abc import Generator
 
 import jwt
 import pytest
+from argon2 import PasswordHasher
 from fastapi.testclient import TestClient
 
 # -------------------------------------------------------------------
@@ -24,6 +26,8 @@ os.environ.setdefault("OAUTH_AUDIENCE", "https://test.local/mcp")
 os.environ.setdefault("OAUTH_KEY_ID", "test-key-id")
 os.environ.setdefault("OAUTH_TOKEN_TTL_SECONDS", "3600")
 os.environ.setdefault("OAUTH_AUTO_REGISTER_AUTH_CLIENTS", "true")
+os.environ.setdefault("OAUTH_ACCESS_SECRET_HASH", PasswordHasher().hash("correct horse battery staple"))
+os.environ.setdefault("OAUTH_LOGIN_MAX_ATTEMPTS", "5")
 
 # -------------------------------------------------------------------
 # 2.  Import the OAuth FastAPI app.
@@ -67,6 +71,7 @@ def temp_data_dir(monkeypatch: pytest.MonkeyPatch) -> Generator[Path]:
         # Re-load the private key so it lives in the temp location
         oauth_mod.private_key = oauth_mod.load_private_key()
         oauth_mod.public_key = oauth_mod.private_key.public_key()
+        oauth_mod.access_gate.reset()
 
         yield tmp
 
@@ -81,6 +86,19 @@ def registered_client(oauth_client: TestClient,
     })
     assert resp.status_code == 200
     return resp.json()
+
+
+def complete_authorization(client: TestClient, response):
+    match = re.search(r'name="request" value="([^"]+)"', response.text)
+    assert match, f"Expected authorization form, got {response.status_code}"
+    return client.post(
+        "/oauth/authorize",
+        data={
+            "request": match.group(1),
+            "secret": "correct horse battery staple",
+        },
+        follow_redirects=False,
+    )
 
 
 @pytest.fixture
@@ -98,7 +116,7 @@ def authorization_code(oauth_client: TestClient,
         },
         follow_redirects=False,
     )
-    # Starlette's RedirectResponse may return 302 or 307
+    resp = complete_authorization(oauth_client, resp)
     assert resp.status_code in (302, 307), f"Expected redirect, got {resp.status_code}"
     location = resp.headers["location"]
     assert "code=" in location

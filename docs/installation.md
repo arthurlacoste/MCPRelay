@@ -134,13 +134,26 @@ OAUTH_ISSUER=https://example.ngrok-free.dev/oauth
 LOCAL_OAUTH_ISSUER=https://example.ngrok-free.dev/oauth
 OAUTH_AUDIENCE=https://mcp.local
 MCP_AUDIENCE=https://mcp.local
-OAUTH_TOKEN_TTL_SECONDS=3600
+OAUTH_ACCESS_SECRET_HASH=$argon2id$YOUR_HASH
+OAUTH_TOKEN_TTL_SECONDS=2592000
+OAUTH_LOGIN_MAX_ATTEMPTS=5
+OAUTH_TRUSTED_PROXY_NETWORKS=127.0.0.0/8,::1/128
 OAUTH_AUTO_REGISTER_AUTH_CLIENTS=true
 ENABLE_OAUTH=true
 MCP_FILESYSTEM_ROOTS=/absolute/path/to/allowed/files
 ```
 
 All three public URL values must use the exact same ngrok domain. Do not append `/mcp` to `MCP_BASE_URL`.
+
+Generate the access-secret hash without placing the secret in shell history:
+
+```bash
+.venv/bin/python -c "from getpass import getpass; from argon2 import PasswordHasher; print(PasswordHasher().hash(getpass('OAuth access secret: ')))"
+```
+
+On Windows, run the same command as `.venv\\Scripts\\python.exe -c "..."`. Copy only the resulting `$argon2id$...` value to `OAUTH_ACCESS_SECRET_HASH`. Save the original secret in a password manager; the hash cannot recover it.
+
+`OAUTH_TRUSTED_PROXY_NETWORKS` lets the local ngrok proxy provide the real client IP for login limiting. Keep it restricted to loopback for the documented setup. Leave it empty if no trusted local reverse proxy is used.
 
 `MCP_FILESYSTEM_ROOTS` controls which directories the filesystem tools can access.
 Separate multiple paths with `:` on macOS/Linux and `;` on Windows. If omitted,
@@ -333,7 +346,7 @@ The interface may call it a **Plugin**, **App**, or **custom MCP app**.
 5. Wait for OAuth settings discovery. Open **Advanced OAuth settings** only if ChatGPT reports an error.
 6. Check **I understand and want to continue**. This server provides access to your computer. Continue only if you own and trust this repository and tunnel.
 7. Click **Create**.
-8. Accept the OAuth redirect. MCPRelay creates and exchanges the token automatically.
+8. On the MCPRelay authorization page, enter the access secret and click **Authorize**. MCPRelay then creates the code and ChatGPT exchanges it automatically.
 
 The plugin is ready when `mcp dl` appears in the installed plugins list.
 
@@ -347,7 +360,13 @@ Do not confuse these values:
 | ngrok URL | `ngrok http 8761` | Plugin/app URL field: URL + `/mcp` |
 | OAuth code and access token | Generated automatically by MCPRelay during connection | Automatic exchange between ChatGPT and `/oauth/token` |
 
-ChatGPT automatically registers an OAuth client, opens `/oauth/authorize`, then exchanges the code for an access token. Never copy an OAuth JWT into the plugin settings.
+ChatGPT automatically registers an OAuth client and opens `/oauth/authorize`. MCPRelay issues a code only after the access secret is accepted, then ChatGPT exchanges it for an access token. Never copy an OAuth JWT into the plugin settings.
+
+### Rotate or revoke OAuth access
+
+To change the secret, generate a new Argon2id hash, replace `OAUTH_ACCESS_SECRET_HASH`, and restart MCPRelay. This blocks new authorizations but existing tokens remain valid until `OAUTH_TOKEN_TTL_SECONDS` expires.
+
+For emergency revocation, stop MCPRelay, delete `data/oauth_private_key.pem`, and restart. A new signing key is generated and every previously issued token becomes invalid.
 
 ## 13. Permissions: safe or YOLO
 

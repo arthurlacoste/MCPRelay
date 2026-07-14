@@ -6,14 +6,16 @@ import os
 import secrets
 import time
 from pathlib import Path
-from urllib.parse import urlencode
+from urllib.parse import parse_qs, urlencode
 
 import jwt
 from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.hazmat.primitives import serialization
 from dotenv import load_dotenv
 from fastapi import FastAPI, Form, Request
-from fastapi.responses import JSONResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+
+from oauth_access_gate import OAuthAccessGate, client_address, login_page, trusted_proxy_networks
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 load_dotenv(BASE_DIR / "config" / ".env")
@@ -26,10 +28,46 @@ PRIVATE_KEY_FILE = DATA_DIR / "oauth_private_key.pem"
 
 ISSUER = os.getenv("OAUTH_ISSUER", "https://hull-envision-bunkbed.ngrok-free.dev/oauth")
 AUDIENCE = os.getenv("OAUTH_AUDIENCE", "https://mcp.local")
-TOKEN_TTL_SECONDS = int(os.getenv("OAUTH_TOKEN_TTL_SECONDS", "31536000"))
+TOKEN_TTL_SECONDS = int(os.getenv("OAUTH_TOKEN_TTL_SECONDS", "2592000"))
 AUTO_REGISTER_AUTH_CLIENTS = os.getenv("OAUTH_AUTO_REGISTER_AUTH_CLIENTS", "true").lower() == "true"
+ACCESS_SECRET_HASH = os.getenv("OAUTH_ACCESS_SECRET_HASH", "")
+LOGIN_MAX_ATTEMPTS = max(1, int(os.getenv("OAUTH_LOGIN_MAX_ATTEMPTS", "5")))
+TRUSTED_PROXY_NETWORKS = trusted_proxy_networks(os.getenv("OAUTH_TRUSTED_PROXY_NETWORKS", ""))
+
+MAX_AUTHORIZATION_BODY_BYTES = 4096
+
+
+class AuthorizationBodyLimitMiddleware:
+    def __init__(self, application):
+        self.application = application
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http" or scope["method"] != "POST" or scope["path"] != "/oauth/authorize":
+            return await self.application(scope, receive, send)
+        body = bytearray()
+        more_body = True
+        while more_body:
+            message = await receive()
+            body.extend(message.get("body", b""))
+            if len(body) > MAX_AUTHORIZATION_BODY_BYTES:
+                response = JSONResponse({"error": "request_too_large"}, status_code=413)
+                return await response(scope, receive, send)
+            more_body = message.get("more_body", False)
+        sent = False
+
+        async def replay():
+            nonlocal sent
+            if sent:
+                return {"type": "http.request", "body": b"", "more_body": False}
+            sent = True
+            return {"type": "http.request", "body": bytes(body), "more_body": False}
+
+        return await self.application(scope, replay, send)
+
 
 app = FastAPI(title="Lightweight MCP OAuth Server")
+app.add_middleware(AuthorizationBodyLimitMiddleware)
+access_gate = OAuthAccessGate()
 
 
 def load_json_file(path: Path) -> dict:
@@ -144,8 +182,9 @@ async def register(request: Request):
     }
 
 
-@app.get("/oauth/authorize")
+@app.get("/oauth/authorize", response_class=HTMLResponse)
 def authorize(
+    request: Request,
     response_type: str,
     client_id: str,
     redirect_uri: str,
@@ -175,32 +214,80 @@ def authorize(
     allowed = clients[client_id].get("redirect_uris", [])
 
     if redirect_uri not in allowed:
-        return JSONResponse({
-            "error": "invalid_redirect_uri",
-            "redirect_uri": redirect_uri,
-            "allowed": allowed,
-        }, status_code=400)
+        return JSONResponse({"error": "invalid_redirect_uri"}, status_code=400)
 
-    code = secrets.token_urlsafe(32)
-    codes = load_codes()
-
-    codes[code] = {
+    peer = request.client.host if request.client else "unknown"
+    source = client_address(peer, request.headers.get("x-forwarded-for", ""), TRUSTED_PROXY_NETWORKS)
+    request_id = access_gate.create({
         "client_id": client_id,
+        "client_name": clients[client_id].get("client_name", client_id),
         "redirect_uri": redirect_uri,
+        "state": state,
         "scope": scope or "openid profile email",
         "audience": audience or AUDIENCE,
         "code_challenge": code_challenge,
         "code_challenge_method": code_challenge_method,
+    }, source)
+    if not request_id:
+        return JSONResponse({"error": "temporarily_unavailable"}, status_code=503)
+    return HTMLResponse(login_page(request_id, access_gate.get(request_id).parameters))
+
+
+@app.post("/oauth/authorize")
+def complete_authorization(
+    request: Request,
+    request_id: str = Form(..., alias="request"),
+    secret: str = Form(""),
+    decision: str = Form("authorize"),
+):
+    pending = access_gate.get(request_id)
+    if not pending:
+        return JSONResponse({"error": "invalid_request"}, status_code=400)
+    if decision == "deny":
+        pending = access_gate.consume(request_id)
+        query = {"error": "access_denied"}
+        if pending.parameters["state"]:
+            query["state"] = pending.parameters["state"]
+        return RedirectResponse(f'{pending.parameters["redirect_uri"]}?{urlencode(query)}', status_code=302)
+    if not ACCESS_SECRET_HASH:
+        return JSONResponse({"error": "server_configuration_error"}, status_code=503)
+    if len(secret.encode("utf-8")) > 1024:
+        return JSONResponse({"error": "invalid_request"}, status_code=413)
+
+    peer = request.client.host if request.client else "unknown"
+    address = client_address(peer, request.headers.get("x-forwarded-for", ""), TRUSTED_PROXY_NETWORKS)
+    result = access_gate.authenticate(address, LOGIN_MAX_ATTEMPTS, ACCESS_SECRET_HASH, secret)
+    if result == "limited":
+        return HTMLResponse(
+            login_page(request_id, pending.parameters, "Too many attempts. Try again later."),
+            status_code=429,
+            headers={"Retry-After": "60"},
+        )
+    if result == "configuration_error":
+        return JSONResponse({"error": "server_configuration_error"}, status_code=503)
+    if result == "invalid":
+        return HTMLResponse(login_page(request_id, pending.parameters, "Invalid access secret."), status_code=401)
+
+    pending = access_gate.consume(request_id)
+    if not pending:
+        return JSONResponse({"error": "invalid_request"}, status_code=400)
+    parameters = pending.parameters
+    code = secrets.token_urlsafe(32)
+    codes = load_codes()
+    codes[code] = {
+        "client_id": parameters["client_id"],
+        "redirect_uri": parameters["redirect_uri"],
+        "scope": parameters["scope"],
+        "audience": parameters["audience"],
+        "code_challenge": parameters["code_challenge"],
+        "code_challenge_method": parameters["code_challenge_method"],
         "created_at": time.time(),
     }
     save_codes(codes)
-
-    params = {"code": code}
-
-    if state:
-        params["state"] = state
-
-    return RedirectResponse(f"{redirect_uri}?{urlencode(params)}")
+    query = {"code": code}
+    if parameters["state"]:
+        query["state"] = parameters["state"]
+    return RedirectResponse(f'{parameters["redirect_uri"]}?{urlencode(query)}', status_code=302)
 
 
 @app.post("/oauth/token")

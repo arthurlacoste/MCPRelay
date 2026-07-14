@@ -8,11 +8,22 @@ cross-test pollution.
 import time
 import hashlib
 import base64
+import re
 import secrets
 
 import jwt
 import pytest
 from fastapi.testclient import TestClient
+
+
+def complete_authorization(client, response):
+    match = re.search(r'name="request" value="([^"]+)"', response.text)
+    assert match
+    return client.post(
+        "/oauth/authorize",
+        data={"request": match.group(1), "secret": "correct horse battery staple"},
+        follow_redirects=False,
+    )
 
 
 # ===================================================================
@@ -79,7 +90,7 @@ class TestClientRegistration:
         }).json()
 
         # Re-authorize with the same client (no auto-register needed)
-        resp = oauth_client.get(
+        resp = complete_authorization(oauth_client, oauth_client.get(
             "/oauth/authorize",
             params={
                 "response_type": "code",
@@ -87,7 +98,7 @@ class TestClientRegistration:
                 "redirect_uri": "https://persist.example/cb",
             },
             follow_redirects=False,
-        )
+        ))
         assert resp.status_code in (302, 307)
 
 
@@ -97,7 +108,7 @@ class TestClientRegistration:
 
 class TestAuthorize:
     def test_success(self, oauth_client: TestClient, registered_client: dict):
-        resp = oauth_client.get(
+        resp = complete_authorization(oauth_client, oauth_client.get(
             "/oauth/authorize",
             params={
                 "response_type": "code",
@@ -107,7 +118,7 @@ class TestAuthorize:
                 "scope": "openid profile",
             },
             follow_redirects=False,
-        )
+        ))
         assert resp.status_code in (302, 307)
         location = resp.headers["location"]
         assert location.startswith("https://client.example/cb?")
@@ -119,7 +130,7 @@ class TestAuthorize:
         """When AUTO_REGISTER_AUTH_CLIENTS is true, unknown clients are
         auto-created during authorization."""
         client_id = "client_auto_reg_test_123"
-        resp = oauth_client.get(
+        resp = complete_authorization(oauth_client, oauth_client.get(
             "/oauth/authorize",
             params={
                 "response_type": "code",
@@ -128,7 +139,7 @@ class TestAuthorize:
                 "state": "s1",
             },
             follow_redirects=False,
-        )
+        ))
         assert resp.status_code in (302, 307)
         assert "code=" in resp.headers["location"]
 
@@ -163,7 +174,7 @@ class TestAuthorize:
     def test_with_pkce_challenge(self, oauth_client: TestClient,
                                   registered_client: dict):
         """Authorization succeeds when a code_challenge is supplied."""
-        resp = oauth_client.get(
+        resp = complete_authorization(oauth_client, oauth_client.get(
             "/oauth/authorize",
             params={
                 "response_type": "code",
@@ -174,7 +185,7 @@ class TestAuthorize:
                 "state": "pkce-state",
             },
             follow_redirects=False,
-        )
+        ))
         assert resp.status_code in (302, 307)
         assert "code=" in resp.headers["location"]
 
@@ -225,7 +236,7 @@ class TestToken:
                                  registered_client: dict):
         """Token exchange works when client_secret is provided."""
         # First get a code
-        auth_resp = oauth_client.get(
+        auth_resp = complete_authorization(oauth_client, oauth_client.get(
             "/oauth/authorize",
             params={
                 "response_type": "code",
@@ -233,7 +244,7 @@ class TestToken:
                 "redirect_uri": "https://client.example/cb",
             },
             follow_redirects=False,
-        )
+        ))
         code = auth_resp.headers["location"].split("code=")[1].split("&")[0]
 
         resp = oauth_client.post(
@@ -326,7 +337,7 @@ class TestToken:
                            registered_client: dict, monkeypatch):
         """An authorization code older than 300 s is rejected."""
         # Get a code first
-        auth_resp = oauth_client.get(
+        auth_resp = complete_authorization(oauth_client, oauth_client.get(
             "/oauth/authorize",
             params={
                 "response_type": "code",
@@ -334,7 +345,7 @@ class TestToken:
                 "redirect_uri": "https://client.example/cb",
             },
             follow_redirects=False,
-        )
+        ))
         code = auth_resp.headers["location"].split("code=")[1].split("&")[0]
 
         # Travel forward in time past the 300 s expiry
@@ -378,7 +389,7 @@ class TestToken:
         the parameter doesn't cause an error.
         """
         # Authorize with a plain challenge
-        auth_resp = oauth_client.get(
+        auth_resp = complete_authorization(oauth_client, oauth_client.get(
             "/oauth/authorize",
             params={
                 "response_type": "code",
@@ -388,7 +399,7 @@ class TestToken:
                 "code_challenge_method": "plain",
             },
             follow_redirects=False,
-        )
+        ))
         code = auth_resp.headers["location"].split("code=")[1].split("&")[0]
 
         # Exchange with a verifier — succeeds (validation is a TODO)
@@ -442,7 +453,7 @@ class TestPKCE:
         code_challenge = base64.urlsafe_b64encode(digest).rstrip(b"=").decode()
 
         # 3. Authorize with the challenge
-        auth_resp = oauth_client.get(
+        auth_resp = complete_authorization(oauth_client, oauth_client.get(
             "/oauth/authorize",
             params={
                 "response_type": "code",
@@ -453,7 +464,7 @@ class TestPKCE:
                 "state": "pkce-state",
             },
             follow_redirects=False,
-        )
+        ))
         assert auth_resp.status_code in (302, 307)
         code = auth_resp.headers["location"].split("code=")[1].split("&")[0]
 
@@ -561,7 +572,7 @@ class TestEdgeCases:
         """A client can obtain multiple authorization codes."""
         codes = []
         for _ in range(3):
-            resp = oauth_client.get(
+            resp = complete_authorization(oauth_client, oauth_client.get(
                 "/oauth/authorize",
                 params={
                     "response_type": "code",
@@ -569,7 +580,7 @@ class TestEdgeCases:
                     "redirect_uri": "https://client.example/cb",
                 },
                 follow_redirects=False,
-            )
+            ))
             codes.append(resp.headers["location"].split("code=")[1].split("&")[0])
 
         assert len(set(codes)) == 3  # all different

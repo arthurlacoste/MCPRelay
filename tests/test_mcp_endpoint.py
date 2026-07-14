@@ -19,6 +19,7 @@ Usage::
 
 import json
 import os
+import re
 
 import httpx
 import pytest
@@ -65,6 +66,20 @@ def _resolve_base_url() -> str:
             return url
 
     return _REMOTE_URL  # last resort – tests will skip
+
+
+def _complete_live_authorization(base_url: str, response: httpx.Response) -> httpx.Response:
+    secret = os.getenv("LIVE_OAUTH_ACCESS_SECRET")
+    if not secret:
+        pytest.skip("LIVE_OAUTH_ACCESS_SECRET is required for the live OAuth flow")
+    match = re.search(r'name="request" value="([^"]+)"', response.text)
+    assert match, f"Authorization form missing: {response.status_code}"
+    return httpx.post(
+        f"{base_url}/oauth/authorize",
+        data={"request": match.group(1), "secret": secret},
+        timeout=CONNECT_TIMEOUT,
+        follow_redirects=False,
+    )
 
 
 def _probe_oauth_metadata(url: str) -> dict | None:
@@ -201,6 +216,7 @@ class TestLiveOAuthFlow:
             timeout=CONNECT_TIMEOUT,
             follow_redirects=False,
         )
+        auth_resp = _complete_live_authorization(mcp_base_url, auth_resp)
         assert auth_resp.status_code in (302, 307)
         location = auth_resp.headers["location"]
         assert "code=" in location
@@ -259,6 +275,7 @@ class TestJsonRpc:
             timeout=CONNECT_TIMEOUT,
             follow_redirects=False,
         )
+        auth_resp = _complete_live_authorization(mcp_base_url, auth_resp)
         code = auth_resp.headers["location"].split("code=")[1].split("&")[0]
 
         token_resp = httpx.post(
