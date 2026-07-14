@@ -1,3 +1,5 @@
+![VISION](docs/assets/vision.webp)
+
 # MCPRelay — Local MCP Gateway
 
 A local MCP (Model Context Protocol) gateway with vision, filesystem, browser automation, shell access, file sharing and built-in OAuth authentication.
