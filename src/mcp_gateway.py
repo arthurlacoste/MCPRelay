@@ -5,9 +5,8 @@ import json
 import logging
 import os
 import secrets
-import signal
 import subprocess
-import threading
+import atexit
 import base64
 import re
 from datetime import datetime, UTC
@@ -21,8 +20,10 @@ from fastmcp.client import Client
 from fastmcp.client.transports import StdioTransport
 from fastmcp.server.auth import RemoteAuthProvider
 from fastmcp.server.auth.providers.jwt import JWTVerifier
+from command_queue import CommandQueue
 from filesystem_config import get_filesystem_roots
 from lightweight_oauth import app as oauth_app
+from terminal_app import TERMINAL_APP_HTML, TERMINAL_APP_URI
 from tool_registry import configurable_tool, is_downstream_enabled
 from pydantic import AnyHttpUrl
 from starlette.routing import Mount
@@ -912,186 +913,159 @@ def keyboard_hotkey(keys: list[str], interval: float = 0.0) -> dict:
     }
 
 
-MAX_OUTPUT_CHARS = 50_000
 DEFAULT_COMMAND_TIMEOUT_SECONDS = float(os.getenv('MCP_COMMAND_TIMEOUT_SECONDS', '300'))
 MAX_CONCURRENT_COMMANDS = max(1, int(os.getenv('MCP_MAX_CONCURRENT_COMMANDS', '4')))
-COMMAND_KILL_GRACE_SECONDS = 1.0
-COMMAND_SEMAPHORE = threading.BoundedSemaphore(MAX_CONCURRENT_COMMANDS)
+MAX_COMMAND_LINES = max(100, int(os.getenv('MCP_COMMAND_MAX_LINES', '20000')))
+COMMAND_HISTORY_LIMIT = max(10, int(os.getenv('MCP_COMMAND_HISTORY_LIMIT', '2000')))
+COMMAND_DATABASE = Path(os.getenv('MCP_COMMAND_DATABASE', BASE_DIR / 'data' / 'commands.sqlite3'))
+TERMINAL_APP = {'resourceUri': TERMINAL_APP_URI, 'prefersBorder': True}
+TERMINAL_HELPER_APP = {'visibility': ['app', 'model']}
+TERMINAL_TOOL_META = {
+    'openai/outputTemplate': TERMINAL_APP_URI,
+    'openai/widgetAccessible': True,
+}
+TERMINAL_RESOURCE_META = {
+    'openai/widgetDescription': 'Live command queue and terminal output.',
+    'openai/widgetPrefersBorder': True,
+}
 
 
-def stream_pipe(pipe, logfile, lines: list, prefix=''):
-    for line in iter(pipe.readline, ''):
-        formatted = f'{prefix}{line}'
-
-        with open(logfile, 'a', encoding='utf-8') as f:
-            f.write(formatted)
-
-        print(formatted, end='')
-        lines.append(formatted)
-
-    pipe.close()
-
-
-def _popen_process_group_options() -> dict:
-    if os.name == 'nt':
-        return {'creationflags': subprocess.CREATE_NEW_PROCESS_GROUP}
-    return {'start_new_session': True}
-
-
-def terminate_process_tree(process: subprocess.Popen, grace_seconds: float = COMMAND_KILL_GRACE_SECONDS) -> None:
-    if process.poll() is not None:
-        return
-
-    if os.name == 'nt':
-        subprocess.run(
-            ['taskkill', '/PID', str(process.pid), '/T', '/F'],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        return
-
-    try:
-        os.killpg(process.pid, signal.SIGTERM)
-    except ProcessLookupError:
-        return
-
-    try:
-        process.wait(timeout=grace_seconds)
-        return
-    except subprocess.TimeoutExpired:
-        pass
-
-    try:
-        os.killpg(process.pid, signal.SIGKILL)
-    except ProcessLookupError:
-        pass
+def command_finished(execution_id: str, state: dict) -> None:
+    log_action('run_command_end', {
+        'execution_id': execution_id,
+        'status': state['status'],
+        'exit_code': state['exit_code'],
+        'result_ref': state['log_ref'],
+    })
+    preview = None
+    if state.pop('include_output', False):
+        page = command_queue.get_output(execution_id, limit=50)
+        preview = '\n'.join(line['text'] for line in page['lines'])[:4000]
+    append_tool_conversation_event(state.pop('conversation_id', None), 'run_command', {
+        'arguments': {'command': state['command'], 'purpose': state.pop('purpose', None)},
+        'status': state['status'],
+        'exit_code': state['exit_code'],
+        'duration_ms': state['duration_ms'],
+        'line_count': state['line_count'],
+        'truncated': state['truncated'],
+        'result_ref': state['log_ref'],
+        'result_included': preview is not None,
+        'output_preview': preview,
+    })
 
 
-@configurable_tool(mcp)
+command_queue = CommandQueue(
+    COMMAND_DATABASE,
+    STREAM_DIR,
+    worker_limit=MAX_CONCURRENT_COMMANDS,
+    max_lines_per_execution=MAX_COMMAND_LINES,
+    history_limit=COMMAND_HISTORY_LIMIT,
+    on_event=command_finished,
+)
+atexit.register(command_queue.close)
+
+
+@mcp.resource(
+    TERMINAL_APP_URI,
+    mime_type='text/html;profile=mcp-app',
+    meta=TERMINAL_RESOURCE_META,
+)
+def command_terminal_app() -> str:
+    return TERMINAL_APP_HTML
+
+
+@configurable_tool(
+    mcp,
+    app=TERMINAL_APP,
+    meta=TERMINAL_TOOL_META,
+    title='Run command',
+    annotations={'destructiveHint': True, 'openWorldHint': True},
+)
 def run_command(
     command: str,
+    cwd: str | None = None,
     conversation_id: str | None = None,
     purpose: str | None = None,
     include_output_in_conversation_log: bool = False,
     timeout_seconds: float = DEFAULT_COMMAND_TIMEOUT_SECONDS,
     chatgpt_url: str | None = None,
-) -> str:
-    safe_timeout = max(0.1, min(float(timeout_seconds), 86_400.0))
+) -> dict:
+    ensure_conversation_started(conversation_id, chatgpt_url, source_tool='run_command')
+    state = command_queue.enqueue(
+        command=command,
+        cwd=cwd,
+        timeout_seconds=timeout_seconds,
+        conversation_id=conversation_id,
+        purpose=purpose,
+        include_output=include_output_in_conversation_log,
+    )
+    log_action('run_command_start', {
+        'execution_id': state['execution_id'],
+        'command': command,
+        'cwd': state['cwd'],
+        'conversation_id': conversation_id,
+        'purpose': purpose,
+        'timeout_seconds': timeout_seconds,
+    })
+    if state['status'] in {'waiting', 'starting'}:
+        state['status'] = 'queued' if state['status'] == 'waiting' else 'running'
+    return state
 
-    with COMMAND_SEMAPHORE:
-        ensure_conversation_started(conversation_id, chatgpt_url, source_tool='run_command')
-        command_id = datetime.now(UTC).strftime('%Y%m%d_%H%M%S_%f')
-        stream_log = STREAM_DIR / f'command_{command_id}.log'
 
-        log_action('run_command_start', {
-            'command': command,
-            'stream_log': str(stream_log),
-            'conversation_id': conversation_id,
-            'purpose': purpose,
-            'timeout_seconds': safe_timeout,
-        })
+@configurable_tool(
+    mcp, app=TERMINAL_HELPER_APP, title='Get command queue',
+    annotations={'readOnlyHint': True, 'idempotentHint': True},
+)
+def get_queue_state(visible_limit: int = 8) -> dict:
+    return command_queue.queue_state(visible_limit)
 
-        with open(stream_log, 'w', encoding='utf-8') as f:
-            f.write(f'COMMAND:\n{command}\n\n')
 
-        process = subprocess.Popen(
-            command,
-            shell=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            bufsize=1,
-            universal_newlines=True,
-            **_popen_process_group_options(),
-        )
+@configurable_tool(
+    mcp, app=TERMINAL_HELPER_APP, title='Get command state',
+    annotations={'readOnlyHint': True, 'idempotentHint': True},
+)
+def get_command_state(execution_id: str, after_cursor: int = 0, limit: int = 200) -> dict:
+    return command_queue.get_state(execution_id, after_cursor, limit)
 
-        stdout_lines: list[str] = []
-        stderr_lines: list[str] = []
-        stdout_thread = threading.Thread(
-            target=stream_pipe,
-            args=(process.stdout, stream_log, stdout_lines, ''),
-            daemon=True,
-        )
-        stderr_thread = threading.Thread(
-            target=stream_pipe,
-            args=(process.stderr, stream_log, stderr_lines, '[stderr] '),
-            daemon=True,
-        )
-        stdout_thread.start()
-        stderr_thread.start()
 
-        timed_out = False
-        try:
-            process.wait(timeout=safe_timeout)
-        except subprocess.TimeoutExpired:
-            timed_out = True
-            terminate_process_tree(process)
-            process.wait()
+@configurable_tool(
+    mcp, app=TERMINAL_HELPER_APP, title='Stop command',
+    annotations={'destructiveHint': True, 'idempotentHint': True},
+)
+def stop_command(execution_id: str) -> dict:
+    return command_queue.stop(execution_id)
 
-        stdout_thread.join(timeout=COMMAND_KILL_GRACE_SECONDS + 1)
-        stderr_thread.join(timeout=COMMAND_KILL_GRACE_SECONDS + 1)
 
-        stdout_text = ''.join(stdout_lines)
-        stderr_text = ''.join(stderr_lines)
-        exit_code = process.returncode
+@configurable_tool(
+    mcp, app=TERMINAL_HELPER_APP, title='Get command output',
+    annotations={'readOnlyHint': True, 'idempotentHint': True},
+)
+def get_command_output(
+    execution_id: str,
+    cursor: int = 0,
+    limit: int = 500,
+    after_cursor: int | None = None,
+) -> dict:
+    effective_cursor = cursor if after_cursor is None else after_cursor
+    return command_queue.get_output(execution_id, effective_cursor, limit)
 
-        with open(stream_log, 'a', encoding='utf-8') as f:
-            if timed_out:
-                f.write(f'\n\nTIMED OUT AFTER: {safe_timeout:g}s\n')
-            f.write(f'\nEXIT CODE: {exit_code}\n')
 
-        log_action('run_command_end', {
-            'command': command,
-            'exit_code': exit_code,
-            'stream_log': str(stream_log),
-            'timed_out': timed_out,
-            'timeout_seconds': safe_timeout,
-        })
+@configurable_tool(
+    mcp, app=TERMINAL_HELPER_APP, title='Download command log',
+    annotations={'readOnlyHint': True, 'idempotentHint': True},
+)
+def get_command_log(execution_id: str, offset: int = 0, limit_bytes: int = 262_144) -> dict:
+    return command_queue.get_log(execution_id, offset, limit_bytes)
 
-        append_tool_conversation_event(conversation_id, 'run_command', {
-            'arguments': {
-                'command': command,
-                'purpose': purpose,
-                'timeout_seconds': safe_timeout,
-            },
-            'exit_code': exit_code,
-            'timed_out': timed_out,
-            'result_ref': f'logs/commands/{stream_log.name}',
-            'result_included': include_output_in_conversation_log,
-            'output_preview': (
-                (stdout_text + '\n' + stderr_text)[:4000]
-                if include_output_in_conversation_log else None
-            ),
-        })
 
-        truncated = False
-        if len(stdout_text) > MAX_OUTPUT_CHARS:
-            stdout_text = stdout_text[:MAX_OUTPUT_CHARS] + '\n… [stdout truncated]'
-            truncated = True
-        if len(stderr_text) > MAX_OUTPUT_CHARS:
-            stderr_text = stderr_text[:MAX_OUTPUT_CHARS] + '\n… [stderr truncated]'
-            truncated = True
-
-        parts = [
-            f'COMMAND: {command}',
-            f'EXIT CODE: {exit_code}',
-        ]
-        if timed_out:
-            parts.append(f'TIMED OUT AFTER: {safe_timeout:g}s')
-        parts.extend(['', 'STDOUT:', stdout_text])
-
-        if stderr_text:
-            parts.extend(['', 'STDERR:', stderr_text])
-
-        parts.extend(['', f'Full log: {stream_log}'])
-        if truncated:
-            parts.append(
-                f'\nOutput truncated at {MAX_OUTPUT_CHARS} characters per stream. '
-                'See log file for full output.'
-            )
-
-        return '\n'.join(parts)
+@configurable_tool(
+    mcp, app=TERMINAL_HELPER_APP, title='Resolve command recovery',
+    annotations={'destructiveHint': True, 'idempotentHint': True},
+)
+def resolve_command_recovery(action: Literal['resume', 'clear']) -> dict:
+    result = command_queue.resolve_recovery(action)
+    log_action('command_recovery_resolved', {'action': action})
+    return result
 
 
 if __name__ == '__main__':

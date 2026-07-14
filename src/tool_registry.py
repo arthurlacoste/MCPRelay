@@ -32,10 +32,11 @@ def is_downstream_enabled(namespace: str, name: str, config: dict[str, Any] | No
     return bool(downstream.get('tools', {}).get(name, True))
 
 
-def configurable_tool(mcp, name: str | None = None) -> Callable:
+def configurable_tool(mcp, name: str | None = None, **tool_options: Any) -> Callable:
     def decorator(func):
         tool_name = name or func.__name__
         if not is_tool_enabled(tool_name):
             return func
-        return mcp.tool(name=name)(func) if name else mcp.tool()(func)
+        options = {'name': name, **tool_options} if name else tool_options
+        return mcp.tool(**options)(func)
     return decorator

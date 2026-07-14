@@ -1,86 +1,95 @@
 import asyncio
-import statistics
 import sys
-import tempfile
 import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / 'src'))
 
 from fastmcp import Client
+from command_queue import CommandQueue
 import mcp_gateway as mod
 
 
-def isolated_dirs(tmp_path):
-    mod.CONVERSATION_DIR = tmp_path
-    mod.STREAM_DIR = tmp_path
+def install_queue(tmp_path):
+    mod.command_queue.close()
+    mod.command_queue = CommandQueue(tmp_path / 'commands.sqlite3', tmp_path, worker_limit=4, on_event=mod.command_finished)
 
 
-async def call(command: str, timeout_seconds: float = 5):
-    async with Client(mod.mcp) as client:
-        started = time.perf_counter()
-        result = await asyncio.wait_for(
-            client.call_tool('run_command', {
-                'command': command,
-                'timeout_seconds': timeout_seconds,
-            }),
-            timeout=timeout_seconds + 3,
-        )
-        return time.perf_counter() - started, str(result)
+async def tool(client, name, arguments):
+    result = await client.call_tool(name, arguments)
+    return result.structured_content or result.data
 
 
-def test_fastmcp_run_command_returns(tmp_path):
-    isolated_dirs(tmp_path)
-    elapsed, result = asyncio.run(call(f'"{sys.executable}" -c "print(\'ok\')"'))
-    assert elapsed < 2
-    assert 'ok' in result
+def test_fastmcp_run_command_returns_immediately(tmp_path):
+    install_queue(tmp_path)
+
+    async def scenario():
+        async with Client(mod.mcp) as client:
+            started = time.perf_counter()
+            result = await tool(client, 'run_command', {
+                'command': f'"{sys.executable}" -c "import time; time.sleep(.5); print(\'ok\')"',
+            })
+            return time.perf_counter() - started, result
+
+    elapsed, result = asyncio.run(scenario())
+    assert elapsed < .25
+    assert result['execution_id'].startswith('exec_')
+    assert result['status'] in {'queued', 'starting', 'running'}
 
 
 def test_slow_command_does_not_block_lightweight_tool(tmp_path):
-    isolated_dirs(tmp_path)
+    install_queue(tmp_path)
 
     async def scenario():
         async with Client(mod.mcp) as client:
-            slow = asyncio.create_task(client.call_tool('run_command', {
-                'command': f'"{sys.executable}" -c "import time; time.sleep(0.8)"',
-            }))
-            await asyncio.sleep(0.05)
+            await tool(client, 'run_command', {
+                'command': f'"{sys.executable}" -c "import time; time.sleep(.8)"',
+            })
             started = time.perf_counter()
             await client.call_tool('conversation_start', {})
-            ping_elapsed = time.perf_counter() - started
-            await slow
-            return ping_elapsed
-
-    assert asyncio.run(scenario()) < 0.25
-
-
-def test_commands_run_concurrently(tmp_path):
-    isolated_dirs(tmp_path)
-
-    async def scenario():
-        async with Client(mod.mcp) as client:
-            command = f'"{sys.executable}" -c "import time; time.sleep(0.3)"'
-            started = time.perf_counter()
-            await asyncio.gather(*[
-                client.call_tool('run_command', {'command': command})
-                for _ in range(4)
-            ])
             return time.perf_counter() - started
 
-    assert asyncio.run(scenario()) < 0.9
+    assert asyncio.run(scenario()) < .25
 
 
-def test_noop_latency_stays_low_without_folder_scan(tmp_path):
-    isolated_dirs(tmp_path)
+def test_commands_queue_and_run_concurrently(tmp_path):
+    install_queue(tmp_path)
 
     async def scenario():
         async with Client(mod.mcp) as client:
-            samples = []
-            command = f'"{sys.executable}" -c "pass"'
-            for _ in range(8):
-                started = time.perf_counter()
-                await client.call_tool('run_command', {'command': command})
-                samples.append(time.perf_counter() - started)
-            return statistics.median(samples)
+            command = f'"{sys.executable}" -c "import time; time.sleep(.3)"'
+            results = await asyncio.gather(*[
+                tool(client, 'run_command', {'command': command}) for _ in range(5)
+            ])
+            state = await tool(client, 'get_queue_state', {})
+            return results, state
 
-    assert asyncio.run(scenario()) < 0.1
+    results, state = asyncio.run(scenario())
+    assert len({result['execution_id'] for result in results}) == 5
+    assert state['workers']['limit'] == 4
+    assert state['queued'] >= 1
+
+
+def test_state_and_output_tools_poll_by_cursor(tmp_path):
+    install_queue(tmp_path)
+
+    async def scenario():
+        async with Client(mod.mcp) as client:
+            run = await tool(client, 'run_command', {
+                'command': f'"{sys.executable}" -c "print(\'one\'); print(\'two\')"',
+            })
+            deadline = time.monotonic() + 3
+            while time.monotonic() < deadline:
+                state = await tool(client, 'get_command_state', {
+                    'execution_id': run['execution_id'], 'after_cursor': 0, 'limit': 1,
+                })
+                if state['status'] == 'success':
+                    return state, await tool(client, 'get_command_output', {
+                        'execution_id': run['execution_id'], 'cursor': state['cursor'],
+                    })
+                await asyncio.sleep(.02)
+            raise AssertionError('command did not finish')
+
+    state, rest = asyncio.run(scenario())
+    assert state['lines'][0]['text'] == 'one'
+    assert rest['lines'][0]['text'] == 'two'

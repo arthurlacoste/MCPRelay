@@ -2,6 +2,12 @@
 
 [tools]
 run_command = true
+get_queue_state = true
+get_command_state = true
+stop_command = true
+get_command_output = true
+get_command_log = true
+resolve_command_recovery = true
 public_file_share = true
 public_file_list = true
 public_file_revoke = true
