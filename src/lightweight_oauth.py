@@ -13,7 +13,7 @@ from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.hazmat.primitives import serialization
 from dotenv import load_dotenv
 from fastapi import FastAPI, Form, Request
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 
 from oauth_access_gate import OAuthAccessGate, client_address, login_page, trusted_proxy_networks
 
@@ -154,6 +154,15 @@ def oauth_metadata() -> dict:
 @app.get("/.well-known/openid-configuration")
 def metadata():
     return oauth_metadata()
+
+
+@app.get("/oauth/assets/vision.webp", include_in_schema=False)
+def oauth_vision():
+    return FileResponse(
+        BASE_DIR / "docs" / "assets" / "vision.webp",
+        media_type="image/webp",
+        headers={"Cache-Control": "public, max-age=86400"},
+    )
 
 
 @app.post("/oauth/register")
