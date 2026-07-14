@@ -1,7 +1,18 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [ -f "$SCRIPT_DIR/../run.sh" ]; then
+  PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+elif [ -f "$PWD/run.sh" ]; then
+  PROJECT_DIR="$PWD"
+elif [ -f "$HOME/MCPRelay/run.sh" ]; then
+  PROJECT_DIR="$HOME/MCPRelay"
+else
+  printf 'Error: MCPRelay project not found. Run this command from the repository root.\n' >&2
+  exit 1
+fi
+
 ENV_FILE="$PROJECT_DIR/config/.env"
 NGROK_PORT="8761"
 NGROK_LOG="/tmp/mcprelay-ngrok-change.log"
@@ -17,6 +28,7 @@ command -v jq >/dev/null 2>&1 || die "jq is required."
 mkdir -p "$PROJECT_DIR/config"
 
 info "Change ngrok account"
+echo "Project: $PROJECT_DIR"
 echo "Get the new token at: https://dashboard.ngrok.com/get-started/your-authtoken"
 read -r -s -p "Paste the new ngrok authtoken: " NGROK_AUTHTOKEN
 echo
