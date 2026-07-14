@@ -495,3 +495,11 @@ macOS/Linux background mode:
 ```
 
 Stop the public tunnel whenever it is not in use.
+
+## Asynchronous command terminal
+
+`run_command` returns an execution ID immediately. ChatGPT displays the MCPRelay Live Queue app and polls command output by cursor. Use `get_command_state`, `get_command_output`, `get_command_log`, and `stop_command` for programmatic control. `get_command_log` securely resolves the execution ID to its backend log and pages the complete file by byte offset.
+
+The queue and output index are stored in SQLite at `data/commands.sqlite3`; full logs remain in `logs/commands/`. Configure worker and retention limits with `MCP_MAX_CONCURRENT_COMMANDS`, `MCP_COMMAND_TIMEOUT_SECONDS`, `MCP_COMMAND_MAX_LINES`, and `MCP_COMMAND_HISTORY_LIMIT`. `MCP_COMMAND_DATABASE` can override the database path.
+
+After a gateway restart, formerly active commands become `interrupted` and pending commands remain suspended. The widget asks whether to **Relancer** (resume) or **Vider** (cancel) them before any recovered command starts.
