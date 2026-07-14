@@ -35,7 +35,6 @@ STREAM_DIR = BASE_DIR / 'logs' / 'commands'
 VISION_DIR = BASE_DIR / 'logs' / 'vision'
 CONVERSATION_DIR = BASE_DIR / 'logs' / 'conversations'
 PUBLIC_SHARES_FILE = BASE_DIR / 'data' / 'public_file_shares.json'
-COMMAND_SCAN_ROOT = Path(os.getenv('MCP_COMMAND_SCAN_ROOT', str(BASE_DIR)))
 FILESYSTEM_ROOTS = get_filesystem_roots(BASE_DIR)
 STREAM_DIR.mkdir(parents=True, exist_ok=True)
 VISION_DIR.mkdir(parents=True, exist_ok=True)
@@ -90,16 +89,6 @@ def log_action(action: str, payload: dict | None = None):
 
     with open(LOG_FILE, 'a', encoding='utf-8') as f:
         f.write(json.dumps(entry, ensure_ascii=False) + '\n')
-
-
-def snapshot_files(root: Path) -> set[str]:
-    files: set[str] = set()
-
-    for current_root, _, filenames in os.walk(root):
-        current_path = Path(current_root)
-        files.update(str(current_path / filename) for filename in filenames)
-
-    return files
 
 
 def load_public_shares() -> dict:
@@ -949,8 +938,6 @@ async def run_command(
     command_id = datetime.now(UTC).strftime('%Y%m%d_%H%M%S_%f')
     stream_log = STREAM_DIR / f'command_{command_id}.log'
 
-    before_files = snapshot_files(COMMAND_SCAN_ROOT)
-
     log_action('run_command_start', {
         'command': command,
         'stream_log': str(stream_log),
@@ -995,22 +982,13 @@ async def run_command(
     stdout_text = ''.join(stdout_lines)
     stderr_text = ''.join(stderr_lines)
 
-    after_files = snapshot_files(COMMAND_SCAN_ROOT)
-    created_files = sorted(list(after_files - before_files))
-
     with open(stream_log, 'a', encoding='utf-8') as f:
         f.write(f'\n\nEXIT CODE: {process.returncode}\n')
-
-        if created_files:
-            f.write('\nCREATED FILES:\n')
-            f.write('\n'.join(created_files[:200]))
-            f.write('\n')
 
     log_action('run_command_end', {
         'command': command,
         'exit_code': process.returncode,
         'stream_log': str(stream_log),
-        'created_files': created_files[:200]
     })
 
     append_tool_conversation_event(conversation_id, 'run_command', {
@@ -1019,7 +997,6 @@ async def run_command(
             'purpose': purpose,
         },
         'exit_code': process.returncode,
-        'created_files': created_files[:200],
         'result_ref': f'logs/commands/{stream_log.name}',
         'result_included': include_output_in_conversation_log,
         'output_preview': (
@@ -1050,11 +1027,6 @@ async def run_command(
         parts.append('')
         parts.append('STDERR:')
         parts.append(stderr_text)
-
-    if created_files:
-        parts.append('')
-        parts.append(f'CREATED FILES ({len(created_files)}):')
-        parts.extend(created_files[:50])
 
     parts.append('')
     parts.append(f'Full log: {stream_log}')

@@ -284,7 +284,6 @@ Platform notes:
 - Windows: run inside a normal unlocked desktop session. Windows service/session isolation prevents GUI automation.
 - `CHATGPT_STARTUP_BROWSER_ASSIST` uses AppleScript and is macOS-only. It is disabled by default. Core MCP features do not depend on it.
 - Shell commands use the native operating-system shell. Commands written for Bash will not automatically work in Windows `cmd.exe`.
-- `run_command` tracks files created under the project root by default. Set `MCP_COMMAND_SCAN_ROOT` in `config/.env` to scan another absolute path.
 
 ## 11. Enable ChatGPT developer mode
 
