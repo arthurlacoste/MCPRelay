@@ -29,20 +29,37 @@ cleanup_ngrok() {
 
 fix_obsolete_bullseye_backports() {
   local source_file backup_file changed=0
-  local -a apt_sources=(/etc/apt/sources.list /etc/apt/sources.list.d/*.list)
 
-  for source_file in "${apt_sources[@]}"; do
-    [ -f "$source_file" ] || continue
-    grep -Eq '^[[:space:]]*deb(-src)?[[:space:]].*[[:space:]]bullseye-backports([[:space:]]|$)' "$source_file" || continue
+  while IFS= read -r -d '' source_file; do
+    grep -q 'bullseye-backports' "$source_file" || continue
 
     backup_file="${source_file}.mcprelay-backup"
     sudo cp -n "$source_file" "$backup_file"
-    sudo sed -Ei \
-      '/^[[:space:]]*deb(-src)?[[:space:]].*[[:space:]]bullseye-backports([[:space:]]|$)/s/^/# Disabled by MCPRelay installer: /' \
-      "$source_file"
+
+    case "$source_file" in
+      *.sources)
+        sudo awk '
+          BEGIN { RS=""; ORS="\n\n" }
+          /Suites:.*bullseye-backports/ {
+            print "# Disabled by MCPRelay installer: obsolete bullseye-backports stanza"
+            next
+          }
+          { print }
+        ' "$source_file" | sudo tee "${source_file}.tmp" >/dev/null
+        sudo mv "${source_file}.tmp" "$source_file"
+        ;;
+      *)
+        sudo sed -i '/bullseye-backports/s/^/# Disabled by MCPRelay installer: /' "$source_file"
+        ;;
+    esac
+
     warn "Disabled obsolete bullseye-backports entries in $source_file"
     changed=1
-  done
+  done < <(
+    find /etc/apt -maxdepth 2 -type f \
+      \( -name 'sources.list' -o -name '*.list' -o -name '*.sources' \) \
+      -print0 2>/dev/null
+  )
 
   if [ "$changed" -eq 1 ]; then
     echo "Backups were saved with the .mcprelay-backup suffix."
