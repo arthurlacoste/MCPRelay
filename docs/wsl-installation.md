@@ -18,11 +18,12 @@ The installer:
 - clones or updates MCPRelay;
 - creates the Python virtual environment;
 - asks which directories MCPRelay may access;
+- asks for an OAuth access secret or securely generates one;
 - opens a temporary ngrok tunnel;
-- writes `config/.env` with the detected public URL;
+- writes `config/.env` with the detected public URL and only the Argon2id secret hash;
 - prints the exact custom MCP app settings for ChatGPT.
 
-The ngrok token is entered silently and saved only by ngrok in its local configuration. It is not written to the project `.env` file.
+The ngrok token is entered silently and saved only by ngrok in its local configuration. It is not written to the project `.env` file. If the installer generates the OAuth access secret, it displays it once; save it immediately in a password manager.
 
 ## Start MCPRelay
 
@@ -54,7 +55,9 @@ Server URL: https://YOUR-NGROK-DOMAIN/mcp
 Authentication: OAuth
 ```
 
-OAuth registration and token exchange are automatic. Do not paste an OAuth token into ChatGPT.
+OAuth registration and token exchange are automatic. When ChatGPT opens the MCPRelay authorization page, enter the access secret and click **Authorize**. Do not paste an OAuth token into ChatGPT.
+
+To rotate the secret, create a new Argon2id hash, update `OAUTH_ACCESS_SECRET_HASH` in `config/.env`, and restart. Existing tokens remain valid for their configured TTL. For emergency revocation, stop MCPRelay, delete `data/oauth_private_key.pem`, and restart to invalidate all existing tokens.
 
 ## WSL limitations
 

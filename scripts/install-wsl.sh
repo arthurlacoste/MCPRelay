@@ -225,22 +225,66 @@ done
 }
 ok "Public URL: $PUBLIC_URL"
 
+info "Configuring OAuth access"
+EXISTING_OAUTH_HASH=""
+if [ -f config/.env ]; then
+  EXISTING_OAUTH_HASH="$(sed -n 's/^OAUTH_ACCESS_SECRET_HASH=//p' config/.env | tail -n1)"
+fi
+if [ -n "$EXISTING_OAUTH_HASH" ] && ! prompt_yes_no "Rotate the existing OAuth access secret?" "n"; then
+  OAUTH_ACCESS_SECRET_HASH="$EXISTING_OAUTH_HASH"
+  GENERATED_OAUTH_SECRET=""
+else
+  printf 'OAuth access secret\nLeave empty to generate a secure secret:\n'
+  read -r -s OAUTH_ACCESS_SECRET
+  echo
+  GENERATED_OAUTH_SECRET=""
+  if [ -z "$OAUTH_ACCESS_SECRET" ]; then
+    OAUTH_ACCESS_SECRET="$(.venv/bin/python -c 'import secrets; print(secrets.token_urlsafe(32))')"
+    GENERATED_OAUTH_SECRET="$OAUTH_ACCESS_SECRET"
+  else
+    read -r -s -p "Confirm OAuth access secret: " OAUTH_ACCESS_SECRET_CONFIRM
+    echo
+    [ "$OAUTH_ACCESS_SECRET" = "$OAUTH_ACCESS_SECRET_CONFIRM" ] || die "OAuth access secrets do not match."
+    unset OAUTH_ACCESS_SECRET_CONFIRM
+  fi
+  OAUTH_ACCESS_SECRET_HASH="$(OAUTH_ACCESS_SECRET="$OAUTH_ACCESS_SECRET" .venv/bin/python -c 'import os; from argon2 import PasswordHasher; print(PasswordHasher().hash(os.environ["OAUTH_ACCESS_SECRET"]))')"
+  unset OAUTH_ACCESS_SECRET
+fi
+unset EXISTING_OAUTH_HASH
+
 info "Writing config/.env"
 mkdir -p config
-cat > config/.env <<EOF
-MCP_BASE_URL=$PUBLIC_URL
-OAUTH_ISSUER=$PUBLIC_URL/oauth
-LOCAL_OAUTH_ISSUER=$PUBLIC_URL/oauth
+ENV_TMP="$(mktemp config/.env.tmp.XXXXXX)"
+chmod 600 "$ENV_TMP"
+if [ -f config/.env ]; then
+  grep -vE '^(MCP_BASE_URL|OAUTH_ISSUER|LOCAL_OAUTH_ISSUER|OAUTH_ACCESS_SECRET_HASH|OAUTH_TRUSTED_PROXY_NETWORKS)=' config/.env > "$ENV_TMP"
+else
+  cat > "$ENV_TMP" <<'EOF'
 OAUTH_AUDIENCE=https://mcp.local
 MCP_AUDIENCE=https://mcp.local
-OAUTH_TOKEN_TTL_SECONDS=3600
+OAUTH_TOKEN_TTL_SECONDS=2592000
+OAUTH_LOGIN_MAX_ATTEMPTS=5
 OAUTH_AUTO_REGISTER_AUTH_CLIENTS=true
 ENABLE_OAUTH=true
-MCP_FILESYSTEM_ROOTS=$FILESYSTEM_ROOTS
 CHATGPT_STARTUP_BROWSER_ASSIST=false
 EOF
-chmod 600 config/.env
+  printf 'MCP_FILESYSTEM_ROOTS=%s\nMCP_COMMAND_SCAN_ROOT=%s\n' "$FILESYSTEM_ROOTS" "$FILESYSTEM_ROOTS" >> "$ENV_TMP"
+fi
+{
+  printf 'MCP_BASE_URL=%s\n' "$PUBLIC_URL"
+  printf 'OAUTH_ISSUER=%s/oauth\n' "$PUBLIC_URL"
+  printf 'LOCAL_OAUTH_ISSUER=%s/oauth\n' "$PUBLIC_URL"
+  printf 'OAUTH_ACCESS_SECRET_HASH=%s\n' "$OAUTH_ACCESS_SECRET_HASH"
+  printf 'OAUTH_TRUSTED_PROXY_NETWORKS=127.0.0.0/8,::1/128\n'
+} >> "$ENV_TMP"
+mv "$ENV_TMP" config/.env
+unset OAUTH_ACCESS_SECRET_HASH
 ok "Configuration saved"
+
+if [ -n "$GENERATED_OAUTH_SECRET" ]; then
+  printf '\nYour MCPRelay access secret:\n\n%s\n\nSave it now. It will not be shown again.\n' "$GENERATED_OAUTH_SECRET"
+  unset GENERATED_OAUTH_SECRET
+fi
 
 cleanup_ngrok
 TEMP_NGROK_PID=""

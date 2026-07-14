@@ -1,0 +1,193 @@
+#!/usr/bin/env python3
+"""Interactive POSIX launcher for MCPRelay services and ngrok."""
+
+from __future__ import annotations
+
+import os
+import select
+import shutil
+import signal
+import subprocess
+import sys
+import termios
+import time
+import tty
+from contextlib import contextmanager
+from pathlib import Path
+
+from dotenv import dotenv_values
+
+
+BASE_DIR = Path(__file__).resolve().parent.parent
+CONFIG_FILE = BASE_DIR / "config" / ".env"
+PYTHON = BASE_DIR / ".venv" / "bin" / "python"
+NGROK_LOG = Path("/tmp/mcprelay-ngrok-run.log")
+NGROK_PORT = 8761
+NGROK_INSPECT_URL = "http://127.0.0.1:4040"
+CHATGPT_CONNECTOR_URL = (
+    "https://chatgpt.com/plugins#settings/Connectors"
+    "?create-connector=true&redirectAfter=%2Fplugins"
+)
+
+STOP_REQUESTED = False
+
+
+class StartupError(RuntimeError):
+    """Raised when a managed process fails during startup."""
+
+
+class ShutdownRequested(RuntimeError):
+    """Raised when shutdown is requested during startup."""
+
+
+def request_shutdown(*_args) -> None:
+    global STOP_REQUESTED
+    STOP_REQUESTED = True
+
+
+def show_connection_details() -> None:
+    values = dotenv_values(CONFIG_FILE)
+    public_url = (values.get("MCP_BASE_URL") or "").strip()
+    access_secret = (values.get("OAUTH_ACCESS_SECRET") or "").strip()
+    if not public_url or not access_secret:
+        print("! OAuth setup incomplete. Run: ./run.sh setup", flush=True)
+        return
+
+    print("\n\033[1;34mConnection details\033[0m")
+    print(f"Public MCP:      {public_url}/mcp")
+    print(f"Public OAuth:    {public_url}/oauth")
+    print(f"Local MCP:       http://127.0.0.1:{NGROK_PORT}/mcp")
+    print(f"Local OAuth:     http://127.0.0.1:{NGROK_PORT}/oauth")
+    print(f"OAuth health:    http://127.0.0.1:{NGROK_PORT}/oauth/health")
+    print(f"ngrok inspector: {NGROK_INSPECT_URL}")
+    print(f"ChatGPT setup:   {CHATGPT_CONNECTOR_URL}")
+    print(f"Access secret:   {access_secret}", flush=True)
+
+
+@contextmanager
+def terminal_input():
+    if not sys.stdin.isatty():
+        yield None
+        return
+
+    fd = sys.stdin.fileno()
+    previous = termios.tcgetattr(fd)
+    tty.setcbreak(fd)
+    try:
+        yield fd
+    finally:
+        termios.tcsetattr(fd, termios.TCSADRAIN, previous)
+
+
+def wait_for_start(process: subprocess.Popen, name: str, seconds: float = 2) -> None:
+    deadline = time.monotonic() + seconds
+    while time.monotonic() < deadline:
+        if STOP_REQUESTED:
+            raise ShutdownRequested
+        code = process.poll()
+        if code is not None:
+            raise StartupError(f"{name} failed to start (exit {code}).")
+        time.sleep(0.1)
+
+
+def terminate_group(process: subprocess.Popen | None) -> None:
+    if process is None or process.poll() is not None:
+        return
+    try:
+        os.killpg(process.pid, signal.SIGTERM)
+    except ProcessLookupError:
+        return
+    try:
+        process.wait(timeout=4)
+    except subprocess.TimeoutExpired:
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        try:
+            process.wait(timeout=1)
+        except subprocess.TimeoutExpired:
+            pass
+
+
+def start_services() -> subprocess.Popen:
+    return subprocess.Popen(
+        [str(PYTHON), str(BASE_DIR / "start_services.py")],
+        cwd=BASE_DIR,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        start_new_session=True,
+    )
+
+
+def start_ngrok() -> tuple[subprocess.Popen, str]:
+    if shutil.which("caffeinate"):
+        command = ["caffeinate", "-i", "ngrok", "http", str(NGROK_PORT)]
+        label = "caffeinate active"
+    else:
+        command = ["ngrok", "http", str(NGROK_PORT)]
+        label = "sleep inhibition inactive"
+
+    with NGROK_LOG.open("w", encoding="utf-8") as log_file:
+        process = subprocess.Popen(
+            command,
+            cwd=BASE_DIR,
+            stdout=log_file,
+            stderr=subprocess.STDOUT,
+            start_new_session=True,
+        )
+    return process, label
+
+
+def monitor(services: subprocess.Popen, ngrok: subprocess.Popen) -> int:
+    with terminal_input() as input_fd:
+        print("\nPress m for connection details. Ctrl+C to stop.", flush=True)
+        while not STOP_REQUESTED:
+            if services.poll() is not None:
+                print("Error: Gateway stopped unexpectedly.", file=sys.stderr)
+                return 1
+            if ngrok.poll() is not None:
+                print(f"Error: ngrok stopped. Check {NGROK_LOG}.", file=sys.stderr)
+                return 1
+
+            if input_fd is None:
+                time.sleep(0.2)
+                continue
+
+            readable, _, _ = select.select([input_fd], [], [], 0.2)
+            if readable and os.read(input_fd, 1).lower() == b"m":
+                show_connection_details()
+    return 0
+
+
+def main() -> int:
+    services = None
+    ngrok = None
+    signal.signal(signal.SIGINT, request_shutdown)
+    signal.signal(signal.SIGTERM, request_shutdown)
+
+    try:
+        services = start_services()
+        wait_for_start(services, "Gateway")
+        ngrok, keep_awake = start_ngrok()
+        wait_for_start(ngrok, "ngrok")
+
+        print(f"\033[1;32m✓ Gateway running (PID {services.pid})\033[0m")
+        print(f"\033[1;32m✓ ngrok running (PID {ngrok.pid}) [{keep_awake}]\033[0m")
+        print(f"  ngrok inspector → {NGROK_INSPECT_URL}")
+        return monitor(services, ngrok)
+    except ShutdownRequested:
+        return 0
+    except (OSError, StartupError) as exc:
+        print(f"Error: {exc}", file=sys.stderr, flush=True)
+        return 1
+    finally:
+        if services is not None or ngrok is not None:
+            print("\n⟶ stopping services…", flush=True)
+            terminate_group(ngrok)
+            terminate_group(services)
+            print("✓ Services stopped", flush=True)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
