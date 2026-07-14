@@ -4,6 +4,7 @@ set -Eeuo pipefail
 REPO_URL="https://github.com/arthurlacoste/MCPRelay.git"
 DEFAULT_INSTALL_DIR="$HOME/MCPRelay"
 NODE_VERSION="22"
+PYTHON_VERSION="3.12"
 NGROK_PORT="8761"
 
 info() { printf '\n\033[1;34m%s\033[0m\n' "$*"; }
@@ -72,7 +73,7 @@ is_wsl || die "Run this script inside Ubuntu/WSL, not PowerShell."
 command -v sudo >/dev/null 2>&1 || die "sudo is required."
 
 info "MCPRelay WSL installer"
-echo "This installs MCPRelay, Python dependencies, Node.js 22 and ngrok."
+echo "This installs MCPRelay, Python $PYTHON_VERSION, Node.js $NODE_VERSION and ngrok."
 echo "GUI automation from WSL can be limited. Filesystem, shell, OAuth and MCP work normally."
 
 INSTALL_DIR="$(prompt_default "Installation directory" "$DEFAULT_INSTALL_DIR")"
@@ -93,9 +94,6 @@ sudo apt-get install -y \
   git \
   jq \
   build-essential \
-  python3 \
-  python3-pip \
-  python3-venv \
   python3-tk \
   scrot
 ok "System packages installed"
@@ -111,6 +109,15 @@ nvm install "$NODE_VERSION"
 nvm alias default "$NODE_VERSION"
 nvm use "$NODE_VERSION"
 ok "Node $(node --version) active"
+
+info "Installing Python $PYTHON_VERSION with uv"
+if [ ! -x "$HOME/.local/bin/uv" ]; then
+  curl -LsSf https://astral.sh/uv/install.sh | sh
+fi
+export PATH="$HOME/.local/bin:$PATH"
+command -v uv >/dev/null 2>&1 || die "uv installation failed."
+uv python install "$PYTHON_VERSION"
+ok "Python $PYTHON_VERSION installed"
 
 info "Installing ngrok"
 if ! command -v ngrok >/dev/null 2>&1; then
@@ -134,13 +141,11 @@ fi
 cd "$INSTALL_DIR"
 ok "Repository ready at $INSTALL_DIR"
 
-info "Creating Python environment"
-python3 -m venv .venv
-# shellcheck source=/dev/null
-source .venv/bin/activate
-python -m pip install --upgrade pip
-python -m pip install -r requirements.txt
-ok "Python dependencies installed"
+info "Creating Python $PYTHON_VERSION environment"
+rm -rf .venv
+uv venv --python "$PYTHON_VERSION" .venv
+uv pip install --python .venv/bin/python -r requirements.txt
+ok "Python dependencies installed with $(.venv/bin/python --version)"
 
 info "Connecting ngrok"
 if ! ngrok config check >/dev/null 2>&1; then
