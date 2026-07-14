@@ -1,15 +1,20 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
+PROJECT_ARG="${1:-}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-if [ -f "$SCRIPT_DIR/../run.sh" ]; then
-  PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+if [ -n "$PROJECT_ARG" ] && [ -f "$PROJECT_ARG/run.sh" ]; then
+  PROJECT_DIR="$(cd "$PROJECT_ARG" && pwd)"
 elif [ -f "$PWD/run.sh" ]; then
   PROJECT_DIR="$PWD"
+elif [ "$SCRIPT_DIR" != "/tmp" ] && [ -f "$SCRIPT_DIR/../run.sh" ]; then
+  PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 elif [ -f "$HOME/MCPRelay/run.sh" ]; then
   PROJECT_DIR="$HOME/MCPRelay"
 else
-  printf 'Error: MCPRelay project not found. Run this command from the repository root.\n' >&2
+  printf 'Error: MCPRelay project not found. Pass its path as the first argument.\n' >&2
+  printf 'Example: bash change-ngrok-token.sh "$HOME/MCPRelay"\n' >&2
   exit 1
 fi
 
