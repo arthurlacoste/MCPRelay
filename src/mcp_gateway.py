@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 
+import asyncio
 import json
 import logging
 import os
 import secrets
+import signal
 import subprocess
 import threading
 import base64
@@ -426,7 +428,7 @@ def chatgpt_startup_browser_assist(chatgpt_url: str | None = None) -> dict:
 
 
 @configurable_tool(mcp)
-async def conversation_start(
+def conversation_start(
     conversation_id: str | None = None,
     title: str | None = None,
     user_goal: str | None = None,
@@ -454,7 +456,7 @@ async def conversation_start(
 
 
 @configurable_tool(mcp)
-async def conversation_note(
+def conversation_note(
     conversation_id: str,
     kind: ConversationKind,
     content: str,
@@ -481,7 +483,7 @@ async def conversation_note(
 
 
 @configurable_tool(mcp)
-async def auth_status(conversation_id: str | None = None, chatgpt_url: str | None = None) -> dict:
+def auth_status(conversation_id: str | None = None, chatgpt_url: str | None = None) -> dict:
     ensure_conversation_started(conversation_id, chatgpt_url, source_tool='auth_status')
     return {
         'oauth_enabled': ENABLE_OAUTH,
@@ -492,7 +494,7 @@ async def auth_status(conversation_id: str | None = None, chatgpt_url: str | Non
 
 
 @configurable_tool(mcp)
-async def public_file_share(path: str, download_name: str | None = None, conversation_id: str | None = None, chatgpt_url: str | None = None) -> dict:
+def public_file_share(path: str, download_name: str | None = None, conversation_id: str | None = None, chatgpt_url: str | None = None) -> dict:
     ensure_conversation_started(conversation_id, chatgpt_url, source_tool='public_file_share')
     resolved = resolve_share_path(path)
     share_id = secrets.token_urlsafe(32)
@@ -523,7 +525,7 @@ async def public_file_share(path: str, download_name: str | None = None, convers
 
 
 @configurable_tool(mcp)
-async def public_file_list(conversation_id: str | None = None, chatgpt_url: str | None = None) -> list[dict]:
+def public_file_list(conversation_id: str | None = None, chatgpt_url: str | None = None) -> list[dict]:
     ensure_conversation_started(conversation_id, chatgpt_url, source_tool='public_file_list')
     shares = load_public_shares()
 
@@ -541,7 +543,7 @@ async def public_file_list(conversation_id: str | None = None, chatgpt_url: str 
 
 
 @configurable_tool(mcp)
-async def public_file_revoke(share_id: str, conversation_id: str | None = None, chatgpt_url: str | None = None) -> dict:
+def public_file_revoke(share_id: str, conversation_id: str | None = None, chatgpt_url: str | None = None) -> dict:
     ensure_conversation_started(conversation_id, chatgpt_url, source_tool='public_file_revoke')
     shares = load_public_shares()
     removed = shares.pop(share_id, None)
@@ -568,7 +570,7 @@ async def public_file_revoke(share_id: str, conversation_id: str | None = None, 
 
 @configurable_tool(mcp)
 async def list_filesystem_available_tools(conversation_id: str | None = None, chatgpt_url: str | None = None) -> str:
-    ensure_conversation_started(conversation_id, chatgpt_url, source_tool='list_filesystem_available_tools')
+    await asyncio.to_thread(ensure_conversation_started, conversation_id, chatgpt_url, source_tool='list_filesystem_available_tools')
     async with filesystem_client:
         tools = await filesystem_client.list_tools()
         return str([tool for tool in tools if is_downstream_enabled('filesystem', tool.name)])
@@ -576,7 +578,7 @@ async def list_filesystem_available_tools(conversation_id: str | None = None, ch
 
 @configurable_tool(mcp)
 async def list_puppeteer_available_tools(conversation_id: str | None = None, chatgpt_url: str | None = None) -> str:
-    ensure_conversation_started(conversation_id, chatgpt_url, source_tool='list_puppeteer_available_tools')
+    await asyncio.to_thread(ensure_conversation_started, conversation_id, chatgpt_url, source_tool='list_puppeteer_available_tools')
     async with puppeteer_client:
         tools = await puppeteer_client.list_tools()
         return str([tool for tool in tools if is_downstream_enabled('puppeteer', tool.name)])
@@ -601,8 +603,8 @@ async def filesystem_execute_tool(
     chatgpt_url = chatgpt_url or embedded_chatgpt_url
     purpose = purpose or embedded_purpose
 
-    ensure_conversation_started(conversation_id, chatgpt_url, source_tool='filesystem_execute_tool')
-    log_action('filesystem_execute_tool', {
+    await asyncio.to_thread(ensure_conversation_started, conversation_id, chatgpt_url, source_tool='filesystem_execute_tool')
+    await asyncio.to_thread(log_action, 'filesystem_execute_tool', {
         'tool': name,
         'arguments': tool_arguments,
         'conversation_id': conversation_id,
@@ -612,7 +614,7 @@ async def filesystem_execute_tool(
 
     async with filesystem_client:
         result = await filesystem_client.call_tool(name, tool_arguments)
-        append_tool_conversation_event(conversation_id, 'filesystem_execute_tool', {
+        await asyncio.to_thread(append_tool_conversation_event, conversation_id, 'filesystem_execute_tool', {
             'arguments': {'tool': name, 'purpose': purpose},
             'result_preview': str(result)[:1000],
         })
@@ -624,8 +626,8 @@ async def puppeteer_execute_tool(name: str, arguments: dict = {}, conversation_i
     if not is_downstream_enabled('puppeteer', name):
         raise ValueError(f'puppeteer tool disabled: {name}')
 
-    ensure_conversation_started(conversation_id, chatgpt_url, source_tool='puppeteer_execute_tool')
-    log_action('puppeteer_execute_tool', {
+    await asyncio.to_thread(ensure_conversation_started, conversation_id, chatgpt_url, source_tool='puppeteer_execute_tool')
+    await asyncio.to_thread(log_action, 'puppeteer_execute_tool', {
         'tool': name,
         'arguments': arguments,
         'conversation_id': conversation_id,
@@ -634,7 +636,7 @@ async def puppeteer_execute_tool(name: str, arguments: dict = {}, conversation_i
 
     async with puppeteer_client:
         result = await puppeteer_client.call_tool(name, arguments)
-        append_tool_conversation_event(conversation_id, 'puppeteer_execute_tool', {
+        await asyncio.to_thread(append_tool_conversation_event, conversation_id, 'puppeteer_execute_tool', {
             'arguments': {'tool': name, 'purpose': purpose},
             'result_preview': str(result)[:1000],
         })
@@ -642,7 +644,7 @@ async def puppeteer_execute_tool(name: str, arguments: dict = {}, conversation_i
 
 
 @configurable_tool(mcp)
-async def vision_screen_size(conversation_id: str | None = None, chatgpt_url: str | None = None) -> dict:
+def vision_screen_size(conversation_id: str | None = None, chatgpt_url: str | None = None) -> dict:
     ensure_conversation_started(conversation_id, chatgpt_url, source_tool='vision_screen_size')
     pyautogui = get_pyautogui()
     size = pyautogui.size()
@@ -654,7 +656,7 @@ async def vision_screen_size(conversation_id: str | None = None, chatgpt_url: st
 
 
 @configurable_tool(mcp)
-async def vision_screenshot(region: dict | None = None, conversation_id: str | None = None, purpose: str | None = None, chatgpt_url: str | None = None) -> dict:
+def vision_screenshot(region: dict | None = None, conversation_id: str | None = None, purpose: str | None = None, chatgpt_url: str | None = None) -> dict:
     ensure_conversation_started(conversation_id, chatgpt_url, source_tool='vision_screenshot')
     pyautogui = get_pyautogui()
     normalized_region = normalize_region(region)
@@ -686,7 +688,7 @@ async def vision_screenshot(region: dict | None = None, conversation_id: str | N
 
 
 @configurable_tool(mcp)
-async def vision_screenshot_as_base64(region: dict | None = None, conversation_id: str | None = None, purpose: str | None = None, chatgpt_url: str | None = None) -> dict:
+def vision_screenshot_as_base64(region: dict | None = None, conversation_id: str | None = None, purpose: str | None = None, chatgpt_url: str | None = None) -> dict:
     ensure_conversation_started(conversation_id, chatgpt_url, source_tool='vision_screenshot_as_base64')
     pyautogui = get_pyautogui()
     normalized_region = normalize_region(region)
@@ -720,7 +722,7 @@ async def vision_screenshot_as_base64(region: dict | None = None, conversation_i
 
 
 @configurable_tool(mcp)
-async def mouse_position() -> dict:
+def mouse_position() -> dict:
     pyautogui = get_pyautogui()
     position = pyautogui.position()
 
@@ -731,7 +733,7 @@ async def mouse_position() -> dict:
 
 
 @configurable_tool(mcp)
-async def mouse_move(x: int, y: int, duration: float = 0.0) -> dict:
+def mouse_move(x: int, y: int, duration: float = 0.0) -> dict:
     pyautogui = get_pyautogui()
     pyautogui.moveTo(int(x), int(y), duration=clamp_duration(duration))
     position = pyautogui.position()
@@ -745,7 +747,7 @@ async def mouse_move(x: int, y: int, duration: float = 0.0) -> dict:
 
 
 @configurable_tool(mcp)
-async def mouse_click_at(
+def mouse_click_at(
     x: int,
     y: int,
     button: str = 'left',
@@ -784,7 +786,7 @@ async def mouse_click_at(
 
 
 @configurable_tool(mcp)
-async def mouse_click_current(
+def mouse_click_current(
     button: str = 'left',
     clicks: int = 1,
     interval: float = 0.0,
@@ -813,7 +815,7 @@ async def mouse_click_current(
 
 
 @configurable_tool(mcp)
-async def mouse_drag(x: int, y: int, duration: float = 0.2, button: str = 'left') -> dict:
+def mouse_drag(x: int, y: int, duration: float = 0.2, button: str = 'left') -> dict:
     pyautogui = get_pyautogui()
     safe_button = validate_button(button)
     pyautogui.dragTo(int(x), int(y), duration=clamp_duration(duration), button=safe_button)
@@ -833,7 +835,7 @@ async def mouse_drag(x: int, y: int, duration: float = 0.2, button: str = 'left'
 
 
 @configurable_tool(mcp)
-async def mouse_scroll(clicks: int, x: int | None = None, y: int | None = None) -> dict:
+def mouse_scroll(clicks: int, x: int | None = None, y: int | None = None) -> dict:
     pyautogui = get_pyautogui()
     safe_clicks = max(-100, min(int(clicks), 100))
 
@@ -857,7 +859,7 @@ async def mouse_scroll(clicks: int, x: int | None = None, y: int | None = None) 
 
 
 @configurable_tool(mcp)
-async def keyboard_type(text: str, interval: float = 0.0) -> dict:
+def keyboard_type(text: str, interval: float = 0.0) -> dict:
     pyautogui = get_pyautogui()
     safe_interval = max(0.0, min(float(interval), 1.0))
     pyautogui.write(text, interval=safe_interval)
@@ -873,7 +875,7 @@ async def keyboard_type(text: str, interval: float = 0.0) -> dict:
 
 
 @configurable_tool(mcp)
-async def keyboard_press(key: str, presses: int = 1, interval: float = 0.0) -> dict:
+def keyboard_press(key: str, presses: int = 1, interval: float = 0.0) -> dict:
     pyautogui = get_pyautogui()
     safe_presses = max(1, min(int(presses), 50))
     safe_interval = max(0.0, min(float(interval), 2.0))
@@ -892,7 +894,7 @@ async def keyboard_press(key: str, presses: int = 1, interval: float = 0.0) -> d
 
 
 @configurable_tool(mcp)
-async def keyboard_hotkey(keys: list[str], interval: float = 0.0) -> dict:
+def keyboard_hotkey(keys: list[str], interval: float = 0.0) -> dict:
     if not keys:
         raise ValueError('keys must not be empty')
 
@@ -911,6 +913,10 @@ async def keyboard_hotkey(keys: list[str], interval: float = 0.0) -> dict:
 
 
 MAX_OUTPUT_CHARS = 50_000
+DEFAULT_COMMAND_TIMEOUT_SECONDS = float(os.getenv('MCP_COMMAND_TIMEOUT_SECONDS', '300'))
+MAX_CONCURRENT_COMMANDS = max(1, int(os.getenv('MCP_MAX_CONCURRENT_COMMANDS', '4')))
+COMMAND_KILL_GRACE_SECONDS = 1.0
+COMMAND_SEMAPHORE = threading.BoundedSemaphore(MAX_CONCURRENT_COMMANDS)
 
 
 def stream_pipe(pipe, logfile, lines: list, prefix=''):
@@ -926,115 +932,166 @@ def stream_pipe(pipe, logfile, lines: list, prefix=''):
     pipe.close()
 
 
+def _popen_process_group_options() -> dict:
+    if os.name == 'nt':
+        return {'creationflags': subprocess.CREATE_NEW_PROCESS_GROUP}
+    return {'start_new_session': True}
+
+
+def terminate_process_tree(process: subprocess.Popen, grace_seconds: float = COMMAND_KILL_GRACE_SECONDS) -> None:
+    if process.poll() is not None:
+        return
+
+    if os.name == 'nt':
+        subprocess.run(
+            ['taskkill', '/PID', str(process.pid), '/T', '/F'],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        return
+
+    try:
+        os.killpg(process.pid, signal.SIGTERM)
+    except ProcessLookupError:
+        return
+
+    try:
+        process.wait(timeout=grace_seconds)
+        return
+    except subprocess.TimeoutExpired:
+        pass
+
+    try:
+        os.killpg(process.pid, signal.SIGKILL)
+    except ProcessLookupError:
+        pass
+
+
 @configurable_tool(mcp)
-async def run_command(
+def run_command(
     command: str,
     conversation_id: str | None = None,
     purpose: str | None = None,
     include_output_in_conversation_log: bool = False,
+    timeout_seconds: float = DEFAULT_COMMAND_TIMEOUT_SECONDS,
     chatgpt_url: str | None = None,
 ) -> str:
-    ensure_conversation_started(conversation_id, chatgpt_url, source_tool='run_command')
-    command_id = datetime.now(UTC).strftime('%Y%m%d_%H%M%S_%f')
-    stream_log = STREAM_DIR / f'command_{command_id}.log'
+    safe_timeout = max(0.1, min(float(timeout_seconds), 86_400.0))
 
-    log_action('run_command_start', {
-        'command': command,
-        'stream_log': str(stream_log),
-        'conversation_id': conversation_id,
-        'purpose': purpose,
-    })
+    with COMMAND_SEMAPHORE:
+        ensure_conversation_started(conversation_id, chatgpt_url, source_tool='run_command')
+        command_id = datetime.now(UTC).strftime('%Y%m%d_%H%M%S_%f')
+        stream_log = STREAM_DIR / f'command_{command_id}.log'
 
-    with open(stream_log, 'w', encoding='utf-8') as f:
-        f.write(f'COMMAND:\n{command}\n\n')
-
-    process = subprocess.Popen(
-        command,
-        shell=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-        bufsize=1,
-        universal_newlines=True
-    )
-
-    stdout_lines: list[str] = []
-    stderr_lines: list[str] = []
-
-    stdout_thread = threading.Thread(
-        target=stream_pipe,
-        args=(process.stdout, stream_log, stdout_lines, '')
-    )
-
-    stderr_thread = threading.Thread(
-        target=stream_pipe,
-        args=(process.stderr, stream_log, stderr_lines, '[stderr] ')
-    )
-
-    stdout_thread.start()
-    stderr_thread.start()
-
-    process.wait()
-
-    stdout_thread.join()
-    stderr_thread.join()
-
-    stdout_text = ''.join(stdout_lines)
-    stderr_text = ''.join(stderr_lines)
-
-    with open(stream_log, 'a', encoding='utf-8') as f:
-        f.write(f'\n\nEXIT CODE: {process.returncode}\n')
-
-    log_action('run_command_end', {
-        'command': command,
-        'exit_code': process.returncode,
-        'stream_log': str(stream_log),
-    })
-
-    append_tool_conversation_event(conversation_id, 'run_command', {
-        'arguments': {
+        log_action('run_command_start', {
             'command': command,
+            'stream_log': str(stream_log),
+            'conversation_id': conversation_id,
             'purpose': purpose,
-        },
-        'exit_code': process.returncode,
-        'result_ref': f'logs/commands/{stream_log.name}',
-        'result_included': include_output_in_conversation_log,
-        'output_preview': (
-            (stdout_text + '\n' + stderr_text)[:4000]
-            if include_output_in_conversation_log else None
-        ),
-    })
+            'timeout_seconds': safe_timeout,
+        })
 
-    truncated = False
+        with open(stream_log, 'w', encoding='utf-8') as f:
+            f.write(f'COMMAND:\n{command}\n\n')
 
-    if len(stdout_text) > MAX_OUTPUT_CHARS:
-        stdout_text = stdout_text[:MAX_OUTPUT_CHARS] + '\n… [stdout truncated]'
-        truncated = True
+        process = subprocess.Popen(
+            command,
+            shell=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            bufsize=1,
+            universal_newlines=True,
+            **_popen_process_group_options(),
+        )
 
-    if len(stderr_text) > MAX_OUTPUT_CHARS:
-        stderr_text = stderr_text[:MAX_OUTPUT_CHARS] + '\n… [stderr truncated]'
-        truncated = True
+        stdout_lines: list[str] = []
+        stderr_lines: list[str] = []
+        stdout_thread = threading.Thread(
+            target=stream_pipe,
+            args=(process.stdout, stream_log, stdout_lines, ''),
+            daemon=True,
+        )
+        stderr_thread = threading.Thread(
+            target=stream_pipe,
+            args=(process.stderr, stream_log, stderr_lines, '[stderr] '),
+            daemon=True,
+        )
+        stdout_thread.start()
+        stderr_thread.start()
 
-    parts = [
-        f'COMMAND: {command}',
-        f'EXIT CODE: {process.returncode}',
-        '',
-        'STDOUT:',
-        stdout_text,
-    ]
+        timed_out = False
+        try:
+            process.wait(timeout=safe_timeout)
+        except subprocess.TimeoutExpired:
+            timed_out = True
+            terminate_process_tree(process)
+            process.wait()
 
-    if stderr_text:
-        parts.append('')
-        parts.append('STDERR:')
-        parts.append(stderr_text)
+        stdout_thread.join(timeout=COMMAND_KILL_GRACE_SECONDS + 1)
+        stderr_thread.join(timeout=COMMAND_KILL_GRACE_SECONDS + 1)
 
-    parts.append('')
-    parts.append(f'Full log: {stream_log}')
+        stdout_text = ''.join(stdout_lines)
+        stderr_text = ''.join(stderr_lines)
+        exit_code = process.returncode
 
-    if truncated:
-        parts.append(f'\n⚠️  Output truncated at {MAX_OUTPUT_CHARS} characters per stream. See log file for full output.')
+        with open(stream_log, 'a', encoding='utf-8') as f:
+            if timed_out:
+                f.write(f'\n\nTIMED OUT AFTER: {safe_timeout:g}s\n')
+            f.write(f'\nEXIT CODE: {exit_code}\n')
 
-    return '\n'.join(parts)
+        log_action('run_command_end', {
+            'command': command,
+            'exit_code': exit_code,
+            'stream_log': str(stream_log),
+            'timed_out': timed_out,
+            'timeout_seconds': safe_timeout,
+        })
+
+        append_tool_conversation_event(conversation_id, 'run_command', {
+            'arguments': {
+                'command': command,
+                'purpose': purpose,
+                'timeout_seconds': safe_timeout,
+            },
+            'exit_code': exit_code,
+            'timed_out': timed_out,
+            'result_ref': f'logs/commands/{stream_log.name}',
+            'result_included': include_output_in_conversation_log,
+            'output_preview': (
+                (stdout_text + '\n' + stderr_text)[:4000]
+                if include_output_in_conversation_log else None
+            ),
+        })
+
+        truncated = False
+        if len(stdout_text) > MAX_OUTPUT_CHARS:
+            stdout_text = stdout_text[:MAX_OUTPUT_CHARS] + '\n… [stdout truncated]'
+            truncated = True
+        if len(stderr_text) > MAX_OUTPUT_CHARS:
+            stderr_text = stderr_text[:MAX_OUTPUT_CHARS] + '\n… [stderr truncated]'
+            truncated = True
+
+        parts = [
+            f'COMMAND: {command}',
+            f'EXIT CODE: {exit_code}',
+        ]
+        if timed_out:
+            parts.append(f'TIMED OUT AFTER: {safe_timeout:g}s')
+        parts.extend(['', 'STDOUT:', stdout_text])
+
+        if stderr_text:
+            parts.extend(['', 'STDERR:', stderr_text])
+
+        parts.extend(['', f'Full log: {stream_log}'])
+        if truncated:
+            parts.append(
+                f'\nOutput truncated at {MAX_OUTPUT_CHARS} characters per stream. '
+                'See log file for full output.'
+            )
+
+        return '\n'.join(parts)
 
 
 if __name__ == '__main__':
