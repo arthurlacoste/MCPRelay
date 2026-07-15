@@ -15,6 +15,27 @@ ok() { printf '\033[1;32m✓ %s\033[0m\n' "$*"; }
 warn() { printf '\033[1;33m! %s\033[0m\n' "$*"; }
 die() { printf '\033[1;31mError: %s\033[0m\n' "$*" >&2; exit 1; }
 
+ensure_python_environment() {
+    local python="$PROJECT_DIR/.venv/bin/python"
+    local requirements="$PROJECT_DIR/requirements.txt"
+
+    command -v python3 >/dev/null 2>&1 || die "Python 3 is required."
+    [ -f "$requirements" ] || die "Missing requirements.txt."
+
+    if [ ! -x "$python" ]; then
+        info "Creating Python environment"
+        python3 -m venv "$PROJECT_DIR/.venv" ||
+            die "Could not create .venv. On Debian/Ubuntu, install python3-venv."
+    fi
+
+    if ! "$python" -c 'import argon2' >/dev/null 2>&1; then
+        info "Installing Python dependencies"
+        "$python" -m pip install -r "$requirements" ||
+            die "Could not install Python dependencies."
+        ok "Python dependencies installed"
+    fi
+}
+
 env_value() {
     local key="$1" line value=""
     [ -f "$CONFIG_FILE" ] || return 0
@@ -218,6 +239,7 @@ ensure_onboarding() {
 
 run_interactive() {
     cd "$PROJECT_DIR"
+    ensure_python_environment
     ensure_onboarding
     source .venv/bin/activate
     "$PROJECT_DIR/.venv/bin/python" "$PROJECT_DIR/src/interactive_launcher.py"
@@ -225,6 +247,7 @@ run_interactive() {
 
 start_daemon() {
     cd "$PROJECT_DIR"
+    ensure_python_environment
     ensure_onboarding
 
     if [ -f "$PID_FILE" ]; then
@@ -313,8 +336,8 @@ case "${1:-}" in
     start)   start_daemon ;;
     stop)    stop_daemon  ;;
     status)  status       ;;
-    setup)   ensure_onboarding ;;
-    renew-secret) ensure_onboarding true ;;
+    setup)   ensure_python_environment; ensure_onboarding ;;
+    renew-secret) ensure_python_environment; ensure_onboarding true ;;
     *)
         if [ $# -gt 0 ]; then
             echo "Usage: $0 {start|stop|status|setup|renew-secret}"
