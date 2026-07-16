@@ -16,7 +16,6 @@ from datetime import datetime, UTC
 from typing import Literal
 from pathlib import Path
 
-from dotenv import load_dotenv
 from fastapi.responses import FileResponse, JSONResponse
 from fastmcp import Context, FastMCP
 from fastmcp.client import Client
@@ -26,6 +25,7 @@ from fastmcp.server.auth.providers.jwt import JWTVerifier
 from command_queue import CommandQueue
 from blocking_command_runner import BlockingCommandRunner
 from filesystem_config import get_filesystem_roots
+from environment_config import load_gateway_environment
 from lightweight_oauth import app as oauth_app
 from terminal_app import TERMINAL_APP_HTML, TERMINAL_APP_URI
 from tool_registry import configurable_tool, is_downstream_enabled
@@ -36,7 +36,7 @@ from pydantic import AnyHttpUrl
 from starlette.routing import Mount
 
 BASE_DIR = Path(__file__).resolve().parent.parent
-load_dotenv(BASE_DIR / 'config' / '.env')
+load_gateway_environment(BASE_DIR)
 RUNTIME_FEATURES = RuntimeFeatures.from_environ(os.environ)
 
 logging.basicConfig(level=logging.INFO)

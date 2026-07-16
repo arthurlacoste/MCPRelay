@@ -9,6 +9,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / 'src'))
 
 from fastmcp import Client
+from environment_config import load_gateway_environment
 from skill_catalog import MAX_FILE_BYTES, get_skills_root, skills_read, skills_search
 import mcp_gateway as gateway
 from tool_metadata import TOOL_METADATA
@@ -25,6 +26,16 @@ def write_skill(root: Path, skill_id: str, name='Example', description='Example 
     return path
 
 
+def test_config_env_overrides_default_root(monkeypatch, tmp_path):
+    skills_root = tmp_path / 'skills'
+    config_dir = tmp_path / 'config'
+    config_dir.mkdir()
+    (config_dir / '.env').write_text(f'MCP_SKILLS_ROOT={skills_root}\n', encoding='utf-8')
+    monkeypatch.delenv('MCP_SKILLS_ROOT', raising=False)
+    assert load_gateway_environment(tmp_path) is True
+    assert get_skills_root() == skills_root
+
+
 def test_default_root_and_environment_override(monkeypatch, tmp_path):
     monkeypatch.delenv('MCP_SKILLS_ROOT', raising=False)
     assert get_skills_root() == Path('~/.gate/skills').expanduser()
@@ -39,7 +50,11 @@ def test_missing_root_is_empty_and_not_created(tmp_path):
     result = skills_search(root=root)
     assert result['matches'] == []
     assert result['total'] == 0
-    assert 'does not exist' in result['warnings'][0]
+    assert result['warnings'] == [{
+        'code': 'root_missing',
+        'message': 'Skills root does not exist. Set MCP_SKILLS_ROOT or create ~/.gate/skills.',
+        'path': str(root),
+    }]
     assert not root.exists()
 
 
@@ -68,7 +83,9 @@ def test_frontmatter_multiline_invalid_and_duplicate_names(tmp_path):
     assert {item['id'] for item in result['matches']} == {'one', 'two', 'multi'}
     assert [item['name'] for item in result['matches']].count('Duplicate') == 2
     assert next(item for item in result['matches'] if item['id'] == 'multi')['description'] == 'First line\nsecond line'
-    assert any('invalid/SKILL.md' in warning for warning in result['warnings'])
+    warning = next(item for item in result['warnings'] if item['path'] == 'invalid/SKILL.md')
+    assert warning['code'] == 'invalid_skill'
+    assert 'invalid YAML frontmatter' in warning['message']
 
 
 def test_search_ranking_pagination_and_limit_bounds(tmp_path):
@@ -106,16 +123,26 @@ def test_read_rejects_unsafe_paths(tmp_path, path):
         skills_read('example', path, root=tmp_path)
 
 
+
+@pytest.mark.parametrize('skill_id', [
+    '', '.', '..', '../example', '/example', 'nested//example', 'nested\\example', './example',
+])
+def test_read_rejects_invalid_skill_ids(tmp_path, skill_id):
+    write_skill(tmp_path, 'example')
+    with pytest.raises(ValueError, match='skill_id'):
+        skills_read(skill_id, root=tmp_path)
+
 def test_read_rejects_directory_binary_large_and_outbound_symlink(tmp_path):
     package = write_skill(tmp_path, 'example').parent
     (package / 'folder').mkdir()
     (package / 'binary.dat').write_bytes(b'abc\x00def')
+    (package / 'utf8-binary.dat').write_bytes(b'valid utf8\x01payload')
     (package / 'large.txt').write_bytes(b'x' * (MAX_FILE_BYTES + 1))
     outside = tmp_path / 'outside.txt'
     outside.write_text('secret')
     (package / 'link.txt').symlink_to(outside)
 
-    for path in ('folder', 'binary.dat', 'large.txt', 'link.txt'):
+    for path in ('folder', 'binary.dat', 'utf8-binary.dat', 'large.txt', 'link.txt'):
         with pytest.raises(ValueError):
             skills_read('example', path, root=tmp_path)
 
@@ -160,6 +187,7 @@ def test_skill_tools_can_be_disabled_through_registry(tmp_path):
 import asyncio, sys
 sys.path.insert(0, 'src')
 from fastmcp import Client
+from environment_config import load_gateway_environment
 import mcp_gateway
 async def main():
     async with Client(mcp_gateway.mcp) as client:

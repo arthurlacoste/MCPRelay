@@ -557,6 +557,8 @@ description: Repeatable deployment and verification workflow.
 
 Skills are discovered recursively on every search. Their stable ID is the skill directory path relative to `MCP_SKILLS_ROOT`, for example `operations/deploy`. YAML names do not need to be unique.
 
+Catalogue warnings are returned as structured objects with `code`, `message`, and `path` fields. Invalid skills are excluded without preventing valid skills from being discovered.
+
 `skills_read` can also read UTF-8 text references inside the same skill directory. Absolute paths, parent traversal, directories, files above 256 KiB, binary content, and symlinks escaping the skill package are rejected.
 
 Both tools are enabled by default and can be disabled independently in `config/tools.toml`:

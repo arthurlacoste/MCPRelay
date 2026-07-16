@@ -3,12 +3,22 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
-from typing import Any
+from typing import Any, TypedDict
 
 import yaml
 
 DEFAULT_SKILLS_ROOT = '~/.gate/skills'
 MAX_FILE_BYTES = 256 * 1024
+
+
+class CatalogWarning(TypedDict):
+    code: str
+    message: str
+    path: str | None
+
+
+def _warning(code: str, message: str, path: str | Path | None = None) -> CatalogWarning:
+    return {'code': code, 'message': message, 'path': str(path) if path is not None else None}
 
 
 @dataclass(frozen=True)
@@ -64,29 +74,35 @@ def _parse_skill(path: Path, root: Path) -> Skill:
     return Skill(skill_id, name.strip(), description.strip(), package_dir, path)
 
 
-def scan_skills(root: Path | None = None) -> tuple[list[Skill], list[str]]:
+def scan_skills(root: Path | None = None) -> tuple[list[Skill], list[CatalogWarning]]:
     root = root or get_skills_root()
-    warnings: list[str] = []
+    warnings: list[CatalogWarning] = []
     if not root.exists():
-        warnings.append(
-            f'Skills root does not exist: {root}. Set MCP_SKILLS_ROOT or create ~/.gate/skills.'
-        )
+        warnings.append(_warning(
+            'root_missing',
+            'Skills root does not exist. Set MCP_SKILLS_ROOT or create ~/.gate/skills.',
+            root,
+        ))
         return [], warnings
     if not root.is_dir():
-        return [], [f'Skills root is not a directory: {root}']
+        return [], [_warning('root_not_directory', 'Skills root is not a directory.', root)]
 
     root = root.resolve()
     skills: list[Skill] = []
     for path in sorted(root.rglob('SKILL.md')):
+        relative = path.relative_to(root).as_posix()
         try:
             resolved = path.resolve(strict=True)
             if not resolved.is_relative_to(root):
-                warnings.append(f'Excluded {path}: resolves outside the skills root')
+                warnings.append(_warning(
+                    'outside_root',
+                    'Skill file resolves outside the skills root.',
+                    relative,
+                ))
                 continue
             skills.append(_parse_skill(resolved, root))
         except (OSError, UnicodeError, ValueError) as exc:
-            relative = path.relative_to(root).as_posix()
-            warnings.append(f'Excluded {relative}: {exc}')
+            warnings.append(_warning('invalid_skill', str(exc), relative))
     return skills, warnings
 
 
@@ -141,14 +157,26 @@ def skills_search(
     }
 
 
-def _validate_relative_path(path: str) -> PurePosixPath:
-    raw_parts = path.replace('\\', '/').split('/')
-    candidate = PurePosixPath(path)
+def _validate_posix_relative(value: str, label: str) -> PurePosixPath:
+    if not isinstance(value, str) or not value:
+        raise ValueError(f'{label} must be a non-empty string')
+    if '\\' in value:
+        raise ValueError(f'{label} must use POSIX separators')
+    raw_parts = value.split('/')
+    candidate = PurePosixPath(value)
     if candidate.is_absolute():
-        raise ValueError('path must be relative')
-    if not raw_parts or any(part in {'', '.', '..'} for part in raw_parts):
-        raise ValueError('path must not contain empty, current, or parent segments')
+        raise ValueError(f'{label} must be relative')
+    if any(part in {'', '.', '..'} for part in raw_parts):
+        raise ValueError(f'{label} must not contain empty, current, or parent segments')
     return candidate
+
+
+def _validate_relative_path(path: str) -> PurePosixPath:
+    return _validate_posix_relative(path, 'path')
+
+
+def _validate_skill_id(skill_id: str) -> str:
+    return _validate_posix_relative(skill_id, 'skill_id').as_posix()
 
 
 def _read_utf8(path: Path) -> str:
@@ -156,12 +184,18 @@ def _read_utf8(path: Path) -> str:
     if size > MAX_FILE_BYTES:
         raise ValueError(f'file exceeds {MAX_FILE_BYTES} bytes')
     data = path.read_bytes()
-    if b'\x00' in data:
-        raise ValueError('binary files are not supported')
     try:
-        return data.decode('utf-8')
+        text = data.decode('utf-8')
     except UnicodeDecodeError as exc:
         raise ValueError('file must be valid UTF-8 text') from exc
+
+    disallowed_controls = [
+        character for character in text
+        if ord(character) < 32 and character not in {'\t', '\n', '\r'}
+    ]
+    if disallowed_controls or '\x7f' in text:
+        raise ValueError('binary files are not supported')
+    return text
 
 
 def _available_files(skill: Skill) -> list[str]:
@@ -178,13 +212,13 @@ def _available_files(skill: Skill) -> list[str]:
 
 
 def skills_read(skill_id: str, path: str = 'SKILL.md', root: Path | None = None) -> dict[str, Any]:
-    root = (root or get_skills_root())
-    skills, warnings = scan_skills(root)
+    validated_skill_id = _validate_skill_id(skill_id)
+    root = root or get_skills_root()
+    skills, _warnings = scan_skills(root)
     by_id = {skill.skill_id: skill for skill in skills}
-    skill = by_id.get(skill_id)
+    skill = by_id.get(validated_skill_id)
     if skill is None:
-        detail = f" Available warnings: {'; '.join(warnings)}" if warnings else ''
-        raise ValueError(f'unknown skill_id: {skill_id}.{detail}')
+        raise ValueError(f'unknown skill_id: {validated_skill_id}')
 
     relative = _validate_relative_path(path)
     package = skill.package_dir.resolve()
