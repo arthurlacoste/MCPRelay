@@ -541,7 +541,7 @@ The default root is `~/.gate/skills`. Override it in `config/.env`:
 MCP_SKILLS_ROOT=~/.gate/skills
 ```
 
-The root must already exist. MCPRelay returns an empty catalogue with a configuration warning when it is missing and never creates it automatically.
+The onboarding launcher creates the configured skills root when it is missing. With the default configuration, this creates `~/.gate/skills`. The running MCP server itself never creates directories: if the root is later removed or changed to a missing path, it returns an empty catalogue with a configuration warning.
 
 Each skill is a directory containing a UTF-8 `SKILL.md` with YAML frontmatter:
 

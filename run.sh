@@ -82,6 +82,21 @@ ensure_env_notes() {
     chmod 600 "$CONFIG_FILE"
 }
 
+
+ensure_skills_directory() {
+    local configured skills_dir
+    configured="$(env_value MCP_SKILLS_ROOT)"
+
+    case "$configured" in
+        "") skills_dir="$HOME/.gate/skills" ;;
+        "~") skills_dir="$HOME" ;;
+        "~/"*) skills_dir="$HOME/${configured#\~/}" ;;
+        *) skills_dir="$configured" ;;
+    esac
+
+    mkdir -p "$skills_dir" || die "Could not create Agent Skills directory: $skills_dir"
+}
+
 show_ngrok_inspector() {
     printf '  ngrok inspector → %s\n' "$NGROK_INSPECT_URL"
 }
@@ -224,6 +239,7 @@ ensure_onboarding() {
     public_url="$(env_value MCP_BASE_URL)"
     access_secret="$(env_value OAUTH_ACCESS_SECRET)"
     access_hash="$(env_value OAUTH_ACCESS_SECRET_HASH)"
+    ensure_skills_directory
 
     if [ "$renew_secret" != true ] && [ -n "$public_url" ] && [ -n "$access_secret" ] && [[ "$access_hash" == \$argon2id\$* ]]; then
         ensure_env_notes

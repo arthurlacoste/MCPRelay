@@ -11,3 +11,11 @@ def test_windows_launcher_forwards_runtime_switches():
     assert "[switch]$Realtime" in content
     assert '"--widget"' in content
     assert '"--realtime"' in content
+
+
+def test_windows_launcher_creates_skills_directory():
+    content = RUN_PS1.read_text()
+
+    assert '$env:MCP_SKILLS_ROOT' in content
+    assert 'Join-Path $HOME ".gate\\skills"' in content
+    assert 'New-Item -ItemType Directory -Path $SkillsRoot -Force' in content
