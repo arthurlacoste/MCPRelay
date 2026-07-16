@@ -3,7 +3,7 @@
 set -Eeuo pipefail
 
 PROJECT_DIR="$(cd "$(dirname "$0")" && pwd)"
-PID_FILE="/tmp/mcp_gateway.pid"
+PID_FILE="${MCPRELAY_PID_FILE:-/tmp/mcp_gateway.pid}"
 NGROK_PORT=8761
 CONFIG_FILE="$PROJECT_DIR/config/.env"
 NGROK_LOG="/tmp/mcprelay-ngrok-run.log"
@@ -84,6 +84,50 @@ ensure_env_notes() {
 
 show_ngrok_inspector() {
     printf '  ngrok inspector → %s\n' "$NGROK_INSPECT_URL"
+}
+
+ngrok_pids() {
+    pgrep -f "(^|[ /])ngrok[[:space:]]+http[[:space:]]+${NGROK_PORT}([[:space:]]|$)" 2>/dev/null || true
+}
+
+signal_ngrok_pids() {
+    local signal="$1" pid
+    while IFS= read -r pid; do
+        [[ "$pid" =~ ^[0-9]+$ ]] || continue
+        [ "$pid" = "$$" ] || kill "-$signal" "$pid" 2>/dev/null || true
+    done
+}
+
+cleanup_stale_ngrok() {
+    local pids remaining
+    pids="$(ngrok_pids)"
+    [ -n "$pids" ] || return 0
+
+    warn "Stopping stale ngrok processes for port $NGROK_PORT."
+    printf '%s\n' "$pids" | signal_ngrok_pids TERM
+
+    for _ in $(seq 1 20); do
+        remaining="$(ngrok_pids)"
+        [ -z "$remaining" ] && {
+            ok "Stale ngrok processes stopped"
+            return 0
+        }
+        sleep 0.1
+    done
+
+    warn "Forcing stale ngrok processes to stop."
+    printf '%s\n' "$remaining" | signal_ngrok_pids KILL
+
+    for _ in $(seq 1 20); do
+        remaining="$(ngrok_pids)"
+        [ -z "$remaining" ] && {
+            ok "Stale ngrok processes killed"
+            return 0
+        }
+        sleep 0.1
+    done
+
+    die "Could not stop stale ngrok processes: $(printf '%s' "$remaining" | tr '\n' ' ')"
 }
 
 show_banner() {
@@ -239,6 +283,8 @@ ensure_onboarding() {
 
 run_interactive() {
     cd "$PROJECT_DIR"
+    [ ! -f "$PID_FILE" ] || die "Daemon PID file exists. Run ./run.sh stop first."
+    cleanup_stale_ngrok
     ensure_python_environment
     ensure_onboarding
     source .venv/bin/activate
@@ -247,13 +293,14 @@ run_interactive() {
 
 start_daemon() {
     cd "$PROJECT_DIR"
-    ensure_python_environment
-    ensure_onboarding
-
     if [ -f "$PID_FILE" ]; then
         echo "✗ Daemon already running (PID file $PID_FILE exists)"
         exit 1
     fi
+
+    cleanup_stale_ngrok
+    ensure_python_environment
+    ensure_onboarding
 
     source .venv/bin/activate
 
@@ -329,6 +376,45 @@ status() {
     echo "    $SERVICES_PID:$NGROK_PID"
 }
 
+parse_runtime_args() {
+    RUNTIME_COMMAND=""
+    local widget=false realtime=false arg
+    for arg in "$@"; do
+        case "$arg" in
+            --widget) widget=true ;;
+            --realtime) realtime=true ;;
+            start|stop|status|setup|renew-secret)
+                [ -z "$RUNTIME_COMMAND" ] || die "Only one command may be specified."
+                RUNTIME_COMMAND="$arg"
+                ;;
+            *) die "Unknown option or command: $arg" ;;
+        esac
+    done
+
+    case "$RUNTIME_COMMAND" in
+        stop|status|setup|renew-secret)
+            if [ "$widget" = true ] || [ "$realtime" = true ]; then
+                die "Runtime flags are only valid when starting MCPRelay."
+            fi
+            ;;
+    esac
+
+    export MCP_REALTIME_STATUS_ENABLED=false
+    if [ "$widget" = true ]; then
+        export MCP_WIDGET_ENABLED=true
+    fi
+    if [ "$realtime" = true ] || [ "$widget" = true ]; then
+        export MCP_REALTIME_STATUS_ENABLED=true
+    fi
+}
+
+parse_runtime_args "$@"
+if [ -n "$RUNTIME_COMMAND" ]; then
+    set -- "$RUNTIME_COMMAND"
+else
+    set --
+fi
+
 clear_screen
 show_banner
 
@@ -340,7 +426,8 @@ case "${1:-}" in
     renew-secret) ensure_python_environment; ensure_onboarding true ;;
     *)
         if [ $# -gt 0 ]; then
-            echo "Usage: $0 {start|stop|status|setup|renew-secret}"
+            echo "Usage: $0 [start] [--realtime] [--widget]"
+            echo "       $0 {stop|status|setup|renew-secret}"
             echo ""
             echo "  (no arg)  Interactive mode – Ctrl+C stops everything"
             exit 1

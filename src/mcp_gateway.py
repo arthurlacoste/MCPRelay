@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import asyncio
+import hashlib
 import json
 import logging
 import os
@@ -9,27 +10,32 @@ import subprocess
 import atexit
 import base64
 import re
+from threading import Lock
+from time import monotonic
 from datetime import datetime, UTC
 from typing import Literal
 from pathlib import Path
 
 from dotenv import load_dotenv
 from fastapi.responses import FileResponse, JSONResponse
-from fastmcp import FastMCP
+from fastmcp import Context, FastMCP
 from fastmcp.client import Client
 from fastmcp.client.transports import StdioTransport
 from fastmcp.server.auth import RemoteAuthProvider
 from fastmcp.server.auth.providers.jwt import JWTVerifier
 from command_queue import CommandQueue
+from blocking_command_runner import BlockingCommandRunner
 from filesystem_config import get_filesystem_roots
 from lightweight_oauth import app as oauth_app
 from terminal_app import TERMINAL_APP_HTML, TERMINAL_APP_URI
 from tool_registry import configurable_tool, is_downstream_enabled
+from runtime_features import RuntimeFeatures, runtime_mode_summary
 from pydantic import AnyHttpUrl
 from starlette.routing import Mount
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 load_dotenv(BASE_DIR / 'config' / '.env')
+RUNTIME_FEATURES = RuntimeFeatures.from_environ(os.environ)
 
 logging.basicConfig(level=logging.INFO)
 
@@ -918,6 +924,7 @@ MAX_CONCURRENT_COMMANDS = max(1, int(os.getenv('MCP_MAX_CONCURRENT_COMMANDS', '4
 MAX_COMMAND_LINES = max(100, int(os.getenv('MCP_COMMAND_MAX_LINES', '20000')))
 COMMAND_HISTORY_LIMIT = max(10, int(os.getenv('MCP_COMMAND_HISTORY_LIMIT', '2000')))
 COMMAND_DATABASE = Path(os.getenv('MCP_COMMAND_DATABASE', BASE_DIR / 'data' / 'commands.sqlite3'))
+TERMINAL_SESSION_TTL_SECONDS = max(1.0, float(os.getenv('MCP_TERMINAL_SESSION_TTL_SECONDS', '60')))
 TERMINAL_APP = {'resourceUri': TERMINAL_APP_URI, 'prefersBorder': True}
 TERMINAL_HELPER_APP = {'visibility': ['app', 'model']}
 TERMINAL_TOOL_META = {
@@ -928,6 +935,117 @@ TERMINAL_RESOURCE_META = {
     'openai/widgetDescription': 'Live command queue and terminal output.',
     'openai/widgetPrefersBorder': True,
 }
+RUN_COMMAND_APP_OPTIONS = ({
+    'app': TERMINAL_APP,
+    'meta': TERMINAL_TOOL_META,
+} if RUNTIME_FEATURES.widget_enabled else {})
+TERMINAL_HELPER_OPTIONS = ({'app': TERMINAL_HELPER_APP} if RUNTIME_FEATURES.widget_enabled else {})
+TERMINAL_ACTIVE_STATUSES = {'waiting', 'queued', 'starting', 'running'}
+terminal_sessions = {}
+terminal_sessions_lock = Lock()
+
+
+def terminal_session_id(ctx: Context | None) -> str | None:
+    if ctx is None:
+        return None
+    try:
+        return ctx.session_id
+    except RuntimeError:
+        return None
+
+
+def remember_terminal_session(
+    ctx: Context | None,
+    conversation_id: str | None = None,
+    execution_id: str | None = None,
+) -> None:
+    session_id = terminal_session_id(ctx)
+    if session_id is None:
+        return
+    with terminal_sessions_lock:
+        session = terminal_sessions.setdefault(session_id, {
+            'conversation_id': None,
+            'execution_ids': set(),
+            'idle_since': None,
+            'expired_logged': False,
+        })
+        session['conversation_id'] = conversation_id or session['conversation_id']
+        if execution_id:
+            session['execution_ids'].add(execution_id)
+        session['idle_since'] = None
+        session['expired_logged'] = False
+
+
+def log_terminal_session_expired(session_id: str, session: dict) -> None:
+    payload = {
+        'session_ref': hashlib.sha256(session_id.encode()).hexdigest()[:12],
+        'conversation_id': session['conversation_id'],
+        'reason': 'terminal_session_expired',
+        'ttl_seconds': TERMINAL_SESSION_TTL_SECONDS,
+        'inferred': True,
+    }
+    log_action('mcp_network_error', payload)
+    if session['conversation_id']:
+        append_conversation_event(session['conversation_id'], {
+            'type': 'network_error',
+            'error': 'mcp_network_error',
+            **payload,
+        })
+
+
+def terminal_session_state(ctx: Context | None) -> dict:
+    session_id = terminal_session_id(ctx)
+    if session_id is None:
+        return {'status': 'active', 'closed': False, 'polling': True}
+    now = monotonic()
+    with terminal_sessions_lock:
+        session = terminal_sessions.setdefault(session_id, {
+            'conversation_id': None,
+            'execution_ids': set(),
+            'idle_since': now,
+            'expired_logged': False,
+        })
+        execution_ids = tuple(session['execution_ids'])
+    active = False
+    for execution_id in execution_ids:
+        try:
+            state = command_queue.get_state(execution_id, include_lines=False)
+        except (KeyError, ValueError):
+            continue
+        if state['status'] in TERMINAL_ACTIVE_STATUSES:
+            active = True
+            break
+    should_log = False
+    with terminal_sessions_lock:
+        session = terminal_sessions[session_id]
+        if active:
+            session['idle_since'] = None
+        elif session['idle_since'] is None:
+            session['idle_since'] = now
+        idle_since = session['idle_since']
+        expired = idle_since is not None and now - idle_since >= TERMINAL_SESSION_TTL_SECONDS
+        if expired and not session['expired_logged']:
+            session['expired_logged'] = True
+            should_log = True
+        snapshot = {
+            'conversation_id': session['conversation_id'],
+            'execution_ids': set(session['execution_ids']),
+        }
+    if should_log:
+        log_terminal_session_expired(session_id, snapshot)
+    if expired:
+        remaining = 0.0
+    elif idle_since is None:
+        remaining = TERMINAL_SESSION_TTL_SECONDS
+    else:
+        remaining = max(0.0, TERMINAL_SESSION_TTL_SECONDS - (now - idle_since))
+    return {
+        'status': 'expired' if expired else 'active',
+        'closed': expired,
+        'polling': not expired,
+        'ttl_seconds': TERMINAL_SESSION_TTL_SECONDS,
+        'expires_in_seconds': remaining,
+    }
 
 
 def command_finished(execution_id: str, state: dict) -> None:
@@ -954,34 +1072,87 @@ def command_finished(execution_id: str, state: dict) -> None:
     })
 
 
-command_queue = CommandQueue(
-    COMMAND_DATABASE,
-    STREAM_DIR,
-    worker_limit=MAX_CONCURRENT_COMMANDS,
-    max_lines_per_execution=MAX_COMMAND_LINES,
-    history_limit=COMMAND_HISTORY_LIMIT,
-    on_event=command_finished,
-)
-atexit.register(command_queue.close)
+command_queue = None
+blocking_runner = None
+if RUNTIME_FEATURES.realtime_enabled:
+    command_queue = CommandQueue(
+        COMMAND_DATABASE,
+        STREAM_DIR,
+        worker_limit=MAX_CONCURRENT_COMMANDS,
+        max_lines_per_execution=MAX_COMMAND_LINES,
+        history_limit=COMMAND_HISTORY_LIMIT,
+        on_event=command_finished,
+    )
+    atexit.register(command_queue.close)
+else:
+    blocking_runner = BlockingCommandRunner(STREAM_DIR, worker_limit=MAX_CONCURRENT_COMMANDS)
 
 
-@mcp.resource(
-    TERMINAL_APP_URI,
-    mime_type='text/html;profile=mcp-app',
-    meta=TERMINAL_RESOURCE_META,
-)
+def realtime_tool(**options):
+    if not RUNTIME_FEATURES.realtime_enabled:
+        return lambda func: func
+    return configurable_tool(mcp, **options)
+
+
 def command_terminal_app() -> str:
     return TERMINAL_APP_HTML
 
 
-@configurable_tool(
-    mcp,
-    app=TERMINAL_APP,
-    meta=TERMINAL_TOOL_META,
-    title='Run command',
-    annotations={'destructiveHint': True, 'openWorldHint': True},
-)
-def run_command(
+if RUNTIME_FEATURES.widget_enabled:
+    mcp.resource(
+        TERMINAL_APP_URI,
+        mime_type='text/html;profile=mcp-app',
+        meta=TERMINAL_RESOURCE_META,
+    )(command_terminal_app)
+
+
+def _run_command_blocking(
+    command: str,
+    cwd: str | None = None,
+    conversation_id: str | None = None,
+    purpose: str | None = None,
+    include_output_in_conversation_log: bool = False,
+    timeout_seconds: float = DEFAULT_COMMAND_TIMEOUT_SECONDS,
+    chatgpt_url: str | None = None,
+) -> str:
+    ensure_conversation_started(conversation_id, chatgpt_url, source_tool='run_command')
+    log_action('run_command_start', {
+        'command': command,
+        'cwd': cwd,
+        'conversation_id': conversation_id,
+        'purpose': purpose,
+        'timeout_seconds': timeout_seconds,
+        'mode': 'blocking',
+    })
+    result = blocking_runner.run(command, cwd=cwd, timeout_seconds=timeout_seconds)
+    log_action('run_command_end', {
+        'command': command,
+        'exit_code': result.exit_code,
+        'stream_log': str(result.log_path),
+        'timed_out': result.timed_out,
+        'timeout_seconds': result.timeout_seconds,
+        'mode': 'blocking',
+    })
+    append_tool_conversation_event(conversation_id, 'run_command', {
+        'arguments': {
+            'command': command,
+            'purpose': purpose,
+            'timeout_seconds': result.timeout_seconds,
+        },
+        'exit_code': result.exit_code,
+        'timed_out': result.timed_out,
+        'duration_ms': result.duration_ms,
+        'result_ref': f'logs/commands/{result.log_path.name}',
+        'result_included': include_output_in_conversation_log,
+        'output_preview': (
+            (result.stdout + '\n' + result.stderr)[:4000]
+            if include_output_in_conversation_log else None
+        ),
+    })
+    return result.render()
+
+
+def _run_command_realtime(
     command: str,
     cwd: str | None = None,
     conversation_id: str | None = None,
@@ -1012,55 +1183,127 @@ def run_command(
     return state
 
 
-@configurable_tool(
-    mcp, app=TERMINAL_HELPER_APP, title='Get command queue',
-    annotations={'readOnlyHint': True, 'idempotentHint': True},
-)
-def get_queue_state(visible_limit: int = 8) -> dict:
-    return command_queue.queue_state(visible_limit)
+def run_command(
+    command: str,
+    cwd: str | None = None,
+    conversation_id: str | None = None,
+    purpose: str | None = None,
+    include_output_in_conversation_log: bool = False,
+    timeout_seconds: float = DEFAULT_COMMAND_TIMEOUT_SECONDS,
+    chatgpt_url: str | None = None,
+    ctx: Context = None,
+):
+    runner = _run_command_realtime if RUNTIME_FEATURES.realtime_enabled else _run_command_blocking
+    result = runner(
+        command, cwd, conversation_id, purpose,
+        include_output_in_conversation_log, timeout_seconds, chatgpt_url,
+    )
+    remember_terminal_session(ctx, conversation_id, result.get('execution_id') if isinstance(result, dict) else None)
+    return result
 
 
-@configurable_tool(
-    mcp, app=TERMINAL_HELPER_APP, title='Get command state',
+run_command.__annotations__['return'] = dict if RUNTIME_FEATURES.realtime_enabled else str
+run_command = configurable_tool(
+    mcp,
+    title='Run command',
+    annotations={'destructiveHint': True, 'openWorldHint': True},
+    **RUN_COMMAND_APP_OPTIONS,
+)(run_command)
+
+
+@realtime_tool(
+    title='Get command queue',
     annotations={'readOnlyHint': True, 'idempotentHint': True},
+    **TERMINAL_HELPER_OPTIONS,
 )
-def get_command_state(execution_id: str, after_cursor: int = 0, limit: int = 200) -> dict:
+def get_queue_state(visible_limit: int = 8, ctx: Context = None) -> dict:
+    session = terminal_session_state(ctx)
+    state = command_queue.queue_state(visible_limit)
+    state.update({
+        'status': session['status'],
+        'closed': session['closed'],
+        'polling': session['polling'],
+        'session': session,
+    })
+    return state
+
+
+@realtime_tool(
+    title='Get command state',
+    annotations={'readOnlyHint': True, 'idempotentHint': True},
+    **TERMINAL_HELPER_OPTIONS,
+)
+def get_command_state(
+    execution_id: str,
+    after_cursor: int = 0,
+    limit: int = 200,
+    ctx: Context = None,
+) -> dict:
+    session = terminal_session_state(ctx)
+    if session['closed']:
+        return {
+            'execution_id': execution_id,
+            'status': 'expired',
+            'closed': True,
+            'polling': False,
+            'lines': [],
+            'cursor': after_cursor,
+            'has_more': False,
+            'session': session,
+        }
     return command_queue.get_state(execution_id, after_cursor, limit)
 
 
-@configurable_tool(
-    mcp, app=TERMINAL_HELPER_APP, title='Stop command',
+@realtime_tool(
+    title='Stop command',
     annotations={'destructiveHint': True, 'idempotentHint': True},
+    **TERMINAL_HELPER_OPTIONS,
 )
 def stop_command(execution_id: str) -> dict:
     return command_queue.stop(execution_id)
 
 
-@configurable_tool(
-    mcp, app=TERMINAL_HELPER_APP, title='Get command output',
+@realtime_tool(
+    title='Get command output',
     annotations={'readOnlyHint': True, 'idempotentHint': True},
+    **TERMINAL_HELPER_OPTIONS,
 )
 def get_command_output(
     execution_id: str,
     cursor: int = 0,
     limit: int = 500,
     after_cursor: int | None = None,
+    ctx: Context = None,
 ) -> dict:
     effective_cursor = cursor if after_cursor is None else after_cursor
+    session = terminal_session_state(ctx)
+    if session['closed']:
+        return {
+            'execution_id': execution_id,
+            'status': 'expired',
+            'closed': True,
+            'polling': False,
+            'lines': [],
+            'cursor': effective_cursor,
+            'has_more': False,
+            'session': session,
+        }
     return command_queue.get_output(execution_id, effective_cursor, limit)
 
 
-@configurable_tool(
-    mcp, app=TERMINAL_HELPER_APP, title='Download command log',
+@realtime_tool(
+    title='Download command log',
     annotations={'readOnlyHint': True, 'idempotentHint': True},
+    **TERMINAL_HELPER_OPTIONS,
 )
 def get_command_log(execution_id: str, offset: int = 0, limit_bytes: int = 262_144) -> dict:
     return command_queue.get_log(execution_id, offset, limit_bytes)
 
 
-@configurable_tool(
-    mcp, app=TERMINAL_HELPER_APP, title='Resolve command recovery',
+@realtime_tool(
+    title='Resolve command recovery',
     annotations={'destructiveHint': True, 'idempotentHint': True},
+    **TERMINAL_HELPER_OPTIONS,
 )
 def resolve_command_recovery(action: Literal['resume', 'clear']) -> dict:
     result = command_queue.resolve_recovery(action)
@@ -1069,10 +1312,13 @@ def resolve_command_recovery(action: Literal['resume', 'clear']) -> dict:
 
 
 if __name__ == '__main__':
+    print(f"MCPRelay runtime: {runtime_mode_summary(RUNTIME_FEATURES)}", flush=True)
     log_action('gateway_start', {
         'host': '0.0.0.0',
         'port': 8761,
         'oauth_enabled': ENABLE_OAUTH,
+        'realtime_status_enabled': RUNTIME_FEATURES.realtime_enabled,
+        'widget_enabled': RUNTIME_FEATURES.widget_enabled,
     })
 
     mcp.run(

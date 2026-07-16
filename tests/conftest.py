@@ -21,13 +21,15 @@ from fastapi.testclient import TestClient
 # -------------------------------------------------------------------
 # 1.  Set environment before any application code is imported.
 # -------------------------------------------------------------------
-os.environ.setdefault("OAUTH_ISSUER", "https://test.local/oauth")
-os.environ.setdefault("OAUTH_AUDIENCE", "https://test.local/mcp")
-os.environ.setdefault("OAUTH_KEY_ID", "test-key-id")
-os.environ.setdefault("OAUTH_TOKEN_TTL_SECONDS", "3600")
-os.environ.setdefault("OAUTH_AUTO_REGISTER_AUTH_CLIENTS", "true")
-os.environ.setdefault("OAUTH_ACCESS_SECRET_HASH", PasswordHasher().hash("correct horse battery staple"))
-os.environ.setdefault("OAUTH_LOGIN_MAX_ATTEMPTS", "5")
+os.environ["OAUTH_ISSUER"] = "https://test.local/oauth"
+os.environ["OAUTH_AUDIENCE"] = "https://test.local/mcp"
+os.environ["OAUTH_KEY_ID"] = "test-key-id"
+os.environ["OAUTH_TOKEN_TTL_SECONDS"] = "3600"
+os.environ["OAUTH_AUTO_REGISTER_AUTH_CLIENTS"] = "true"
+os.environ["OAUTH_ACCESS_SECRET_HASH"] = PasswordHasher().hash("correct horse battery staple")
+os.environ["OAUTH_LOGIN_MAX_ATTEMPTS"] = "5"
+os.environ["MCP_REALTIME_STATUS_ENABLED"] = "true"
+os.environ["MCP_WIDGET_ENABLED"] = "false"
 
 # -------------------------------------------------------------------
 # 2.  Import the OAuth FastAPI app.

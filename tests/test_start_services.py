@@ -1,5 +1,6 @@
 from unittest.mock import Mock
 from pathlib import Path
+import os
 
 import start_services
 
@@ -30,3 +31,26 @@ def test_ensure_deps_installs_requirements_file(monkeypatch):
         "-r",
         str(start_services.REQUIREMENTS),
     ])
+
+
+def test_parse_runtime_flags_defaults_to_no_overrides():
+    options = start_services.parse_args([])
+
+    assert options.widget is False
+    assert options.realtime is False
+
+    child_env = start_services.service_environment(options)
+    assert child_env["MCP_REALTIME_STATUS_ENABLED"] == "false"
+
+
+def test_runtime_flags_override_child_environment_only(monkeypatch):
+    monkeypatch.setenv("MCP_WIDGET_ENABLED", "false")
+    monkeypatch.setenv("MCP_REALTIME_STATUS_ENABLED", "true")
+    options = start_services.parse_args(["--widget"])
+
+    child_env = start_services.service_environment(options)
+
+    assert child_env["MCP_WIDGET_ENABLED"] == "true"
+    assert child_env["MCP_REALTIME_STATUS_ENABLED"] == "true"
+    assert os.environ["MCP_WIDGET_ENABLED"] == "false"
+    assert os.environ["MCP_REALTIME_STATUS_ENABLED"] == "true"

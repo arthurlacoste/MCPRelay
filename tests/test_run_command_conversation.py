@@ -76,7 +76,17 @@ def test_run_command_optional_conversation_preview(tmp_path, monkeypatch):
         conversation_id='conv-preview', include_output_in_conversation_log=True,
     )
     wait_final(queue, result['execution_id'])
-    payload = json.loads((tmp_path / 'conv-preview.jsonl').read_text().splitlines()[-1])
+    log_path = tmp_path / 'conv-preview.jsonl'
+    deadline = time.monotonic() + 2
+    payload = None
+    while time.monotonic() < deadline:
+        if log_path.exists():
+            events = [json.loads(line) for line in log_path.read_text().splitlines()]
+            payload = next((event for event in reversed(events) if event.get('tool') == 'run_command'), None)
+            if payload is not None:
+                break
+        time.sleep(.02)
+    assert payload is not None
     assert payload['result_included'] is True
     assert payload['output_preview'] == 'visible'
     queue.close()

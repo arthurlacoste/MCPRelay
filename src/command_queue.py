@@ -10,6 +10,7 @@ import sqlite3
 import subprocess
 import threading
 import time
+from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Callable
@@ -115,12 +116,20 @@ class CommandQueue:
         self._recover_database()
         self._dispatch()
 
-    def _connect(self) -> sqlite3.Connection:
+    @contextmanager
+    def _connect(self):
         connection = sqlite3.connect(self.database_path, timeout=30)
-        connection.row_factory = sqlite3.Row
-        connection.execute('PRAGMA journal_mode=WAL')
-        connection.execute('PRAGMA foreign_keys=ON')
-        return connection
+        try:
+            connection.row_factory = sqlite3.Row
+            connection.execute('PRAGMA journal_mode=WAL')
+            connection.execute('PRAGMA foreign_keys=ON')
+            yield connection
+            connection.commit()
+        except Exception:
+            connection.rollback()
+            raise
+        finally:
+            connection.close()
 
     def _initialize(self) -> None:
         with self._connect() as connection:
@@ -530,12 +539,17 @@ class CommandQueue:
 
     def close(self) -> None:
         with self._lock:
+            if self._closed:
+                return
             self._closed = True
             processes = list(self._processes.values())
+            threads = list(self._threads.values())
         for process in processes:
             terminate_process_tree(process)
-        for thread in list(self._threads.values()):
-            thread.join(timeout=2)
+        current = threading.current_thread()
+        for thread in threads:
+            if thread is not current:
+                thread.join()
 
     def _get_job(self, connection: sqlite3.Connection, execution_id: str) -> sqlite3.Row:
         row = connection.execute(
