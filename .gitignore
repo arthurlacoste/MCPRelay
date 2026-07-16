@@ -1,6 +1,7 @@
 # ── Sensitive files ──────────────────────────────────────────────
 .env
 config/settings.yaml
+config/mcp.json
 
 # ── Data (OAuth secrets, tokens, file shares) ────────────────────
 data/

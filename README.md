@@ -2,7 +2,7 @@
 
 # MCPRelay — Local MCP Gateway
 
-A local MCP (Model Context Protocol) gateway with vision, filesystem, browser automation, shell access, file sharing and built-in OAuth authentication.
+A local MCP (Model Context Protocol) gateway with configurable MCP subservers, shell access, file sharing and built-in OAuth authentication.
 
 The goal of this tool is to let ChatGPT work through your local machine and browser instead of pushing everything through OpenAI or Codex context.
 
@@ -26,29 +26,9 @@ See the **[installation and usage guide](docs/installation.md)**.
 | `public_file_list` | List active shares |
 | `public_file_revoke` | Revoke a share |
 
-### 🖥️ Filesystem & Puppeteer (via npx)
-| Tool | Description |
-|---|---|
-| `list_filesystem_available_tools` | List filesystem server tools |
-| `list_puppeteer_available_tools` | List puppeteer server tools |
-| `filesystem_execute_tool` | Execute a filesystem tool |
-| `puppeteer_execute_tool` | Execute a puppeteer tool |
+### 🔌 Configurable MCP subservers
 
-### 👁️ Vision & Automation
-| Tool | Description |
-|---|---|
-| `vision_screen_size` | Screen dimensions |
-| `vision_screenshot` | Take a screenshot (file) |
-| `vision_screenshot_as_base64` | Take a screenshot (base64) |
-| `mouse_position` | Current mouse position |
-| `mouse_move` | Move the mouse |
-| `mouse_click_at` | Click at a specific position |
-| `mouse_click_current` | Click at the current position |
-| `mouse_drag` | Drag the mouse |
-| `mouse_scroll` | Scroll |
-| `keyboard_type` | Type text |
-| `keyboard_press` | Press a key |
-| `keyboard_hotkey` | Key combination |
+Servers from `config/mcp.json` are exposed directly with namespaced tools. The included example configures Computer Use as `computer_use_*`.
 
 ### 💻 Commands
 | Tool | Description |

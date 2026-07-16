@@ -142,7 +142,7 @@ fix_obsolete_bullseye_backports
 
 info "Installing system packages"
 sudo apt-get update
-sudo apt-get install -y ca-certificates curl git jq build-essential python3-tk scrot
+sudo apt-get install -y ca-certificates curl git jq build-essential
 ok "System packages installed"
 
 info "Installing Node.js $NODE_VERSION with nvm"
@@ -268,7 +268,7 @@ OAUTH_AUTO_REGISTER_AUTH_CLIENTS=true
 ENABLE_OAUTH=true
 CHATGPT_STARTUP_BROWSER_ASSIST=false
 EOF
-  printf 'MCP_FILESYSTEM_ROOTS=%s\nMCP_COMMAND_SCAN_ROOT=%s\n' "$FILESYSTEM_ROOTS" "$FILESYSTEM_ROOTS" >> "$ENV_TMP"
+  printf 'MCP_COMMAND_SCAN_ROOT=%s\n' "$FILESYSTEM_ROOTS" >> "$ENV_TMP"
 fi
 {
   printf 'MCP_BASE_URL=%s\n' "$PUBLIC_URL"

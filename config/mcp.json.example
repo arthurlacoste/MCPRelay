@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "open-computer-use": {
+      "command": "open-computer-use",
+      "args": ["mcp"],
+      "toolPrefix": "computer_use",
+      "enabled": true,
+      "initTimeoutMs": 10000
+    }
+  }
+}

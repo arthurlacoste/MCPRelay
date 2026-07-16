@@ -24,14 +24,6 @@ def is_tool_enabled(name: str, config: dict[str, Any] | None = None) -> bool:
     return bool(cfg.get('tools', {}).get(name, True))
 
 
-def is_downstream_enabled(namespace: str, name: str, config: dict[str, Any] | None = None) -> bool:
-    cfg = config if config is not None else load_tool_config()
-    downstream = cfg.get('downstream_mcp', {}).get(namespace, {})
-    if downstream.get('enabled', True) is False:
-        return False
-    return bool(downstream.get('tools', {}).get(name, True))
-
-
 def configurable_tool(mcp, name: str | None = None, **tool_options: Any) -> Callable:
     def decorator(func):
         tool_name = name or func.__name__
