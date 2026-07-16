@@ -42,7 +42,7 @@ def get_skills_root(environ: dict[str, str] | os._Environ[str] | None = None) ->
     return Path(env.get('MCP_SKILLS_ROOT', DEFAULT_SKILLS_ROOT)).expanduser()
 
 
-def _parse_skill(path: Path, root: Path) -> Skill:
+def _parse_skill(path: Path, skill_id: str, package_dir: Path) -> Skill:
     text = _read_utf8(path)
     if not text.startswith('---'):
         raise ValueError('missing YAML frontmatter')
@@ -69,9 +69,38 @@ def _parse_skill(path: Path, root: Path) -> Skill:
     if not isinstance(description, str) or not description.strip():
         raise ValueError('frontmatter description must be a non-empty string')
 
-    package_dir = path.parent
-    skill_id = package_dir.relative_to(root).as_posix()
     return Skill(skill_id, name.strip(), description.strip(), package_dir, path)
+
+
+def _skill_files(root: Path) -> list[tuple[Path, Path]]:
+    """Return logical and resolved SKILL.md paths, following linked packages safely."""
+    found: list[tuple[Path, Path]] = []
+    seen_directories: set[Path] = set()
+
+    def visit(directory: Path) -> None:
+        try:
+            resolved_directory = directory.resolve(strict=True)
+        except OSError:
+            return
+        if resolved_directory in seen_directories:
+            return
+        seen_directories.add(resolved_directory)
+
+        try:
+            entries = sorted(directory.iterdir(), key=lambda item: item.name)
+        except OSError:
+            return
+        for entry in entries:
+            try:
+                if entry.is_dir():
+                    visit(entry)
+                elif entry.name == 'SKILL.md' and entry.is_file():
+                    found.append((entry, entry.resolve(strict=True)))
+            except OSError:
+                continue
+
+    visit(root)
+    return found
 
 
 def scan_skills(root: Path | None = None) -> tuple[list[Skill], list[CatalogWarning]]:
@@ -89,18 +118,12 @@ def scan_skills(root: Path | None = None) -> tuple[list[Skill], list[CatalogWarn
 
     root = root.resolve()
     skills: list[Skill] = []
-    for path in sorted(root.rglob('SKILL.md')):
-        relative = path.relative_to(root).as_posix()
+    for logical_path, resolved_path in _skill_files(root):
+        relative = logical_path.relative_to(root).as_posix()
+        package_dir = logical_path.parent
+        skill_id = package_dir.relative_to(root).as_posix()
         try:
-            resolved = path.resolve(strict=True)
-            if not resolved.is_relative_to(root):
-                warnings.append(_warning(
-                    'outside_root',
-                    'Skill file resolves outside the skills root.',
-                    relative,
-                ))
-                continue
-            skills.append(_parse_skill(resolved, root))
+            skills.append(_parse_skill(resolved_path, skill_id, package_dir))
         except (OSError, UnicodeError, ValueError) as exc:
             warnings.append(_warning('invalid_skill', str(exc), relative))
     return skills, warnings

@@ -103,6 +103,26 @@ def test_search_ranking_pagination_and_limit_bounds(tmp_path):
     assert skills_search(root=tmp_path, limit=500)['total'] == 3
 
 
+def test_symlinked_skill_package_is_discovered_and_read_safely(tmp_path):
+    external = tmp_path / 'external'
+    external.mkdir()
+    target = write_skill(external, 'diagnose', name='Diagnose')
+    (target.parent / 'guide.txt').write_text('guide', encoding='utf-8')
+    root = tmp_path / 'root'
+    root.mkdir()
+    (root / 'diagnose').symlink_to(target.parent, target_is_directory=True)
+
+    result = skills_search(root=root)
+    assert [item['id'] for item in result['matches']] == ['diagnose']
+    assert skills_read('diagnose', 'guide.txt', root=root)['content'] == 'guide'
+
+    outside = tmp_path / 'secret.txt'
+    outside.write_text('secret', encoding='utf-8')
+    (target.parent / 'escape.txt').symlink_to(outside)
+    with pytest.raises(ValueError, match='outside the skill package'):
+        skills_read('diagnose', 'escape.txt', root=root)
+
+
 def test_read_skill_and_relative_text_reference(tmp_path):
     skill_file = write_skill(tmp_path, 'nested/example')
     reference = skill_file.parent / 'references' / 'guide.txt'
