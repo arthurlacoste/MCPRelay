@@ -1,0 +1,10 @@
+{
+  "name": "mcprelay-development",
+  "private": true,
+  "scripts": {
+    "dedup": "jscpd"
+  },
+  "devDependencies": {
+    "jscpd": "5.0.12"
+  }
+}
