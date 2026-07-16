@@ -8,6 +8,13 @@ $ErrorActionPreference = "Stop"
 $ProjectDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 Set-Location $ProjectDir
 
+$SkillsRoot = if ($env:MCP_SKILLS_ROOT) {
+    $env:MCP_SKILLS_ROOT
+} else {
+    Join-Path $HOME ".gate\skills"
+}
+New-Item -ItemType Directory -Path $SkillsRoot -Force | Out-Null
+
 $Python = if (Get-Command py -ErrorAction SilentlyContinue) {
     "py"
 } elseif (Get-Command python -ErrorAction SilentlyContinue) {

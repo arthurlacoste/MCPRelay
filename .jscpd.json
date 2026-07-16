@@ -1,0 +1,28 @@
+{
+  "path": [
+    "src",
+    "scripts",
+    "start_services.py"
+  ],
+  "format": [
+    "python",
+    "javascript",
+    "typescript",
+    "html",
+    "css",
+    "bash"
+  ],
+  "minLines": 5,
+  "minTokens": 80,
+  "threshold": 0,
+  "reporters": [
+    "console"
+  ],
+  "ignore": [
+    "**/__pycache__/**",
+    "**/*.min.js",
+    "src/terminal_app.py"
+  ],
+  "gitignore": true,
+  "absolute": true
+}

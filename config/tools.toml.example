@@ -1,6 +1,8 @@
 # Default: absent value = enabled.
 
 [tools]
+skills_search = true
+skills_read = true
 run_command = true
 get_queue_state = true
 get_command_state = true

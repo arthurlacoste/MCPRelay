@@ -177,6 +177,55 @@ def test_ngrok_cleanup_escalates_and_verifies_process_exit(tmp_path):
             stubborn.wait()
 
 
+def test_onboarding_creates_default_skills_directory_for_complete_config(tmp_path):
+    script, env = _sandbox(
+        tmp_path,
+        "MCP_BASE_URL=https://stable.example\n"
+        "OAUTH_ACCESS_SECRET=readable-secret\n"
+        "OAUTH_ACCESS_SECRET_HASH=$argon2id$valid\n",
+    )
+    home = tmp_path / "home"
+    home.mkdir()
+    env["HOME"] = str(home)
+
+    result = subprocess.run(
+        [str(script), "setup"],
+        cwd=tmp_path,
+        env=env,
+        text=True,
+        capture_output=True,
+        timeout=15,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert (home / ".gate" / "skills").is_dir()
+
+
+def test_onboarding_creates_configured_skills_directory(tmp_path):
+    custom_root = tmp_path / "custom" / "skills"
+    script, env = _sandbox(
+        tmp_path,
+        "MCP_BASE_URL=https://stable.example\n"
+        "OAUTH_ACCESS_SECRET=readable-secret\n"
+        "OAUTH_ACCESS_SECRET_HASH=$argon2id$valid\n"
+        f"MCP_SKILLS_ROOT={custom_root}\n",
+    )
+
+    result = subprocess.run(
+        [str(script), "setup"],
+        cwd=tmp_path,
+        env=env,
+        text=True,
+        capture_output=True,
+        timeout=15,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert custom_root.is_dir()
+
+
 def test_onboarding_persists_url_secret_and_hash():
     content = RUN_SCRIPT.read_text()
 
