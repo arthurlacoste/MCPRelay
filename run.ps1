@@ -1,3 +1,8 @@
+param(
+    [switch]$Widget,
+    [switch]$Realtime
+)
+
 $ErrorActionPreference = "Stop"
 
 $ProjectDir = Split-Path -Parent $MyInvocation.MyCommand.Path
@@ -15,9 +20,13 @@ if (-not (Get-Command ngrok -ErrorAction SilentlyContinue)) {
     throw "ngrok was not found in PATH."
 }
 
+$ServiceArgs = @("start_services.py")
+if ($Widget) { $ServiceArgs += "--widget" }
+if ($Realtime) { $ServiceArgs += "--realtime" }
+
 $Gateway = Start-Process `
     -FilePath $Python `
-    -ArgumentList "start_services.py" `
+    -ArgumentList $ServiceArgs `
     -WorkingDirectory $ProjectDir `
     -NoNewWindow `
     -PassThru

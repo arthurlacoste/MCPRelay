@@ -1,7 +1,10 @@
 import asyncio
+import json
 import sys
 import time
 from pathlib import Path
+
+import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / 'src'))
 
@@ -9,6 +12,12 @@ from fastmcp import Client
 from command_queue import CommandQueue
 import mcp_gateway as mod
 
+
+@pytest.fixture(autouse=True)
+def close_test_queue():
+    yield
+    if mod.command_queue is not None:
+        mod.command_queue.close()
 
 def install_queue(tmp_path):
     mod.command_queue.close()
@@ -25,16 +34,61 @@ def test_fastmcp_run_command_returns_immediately(tmp_path):
 
     async def scenario():
         async with Client(mod.mcp) as client:
+            tools = {tool.name: tool for tool in await client.list_tools()}
             started = time.perf_counter()
             result = await tool(client, 'run_command', {
                 'command': f'"{sys.executable}" -c "import time; time.sleep(.5); print(\'ok\')"',
+                'cwd': str(tmp_path),
             })
-            return time.perf_counter() - started, result
+            return time.perf_counter() - started, result, tools['run_command'].inputSchema
 
-    elapsed, result = asyncio.run(scenario())
+    elapsed, result, schema = asyncio.run(scenario())
     assert elapsed < .25
+    assert 'cwd' in schema['properties']
+    assert result['cwd'] == str(tmp_path.resolve())
     assert result['execution_id'].startswith('exec_')
     assert result['status'] in {'queued', 'starting', 'running'}
+
+
+def test_terminal_polling_session_expires_and_logs_network_event(tmp_path, monkeypatch):
+    install_queue(tmp_path)
+    monkeypatch.setattr(mod, 'CONVERSATION_DIR', tmp_path / 'conversations')
+    monkeypatch.setattr(mod, 'LOG_FILE', tmp_path / 'gateway.jsonl')
+    monkeypatch.setattr(mod, 'TERMINAL_SESSION_TTL_SECONDS', 10)
+    clock = [100.0]
+    monkeypatch.setattr(mod, 'monotonic', lambda: clock[0])
+    with mod.terminal_sessions_lock:
+        mod.terminal_sessions.clear()
+
+    async def scenario():
+        async with Client(mod.mcp) as client:
+            run = await tool(client, 'run_command', {
+                'command': f'"{sys.executable}" -c "print(\'done\')"',
+                'conversation_id': 'poll-expiry',
+            })
+            deadline = time.monotonic() + 3
+            while time.monotonic() < deadline:
+                state = await tool(client, 'get_command_state', {'execution_id': run['execution_id']})
+                if state['status'] == 'success':
+                    break
+                await asyncio.sleep(.02)
+            else:
+                raise AssertionError('command did not finish')
+            clock[0] = 111.0
+            queue_state = await tool(client, 'get_queue_state', {})
+            command_state = await tool(client, 'get_command_state', {'execution_id': run['execution_id']})
+            return queue_state, command_state
+
+    queue_state, command_state = asyncio.run(scenario())
+    assert queue_state['status'] == 'expired'
+    assert queue_state['closed'] is True
+    assert queue_state['polling'] is False
+    assert command_state['status'] == 'expired'
+    events = [json.loads(line) for line in (tmp_path / 'conversations' / 'poll-expiry.jsonl').read_text().splitlines()]
+    network_events = [event for event in events if event['type'] == 'network_error']
+    assert len(network_events) == 1
+    assert network_events[0]['error'] == 'mcp_network_error'
+    assert network_events[0]['inferred'] is True
 
 
 def test_slow_command_does_not_block_lightweight_tool(tmp_path):

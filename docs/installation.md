@@ -498,8 +498,35 @@ Stop the public tunnel whenever it is not in use.
 
 ## Asynchronous command terminal
 
-`run_command` returns an execution ID immediately. ChatGPT displays the MCPRelay Live Queue app and polls command output by cursor. Use `get_command_state`, `get_command_output`, `get_command_log`, and `stop_command` for programmatic control. `get_command_log` securely resolves the execution ID to its backend log and pages the complete file by byte offset.
+By default, `./run.sh` uses the historical blocking `run_command` contract. It waits for completion and returns command output directly. Realtime queue tools and the ChatGPT widget are disabled.
 
-The queue and output index are stored in SQLite at `data/commands.sqlite3`; full logs remain in `logs/commands/`. Configure worker and retention limits with `MCP_MAX_CONCURRENT_COMMANDS`, `MCP_COMMAND_TIMEOUT_SECONDS`, `MCP_COMMAND_MAX_LINES`, and `MCP_COMMAND_HISTORY_LIMIT`. `MCP_COMMAND_DATABASE` can override the database path.
+Use additive startup flags without changing `config/.env`:
+
+```bash
+# Blocking mode, no widget
+./run.sh
+
+# Realtime queue and status tools, no widget
+./run.sh --realtime
+
+# Realtime queue, status tools, and ChatGPT widget
+./run.sh --widget
+
+# Daemon mode
+./run.sh start --realtime
+./run.sh start --widget
+
+# Direct supervisor usage
+python start_services.py --realtime
+python start_services.py --widget
+
+# Windows
+.\run.ps1 -Realtime
+.\run.ps1 -Widget
+```
+
+`--realtime` enables queued commands and the realtime status tools. `--widget` adds the MCP App resource and output template, and automatically enables realtime because the widget depends on the command queue.
+
+For persistent defaults, configure `MCP_WIDGET_ENABLED` (default `false`) and `MCP_REALTIME_STATUS_ENABLED` (default `false`). Enabling the widget also enables realtime. Command-line flags affect only the launched process tree.
 
 After a gateway restart, formerly active commands become `interrupted` and pending commands remain suspended. The widget asks whether to **Relancer** (resume) or **Vider** (cancel) them before any recovered command starts.

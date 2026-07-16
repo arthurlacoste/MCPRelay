@@ -14,6 +14,7 @@ Then tunnel with ngrok:
 """
 
 import os
+import argparse
 import signal
 import socket
 import subprocess
@@ -49,6 +50,25 @@ SERVICES = [
 processes = []
 
 
+def parse_args(argv=None):
+    parser = argparse.ArgumentParser(description="Start the MCPRelay gateway")
+    parser.add_argument("--widget", action="store_true", help="enable the ChatGPT command widget")
+    parser.add_argument(
+        "--realtime",
+        action="store_true",
+        help="enable queued commands and realtime status tools",
+    )
+    return parser.parse_args(argv)
+
+
+def service_environment(options) -> dict[str, str]:
+    env = os.environ.copy()
+    env["MCP_REALTIME_STATUS_ENABLED"] = "true" if options.realtime or options.widget else "false"
+    if options.widget:
+        env["MCP_WIDGET_ENABLED"] = "true"
+    return env
+
+
 def is_port_available(host: str, port: int) -> bool:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
         sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -76,7 +96,7 @@ def ensure_deps():
     ])
 
 
-def start_service(service):
+def start_service(service, env=None):
     log_file = open(service["log"], "a", buffering=1, encoding="utf-8")
     log_file.write(f"\n--- starting {service['name']} at {time.strftime('%Y-%m-%d %H:%M:%S')} ---\n")
 
@@ -85,7 +105,7 @@ def start_service(service):
         cwd=str(BASE_DIR),
         stdout=log_file,
         stderr=subprocess.STDOUT,
-        env=os.environ.copy(),
+        env=env or os.environ.copy(),
     )
 
     processes.append((service, process, log_file))
@@ -111,7 +131,9 @@ def stop_all(*_):
     sys.exit(0)
 
 
-def main():
+def main(argv=None):
+    options = parse_args(argv)
+    child_env = service_environment(options)
     ensure_venv()
     ensure_deps()
 
@@ -123,7 +145,7 @@ def main():
     signal.signal(signal.SIGTERM, stop_all)
 
     for service in SERVICES:
-        start_service(service)
+        start_service(service, child_env)
         time.sleep(1)
 
     print("services running")
@@ -142,7 +164,7 @@ def main():
                 print(f"{service['name']} exited with code {code}; restarting...")
                 processes.remove((service, process, log_file))
                 log_file.close()
-                start_service(service)
+                start_service(service, child_env)
         time.sleep(3)
 
 

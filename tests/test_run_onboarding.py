@@ -22,6 +22,7 @@ def _write_executable(path: Path, content: str) -> None:
 def _sandbox(tmp_path: Path, env_content: str) -> tuple[Path, dict[str, str]]:
     script = tmp_path / "run.sh"
     shutil.copy2(RUN_SCRIPT, script)
+    shutil.copy2(RUN_SCRIPT.parent / "requirements.txt", tmp_path / "requirements.txt")
     (tmp_path / "config").mkdir()
     (tmp_path / "config" / ".env").write_text(env_content)
     (tmp_path / ".venv" / "bin").mkdir(parents=True)
@@ -44,8 +45,10 @@ def _sandbox(tmp_path: Path, env_content: str) -> tuple[Path, dict[str, str]]:
         "printf '%s\\n' "
         "'{\"tunnels\":[{\"proto\":\"https\",\"public_url\":\"https://fresh.ngrok-free.app\"}]}'\n",
     )
+    _write_executable(fake_bin / "pgrep", "#!/usr/bin/env bash\nexit 1\n")
     env = os.environ.copy()
     env["PATH"] = f"{fake_bin}:{env['PATH']}"
+    env["MCPRELAY_PID_FILE"] = str(tmp_path / "mcp_gateway.pid")
     return script, env
 
 
@@ -81,6 +84,26 @@ def _read_pty_until(fd: int, expected: bytes, timeout: float) -> bytes:
     raise AssertionError(f"Timed out waiting for {expected!r}. Output: {output!r}")
 
 
+def test_run_script_bootstraps_python_before_onboarding():
+    content = RUN_SCRIPT.read_text()
+
+    interactive = content[content.index("run_interactive()") : content.index("start_daemon()")]
+    daemon = content[content.index("start_daemon()") : content.index("stop_daemon()")]
+
+    assert interactive.index("ensure_python_environment") < interactive.index("ensure_onboarding")
+    assert daemon.index("ensure_python_environment") < daemon.index("ensure_onboarding")
+    assert "setup)   ensure_python_environment; ensure_onboarding ;;" in content
+    assert "renew-secret) ensure_python_environment; ensure_onboarding true ;;" in content
+
+
+def test_python_bootstrap_uses_canonical_requirements():
+    content = RUN_SCRIPT.read_text()
+
+    assert 'python3 -m venv "$PROJECT_DIR/.venv"' in content
+    assert '"$python" -m pip install -r "$requirements"' in content
+    assert "pip install argon2-cffi" not in content
+
+
 def test_run_script_onboards_before_starting_services():
     content = RUN_SCRIPT.read_text()
 
@@ -93,6 +116,65 @@ def test_run_script_onboards_before_starting_services():
     assert content.index("ensure_onboarding", daemon) < content.index(
         "nohup python3 start_services.py", daemon
     )
+
+
+def test_running_modes_cleanup_ngrok_before_starting_services():
+    content = RUN_SCRIPT.read_text()
+    interactive = content[content.index("run_interactive()") : content.index("start_daemon()")]
+    daemon = content[content.index("start_daemon()") : content.index("stop_daemon()")]
+
+    assert interactive.index("cleanup_stale_ngrok") < interactive.index("interactive_launcher.py")
+    assert daemon.index("cleanup_stale_ngrok") < daemon.index("nohup python3 start_services.py")
+
+
+def test_ngrok_cleanup_escalates_and_verifies_process_exit(tmp_path):
+    content = RUN_SCRIPT.read_text()
+    definitions = content[: content.index('parse_runtime_args "$@"')]
+    harness = tmp_path / "cleanup.sh"
+    _write_executable(harness, definitions + "\ncleanup_stale_ngrok\n")
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    pid_file = tmp_path / "pids"
+    _write_executable(
+        fake_bin / "pgrep",
+        "#!/usr/bin/env bash\n"
+        "while IFS= read -r pid; do\n"
+        "  state=$(ps -o stat= -p \"$pid\" 2>/dev/null || true)\n"
+        "  case \"$state\" in ''|*Z*) ;; *) printf '%s\\n' \"$pid\" ;; esac\n"
+        "done < \"$FAKE_PIDS\"\n",
+    )
+    stubborn = subprocess.Popen(
+        [
+            VENV_PYTHON,
+            "-c",
+            "import signal,time; signal.signal(signal.SIGTERM, signal.SIG_IGN); print('ready', flush=True); time.sleep(30)",
+        ],
+        text=True,
+        stdout=subprocess.PIPE,
+    )
+    assert stubborn.stdout.readline().strip() == "ready"
+    pid_file.write_text(f"{stubborn.pid}\n")
+    env = os.environ.copy()
+    env["PATH"] = f"{fake_bin}:{env['PATH']}"
+    env["FAKE_PIDS"] = str(pid_file)
+
+    try:
+        result = subprocess.run(
+            [str(harness)],
+            cwd=tmp_path,
+            env=env,
+            text=True,
+            capture_output=True,
+            timeout=10,
+            check=False,
+        )
+        assert result.returncode == 0, result.stderr
+        assert "Forcing stale ngrok processes" in result.stdout
+        assert stubborn.wait(timeout=2) < 0
+    finally:
+        if stubborn.poll() is None:
+            stubborn.kill()
+            stubborn.wait()
 
 
 def test_onboarding_persists_url_secret_and_hash():
@@ -114,8 +196,18 @@ def test_onboarding_reuses_complete_configuration():
 def test_setup_and_secret_renewal_commands_are_available():
     content = RUN_SCRIPT.read_text()
 
-    assert "setup)   ensure_onboarding ;;" in content
-    assert "renew-secret) ensure_onboarding true ;;" in content
+    assert "setup)   ensure_python_environment; ensure_onboarding ;;" in content
+    assert "renew-secret) ensure_python_environment; ensure_onboarding true ;;" in content
+
+
+def test_runtime_flags_are_ephemeral_and_forwarded_to_children():
+    content = RUN_SCRIPT.read_text()
+
+    assert '--widget' in content
+    assert '--realtime' in content
+    assert 'export MCP_WIDGET_ENABLED=true' in content
+    assert 'export MCP_REALTIME_STATUS_ENABLED=true' in content
+    assert 'set_env_values MCP_WIDGET_ENABLED' not in content
 
 
 def test_interactive_mode_uses_python_supervisor():
