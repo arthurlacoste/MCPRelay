@@ -535,13 +535,33 @@ After a gateway restart, formerly active commands become `interrupted` and pendi
 
 MCPRelay can expose a trusted local catalogue of [Agent Skills](https://agentskills.io/) through `skills_search` and `skills_read`. It does not bundle, install, execute, or automatically inject skills into conversations.
 
-The default root is `~/.gate/skills`. Override it in `config/.env`:
+The default root is `~/.gate/skills`. The onboarding launcher creates it automatically when it is missing.
+
+To use another directory, add `MCP_SKILLS_ROOT` to `config/.env`, then rerun onboarding or restart MCPRelay:
 
 ```dotenv
-MCP_SKILLS_ROOT=~/.gate/skills
+# Relative `~` paths and absolute paths are supported.
+MCP_SKILLS_ROOT=~/Documents/agent-skills
 ```
 
-The onboarding launcher creates the configured skills root when it is missing. With the default configuration, this creates `~/.gate/skills`. The running MCP server itself never creates directories: if the root is later removed or changed to a missing path, it returns an empty catalogue with a configuration warning.
+An existing process environment variable takes precedence over the value loaded from `config/.env`.
+
+To add a skill, create or link a directory anywhere below the configured root. The directory must contain a UTF-8 `SKILL.md`:
+
+```bash
+mkdir -p ~/.gate/skills/my-skill
+$EDITOR ~/.gate/skills/my-skill/SKILL.md
+```
+
+You can also link an existing skill package without copying it:
+
+```bash
+ln -s /absolute/path/to/my-skill ~/.gate/skills/my-skill
+```
+
+MCPRelay follows symlinked skill package directories, while still rejecting files that escape the linked package. Skills are discovered at request time, so adding or updating a package does not require rebuilding MCPRelay.
+
+The running MCP server itself never creates directories. If the configured root is later removed or changed to a missing path without rerunning onboarding, the catalogue returns no skills and includes a structured configuration warning.
 
 Each skill is a directory containing a UTF-8 `SKILL.md` with YAML frontmatter:
 
