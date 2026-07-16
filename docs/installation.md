@@ -530,3 +530,39 @@ python start_services.py --widget
 For persistent defaults, configure `MCP_WIDGET_ENABLED` (default `false`) and `MCP_REALTIME_STATUS_ENABLED` (default `false`). Enabling the widget also enables realtime. Command-line flags affect only the launched process tree.
 
 After a gateway restart, formerly active commands become `interrupted` and pending commands remain suspended. The widget asks whether to **Relancer** (resume) or **Vider** (cancel) them before any recovered command starts.
+
+## Agent Skills catalogue
+
+MCPRelay can expose a trusted local catalogue of [Agent Skills](https://agentskills.io/) through `skills_search` and `skills_read`. It does not bundle, install, execute, or automatically inject skills into conversations.
+
+The default root is `~/.gate/skills`. Override it in `config/.env`:
+
+```dotenv
+MCP_SKILLS_ROOT=~/.gate/skills
+```
+
+The root must already exist. MCPRelay returns an empty catalogue with a configuration warning when it is missing and never creates it automatically.
+
+Each skill is a directory containing a UTF-8 `SKILL.md` with YAML frontmatter:
+
+```markdown
+---
+name: Deploy application
+description: Repeatable deployment and verification workflow.
+---
+
+# Deploy application
+...
+```
+
+Skills are discovered recursively on every search. Their stable ID is the skill directory path relative to `MCP_SKILLS_ROOT`, for example `operations/deploy`. YAML names do not need to be unique.
+
+`skills_read` can also read UTF-8 text references inside the same skill directory. Absolute paths, parent traversal, directories, files above 256 KiB, binary content, and symlinks escaping the skill package are rejected.
+
+Both tools are enabled by default and can be disabled independently in `config/tools.toml`:
+
+```toml
+[tools]
+skills_search = true
+skills_read = true
+```

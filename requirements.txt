@@ -5,6 +5,7 @@ fastmcp==3.2.4
 Pillow==12.2.0
 PyAutoGUI==0.9.54
 PyJWT==2.12.1
+PyYAML==6.0.3
 python-dotenv==1.2.2
 python-multipart==0.0.28
 uvicorn==0.46.0
