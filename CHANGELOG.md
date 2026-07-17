@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.7
+
+### Fixed
+
+- Make `gate stop` reliably terminate orphaned gateway processes on WSL by killing matching gateway processes and the listener on port 8761, with TERM-to-KILL escalation.
+
 ## 0.1.6
 
 ### Added

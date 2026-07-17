@@ -369,8 +369,6 @@ start_daemon() {
 }
 
 gateway_port_pids() {
-    local pid
-
     if command -v fuser >/dev/null 2>&1; then
         fuser -n tcp "$NGROK_PORT" 2>/dev/null | tr ' ' '\n' | grep -E '^[0-9]+$' || true
         return
@@ -388,15 +386,23 @@ gateway_port_pids() {
     fi
 }
 
-stop_gateway_port() {
-    local pids remaining pid
-    pids="$(gateway_port_pids)"
-    [ -n "$pids" ] || return 0
+signal_gateway_processes() {
+    local signal="$1"
 
-    warn "Stopping process still listening on port $NGROK_PORT."
-    while IFS= read -r pid; do
-        [ -n "$pid" ] && [ "$pid" != "$$" ] && kill "$pid" 2>/dev/null || true
-    done <<< "$pids"
+    if command -v pkill >/dev/null 2>&1; then
+        pkill "-$signal" -f "$PROJECT_DIR/src/mcp_gateway.py" 2>/dev/null || true
+        pkill "-$signal" -f "$PROJECT_DIR/start_services.py" 2>/dev/null || true
+    fi
+
+    if command -v fuser >/dev/null 2>&1; then
+        fuser -k "-$signal" "$NGROK_PORT/tcp" >/dev/null 2>&1 || true
+    fi
+}
+
+stop_gateway_port() {
+    local remaining
+
+    signal_gateway_processes TERM
 
     for _ in 1 2 3 4 5; do
         remaining="$(gateway_port_pids)"
@@ -405,9 +411,15 @@ stop_gateway_port() {
     done
 
     warn "Forcing process on port $NGROK_PORT to stop."
-    while IFS= read -r pid; do
-        [ -n "$pid" ] && [ "$pid" != "$$" ] && kill -9 "$pid" 2>/dev/null || true
-    done <<< "$remaining"
+    signal_gateway_processes KILL
+
+    for _ in 1 2 3 4 5; do
+        remaining="$(gateway_port_pids)"
+        [ -z "$remaining" ] && return 0
+        sleep 0.2
+    done
+
+    die "Could not free gateway port $NGROK_PORT. Try: sudo fuser -k -9 $NGROK_PORT/tcp"
 }
 
 stop_daemon() {

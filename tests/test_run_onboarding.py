@@ -417,6 +417,10 @@ def test_stop_cleans_gateway_port_without_pid_file():
     assert 'fuser -n tcp "$NGROK_PORT"' in stop
     assert 'lsof -nP -tiTCP:"$NGROK_PORT" -sTCP:LISTEN' in stop
     assert 'ss -ltnp "sport = :$NGROK_PORT"' in stop
-    assert "stop_gateway_port" in stop
+    assert 'pkill "-$signal" -f "$PROJECT_DIR/src/mcp_gateway.py"' in stop
+    assert 'pkill "-$signal" -f "$PROJECT_DIR/start_services.py"' in stop
+    assert 'fuser -k "-$signal" "$NGROK_PORT/tcp"' in stop
+    assert "signal_gateway_processes TERM" in stop
+    assert "signal_gateway_processes KILL" in stop
     assert 'if [ ! -f "$PID_FILE" ]' not in stop
-    assert 'kill -9 "$pid"' in stop
+    assert 'sudo fuser -k -9 $NGROK_PORT/tcp' in stop
