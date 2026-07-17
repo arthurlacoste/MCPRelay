@@ -223,10 +223,10 @@ def start_ngrok() -> tuple[subprocess.Popen | ExistingProcess, str]:
         if process.poll() is None:
             return process, "onboarding tunnel reused"
     if shutil.which("caffeinate"):
-        command = ["caffeinate", "-i", "ngrok", "http", str(NGROK_PORT)]
+        command = ["caffeinate", "-i", "ngrok", "http", str(NGROK_PORT), "--log=stdout"]
         label = "caffeinate active"
     else:
-        command = ["ngrok", "http", str(NGROK_PORT)]
+        command = ["ngrok", "http", str(NGROK_PORT), "--log=stdout"]
         label = "sleep inhibition inactive"
 
     with NGROK_LOG.open("w", encoding="utf-8") as log_file:
