@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.1.5
+
+### Changed
+
+- Remove all automatic browser-opening behavior from installation and normal Gate usage.
+- Require Python tests and duplicate-code checks to pass before creating a GitHub Release.
+- Stabilize the interactive Ctrl+C test on Linux CI.
+
 ## 0.1.4
 
 ### Fixed
