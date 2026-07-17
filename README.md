@@ -1,17 +1,15 @@
-![VISION](docs/assets/vision.webp)
+# Gate — Bring local MCPs and Skills to ChatGPT
 
-# Gate — Local MCP Gateway
+Gate is a local MCP reverse proxy that exposes your computer, MCP servers and Agent Skills through a single OAuth-protected endpoint. It lets ChatGPT reach tools running on your own machine from the web app and iOS apps, without moving the underlying services into the cloud.
 
-A local MCP (Model Context Protocol) gateway with configurable MCP subservers, shell access, file sharing and built-in OAuth authentication.
-
-The goal of this tool is to let ChatGPT work through your local machine and browser instead of pushing everything through OpenAI or Codex context.
+Use Gate to connect local commands, files, browser automation, custom MCP servers and a trusted Skills catalogue back to your regular ChatGPT conversations.
 
 ## Installation and usage
 
 Install Gate on macOS, Linux or WSL:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/arthurlacoste/gate/main/install.sh | bash
+curl -fsSL https://spel.cc/gate.sh | bash
 ```
 
 Then run:
@@ -20,61 +18,43 @@ Then run:
 gate
 ```
 
-See the **[installation and usage guide](docs/installation.md)**.
+See the **[installation and usage guide](docs/installation.md)**, if you want to do it the hard way.
 
 ---
 
 ## 🛠️ Available MCP Tools
 
+### 💻 Commands
+
+| Tool          | Description                            |
+| ------------- | -------------------------------------- |
+| `run_command` | Execute a shell command with streaming |
+
 ### 🔐 Authentication
-| Tool | Description |
-|---|---|
+
+| Tool          | Description                              |
+| ------------- | ---------------------------------------- |
 | `auth_status` | OAuth status: issuer, audience, base_url |
 
 ### 📁 File Sharing
-| Tool | Description |
-|---|---|
-| `public_file_share` | Share a file via a public URL |
-| `public_file_list` | List active shares |
-| `public_file_revoke` | Revoke a share |
+
+| Tool                 | Description                   |
+| -------------------- | ----------------------------- |
+| `public_file_share`  | Share a file via a public URL |
+| `public_file_list`   | List active shares            |
+| `public_file_revoke` | Revoke a share                |
 
 ### 🔌 Configurable MCP subservers
 
-Servers from `config/mcp.json` are exposed directly with namespaced tools. The included example configures Computer Use as `computer_use_*`.
+Servers from `config/mcp.json` are exposed through Gate with namespaced tools. The included example configures Computer Use as `computer_use_*`.
 
-### 💻 Commands
-| Tool | Description |
-|---|---|
-| `run_command` | Execute a shell command with streaming |
+[See more about the MCP implementation and subserver configuration.](docs/installation.md#configure-mcp-subservers)
 
----
+### 🧠 Agent Skills
 
-## 🧪 Tests
+Gate can expose a trusted local catalogue of [Agent Skills](https://agentskills.io/) through `skills_search` and `skills_read`. Skills remain stored on your machine and can be discovered from ChatGPT without being bundled into the gateway or automatically injected into every conversation.
 
-### OAuth unit tests (29 tests — no external dependencies)
-
-```bash
-pytest tests/test_oauth.py -v
-```
-
-Covers: metadata, client registration, authorization, token exchange, PKCE (S256), JWKS, JWT validation, expired codes, code reuse, edge cases.
-
-### MCP integration tests (7 tests — requires the gateway to be running)
-
-```bash
-# Gateway must be running (./run.sh start), then:
-pytest tests/test_mcp_endpoint.py -v
-```
-
-Covers: reachability, OAuth health, discovery, live JWKS, full OAuth flow (register → authorize → token), JSON-RPC call (`initialize` + `tools/list`).
-
-### Full test suite
-
-```bash
-pytest tests/ -v
-```
-
-> MCP integration tests are automatically **skipped** if the gateway is unreachable (localhost:8761). No false failures in CI or offline.
+[See how to configure the Skills catalogue.](docs/installation.md#agent-skills-catalogue)
 
 ---
 
@@ -84,7 +64,6 @@ pytest tests/ -v
 - OAuth tokens are signed with a local RSA key (generated in `data/oauth_private_key.pem`)
 - Files shared via `public_file_share` are accessible without authentication
 - Command logs contain all input/output — do not expose logs
-
 
 ## 📝 License
 

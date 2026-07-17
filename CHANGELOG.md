@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.1.2
+
+### Fixed
+
+- Expose the installed `src` directory through `PYTHONPATH` so the global `gate` launcher can import `gate_cli`.
+
+### Changed
+
+- Rewrite the README around Gate as a local MCP reverse proxy for ChatGPT web and iOS.
+- Add the Agent Skills catalogue to the README and link to the detailed MCP and Skills documentation.
+- Remove the README logo and contributor-focused test section.
+
 ## 0.1.1
 
 ### Changed

@@ -36,3 +36,8 @@ def test_installer_downloads_github_release_assets():
     assert "browser_download_url" in content
     assert "SHA256SUMS" in content
     assert "checksums.txt" not in content
+
+def test_generated_launcher_exposes_src_package():
+    content = (Path(__file__).resolve().parents[1] / "install.sh").read_text()
+    assert 'export PYTHONPATH="$ROOT/current/src${PYTHONPATH:+:$PYTHONPATH}"' in content
+    assert '"$ROOT/current/.venv/bin/python" -m gate_cli' in content

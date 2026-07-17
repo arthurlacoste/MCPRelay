@@ -162,6 +162,7 @@ export MCP_CONFIG_ROOT="$ROOT/config"
 export MCP_DATA_ROOT="$ROOT/data"
 export MCP_LOG_ROOT="$ROOT/logs"
 export MCP_SKILLS_ROOT="$ROOT/skills"
+export PYTHONPATH="$ROOT/current/src${PYTHONPATH:+:$PYTHONPATH}"
 export PATH="$ROOT/runtime/bin:${NVM_DIR:-$HOME/.nvm}/versions/node/$(ls -1 "${NVM_DIR:-$HOME/.nvm}/versions/node" 2>/dev/null | sort -V | tail -1)/bin:$PATH"
 exec "$ROOT/current/.venv/bin/python" -m gate_cli "$@"
 EOF
