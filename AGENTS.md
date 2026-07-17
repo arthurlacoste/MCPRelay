@@ -12,11 +12,16 @@ User-facing installation and usage belong in `docs/installation.md`. Keep `READM
 myMCP/
 ├── AGENTS.md                         # Agent and maintainer context
 ├── README.md                         # Short user-facing overview
+├── VERSION                           # Current Gate semantic version
+├── CHANGELOG.md                     # Release notes by version
+├── .github/workflows/release.yml    # Builds signed release assets and SHA256SUMS
+├── install.sh                       # One-line macOS/Linux/WSL installer
 ├── requirements.txt                  # Canonical pinned Python dependencies
 ├── config/
 │   ├── .env.example                  # Documented environment variables
 │   └── tools.toml.example            # Optional MCP tool enable/disable config
 ├── src/
+│   ├── gate_cli/                     # Global Gate CLI, update and lifecycle support
 │   ├── mcp_gateway.py                # MCP server, tools, logging, file sharing
 │   ├── interactive_launcher.py       # POSIX interactive process/key supervisor
 │   ├── lightweight_oauth.py          # OAuth/OIDC endpoints and JWT creation

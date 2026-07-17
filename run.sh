@@ -5,9 +5,12 @@ set -Eeuo pipefail
 PROJECT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PID_FILE="${MCPRELAY_PID_FILE:-/tmp/mcp_gateway.pid}"
 NGROK_PORT=8761
-CONFIG_FILE="$PROJECT_DIR/config/.env"
-NGROK_LOG="/tmp/mcprelay-ngrok-run.log"
+CONFIG_ROOT="${MCP_CONFIG_ROOT:-$PROJECT_DIR/config}"
+CONFIG_FILE="$CONFIG_ROOT/.env"
+NGROK_LOG="${MCP_LOG_ROOT:-$PROJECT_DIR/logs}/ngrok.log"
 NGROK_INSPECT_URL="http://127.0.0.1:4040"
+ONBOARDING_NGROK_PID=""
+ONBOARDING_PUBLIC_URL=""
 CHATGPT_CONNECTOR_URL="https://chatgpt.com/plugins#settings/Connectors?create-connector=true&redirectAfter=%2Fplugins"
 
 info() { printf '\n\033[1;34m%s\033[0m\n' "$*"; }
@@ -55,7 +58,7 @@ env_value() {
 
 set_env_values() {
     local tmp key
-    tmp="$(mktemp "$PROJECT_DIR/config/.env.tmp.XXXXXX")"
+    tmp="$(mktemp "$CONFIG_ROOT/.env.tmp.XXXXXX")"
     chmod 600 "$tmp"
 
     if [ -f "$CONFIG_FILE" ]; then
@@ -197,6 +200,22 @@ show_connection_details() {
     printf 'Access secret:   %s\n' "$access_secret"
 }
 
+copy_access_secret() {
+    local secret="$1"
+    if command -v pbcopy >/dev/null 2>&1; then
+        printf '%s' "$secret" | pbcopy
+    elif command -v wl-copy >/dev/null 2>&1; then
+        printf '%s' "$secret" | wl-copy
+    elif command -v xclip >/dev/null 2>&1; then
+        printf '%s' "$secret" | xclip -selection clipboard
+    elif command -v xsel >/dev/null 2>&1; then
+        printf '%s' "$secret" | xsel --clipboard --input
+    else
+        return 1
+    fi
+    printf 'Secret copied to clipboard.\n'
+}
+
 prompt_ngrok_token() {
     local token
     echo "Create an account at: https://dashboard.ngrok.com/signup"
@@ -209,27 +228,28 @@ prompt_ngrok_token() {
 }
 
 open_temporary_ngrok() {
-    local public_url="" temp_pid
+    local public_url=""
+    mkdir -p "$(dirname "$NGROK_LOG")"
     : > "$NGROK_LOG"
     ngrok http "$NGROK_PORT" --log=stdout > "$NGROK_LOG" 2>&1 &
-    temp_pid=$!
+    ONBOARDING_NGROK_PID=$!
 
     for _ in $(seq 1 20); do
         public_url="$(curl -fsS http://127.0.0.1:4040/api/tunnels 2>/dev/null \
             | python3 -c 'import json,sys; data=json.load(sys.stdin); print(next((t["public_url"] for t in data.get("tunnels", []) if t.get("proto") == "https"), ""))' \
             2>/dev/null || true)"
         if [ -n "$public_url" ]; then
-            kill "$temp_pid" 2>/dev/null || true
-            wait "$temp_pid" 2>/dev/null || true
-            printf '%s' "$public_url"
+            ONBOARDING_PUBLIC_URL="$public_url"
+            export GATE_EXISTING_NGROK_PID="$ONBOARDING_NGROK_PID"
             return 0
         fi
-        kill -0 "$temp_pid" 2>/dev/null || break
+        kill -0 "$ONBOARDING_NGROK_PID" 2>/dev/null || break
         sleep 1
     done
 
-    kill "$temp_pid" 2>/dev/null || true
-    wait "$temp_pid" 2>/dev/null || true
+    kill "$ONBOARDING_NGROK_PID" 2>/dev/null || true
+    wait "$ONBOARDING_NGROK_PID" 2>/dev/null || true
+    ONBOARDING_NGROK_PID=""
     return 1
 }
 
@@ -247,7 +267,7 @@ ensure_onboarding() {
     fi
 
     [ -x "$PROJECT_DIR/.venv/bin/python" ] || die "Missing .venv. Complete the installation first."
-    mkdir -p "$PROJECT_DIR/config"
+    mkdir -p "$CONFIG_ROOT"
 
     if [ "$renew_secret" = true ]; then
         warn "Renewing OAuth access secret."
@@ -263,10 +283,11 @@ ensure_onboarding() {
         fi
 
         info "Detecting your ngrok URL"
-        public_url="$(open_temporary_ngrok)" || {
+        open_temporary_ngrok || {
             cat "$NGROK_LOG" >&2 || true
             die "Could not obtain the ngrok HTTPS URL. Check your ngrok token."
         }
+        public_url="$ONBOARDING_PUBLIC_URL"
         ok "Public URL: $public_url"
     fi
 
@@ -292,6 +313,7 @@ ensure_onboarding() {
     ensure_env_notes
 
     printf '\nMCPRelay is configured.\n'
+    copy_access_secret "$access_secret" || true
     show_connection_details
     printf '\n'
     printf 'The access secret is stored locally in config/.env with mode 600.\n'
@@ -324,14 +346,18 @@ start_daemon() {
     SERVICES_PID=$!
     sleep 2
 
-    if command -v caffeinate >/dev/null 2>&1; then
+    if [ -n "${GATE_EXISTING_NGROK_PID:-}" ] && kill -0 "$GATE_EXISTING_NGROK_PID" 2>/dev/null; then
+        NGROK_PID="$GATE_EXISTING_NGROK_PID"
+        KEEP_AWAKE_LABEL="onboarding tunnel reused"
+    elif command -v caffeinate >/dev/null 2>&1; then
         nohup caffeinate -i ngrok http "$NGROK_PORT" > /dev/null 2>&1 &
+        NGROK_PID=$!
         KEEP_AWAKE_LABEL="caffeinate active"
     else
         nohup ngrok http "$NGROK_PORT" > /dev/null 2>&1 &
+        NGROK_PID=$!
         KEEP_AWAKE_LABEL="sleep inhibition inactive"
     fi
-    NGROK_PID=$!
 
     echo "$SERVICES_PID:$NGROK_PID" > "$PID_FILE"
     echo "✓ Gateway started  (PID $SERVICES_PID)"

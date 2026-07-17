@@ -34,7 +34,7 @@ def venv_python_path(base_dir: Path, platform_name: str = os.name) -> Path:
 
 PYTHON = venv_python_path(BASE_DIR)
 REQUIREMENTS = BASE_DIR / "requirements.txt"
-LOG_DIR = BASE_DIR / "logs" / "services"
+LOG_DIR = Path(os.environ.get("MCP_LOG_ROOT", BASE_DIR / "logs")) / "services"
 LOG_DIR.mkdir(parents=True, exist_ok=True)
 GATEWAY_HOST = "0.0.0.0"
 GATEWAY_PORT = 8761

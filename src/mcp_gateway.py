@@ -22,7 +22,7 @@ from fastmcp.server.auth import RemoteAuthProvider
 from fastmcp.server.auth.providers.jwt import JWTVerifier
 from command_queue import CommandQueue
 from blocking_command_runner import BlockingCommandRunner
-from environment_config import load_gateway_environment
+from environment_config import gateway_paths, load_gateway_environment
 from lightweight_oauth import app as oauth_app
 from terminal_app import TERMINAL_APP_HTML, TERMINAL_APP_URI
 from tool_registry import configurable_tool
@@ -35,14 +35,15 @@ from starlette.routing import Mount
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 load_gateway_environment(BASE_DIR)
+GATEWAY_PATHS = gateway_paths(BASE_DIR)
 RUNTIME_FEATURES = RuntimeFeatures.from_environ(os.environ)
 
 logging.basicConfig(level=logging.INFO)
 
-LOG_FILE = BASE_DIR / 'logs' / 'mcp_gateway.log'
-STREAM_DIR = BASE_DIR / 'logs' / 'commands'
-CONVERSATION_DIR = BASE_DIR / 'logs' / 'conversations'
-PUBLIC_SHARES_FILE = BASE_DIR / 'data' / 'public_file_shares.json'
+LOG_FILE = GATEWAY_PATHS.logs / 'mcp_gateway.log'
+STREAM_DIR = GATEWAY_PATHS.logs / 'commands'
+CONVERSATION_DIR = GATEWAY_PATHS.logs / 'conversations'
+PUBLIC_SHARES_FILE = GATEWAY_PATHS.data / 'public_file_shares.json'
 STREAM_DIR.mkdir(parents=True, exist_ok=True)
 CONVERSATION_DIR.mkdir(parents=True, exist_ok=True)
 PUBLIC_SHARES_FILE.parent.mkdir(exist_ok=True)
@@ -559,7 +560,7 @@ DEFAULT_COMMAND_TIMEOUT_SECONDS = float(os.getenv('MCP_COMMAND_TIMEOUT_SECONDS',
 MAX_CONCURRENT_COMMANDS = max(1, int(os.getenv('MCP_MAX_CONCURRENT_COMMANDS', '4')))
 MAX_COMMAND_LINES = max(100, int(os.getenv('MCP_COMMAND_MAX_LINES', '20000')))
 COMMAND_HISTORY_LIMIT = max(10, int(os.getenv('MCP_COMMAND_HISTORY_LIMIT', '2000')))
-COMMAND_DATABASE = Path(os.getenv('MCP_COMMAND_DATABASE', BASE_DIR / 'data' / 'commands.sqlite3'))
+COMMAND_DATABASE = Path(os.getenv('MCP_COMMAND_DATABASE', GATEWAY_PATHS.data / 'commands.sqlite3'))
 TERMINAL_SESSION_TTL_SECONDS = max(1.0, float(os.getenv('MCP_TERMINAL_SESSION_TTL_SECONDS', '60')))
 TERMINAL_APP = {'resourceUri': TERMINAL_APP_URI, 'prefersBorder': True}
 TERMINAL_HELPER_APP = {'visibility': ['app', 'model']}

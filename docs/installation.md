@@ -1,4 +1,38 @@
-# Install and use MCPRelay with ChatGPT
+# Install and use Gate with ChatGPT
+
+## One-line installation
+
+Supported in the first scope: macOS, Linux and WSL.
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/arthurlacoste/MCPRelay/main/install.sh | bash
+```
+
+The installer uses `~/.gate` for releases and persistent data, creates `~/.local/bin/gate`, installs uv with Python 3.12, nvm with Node 22, and ngrok when missing. Interactive input is read from `/dev/tty`, so the command works through a shell pipe.
+
+Useful commands:
+
+```bash
+gate
+gate start
+gate stop
+gate restart
+gate status
+gate doctor
+gate logs --follow
+gate secret
+gate update
+gate update --edge
+gate update --stable
+gate rollback
+gate uninstall
+gate uninstall --purge
+```
+
+`gate uninstall` preserves config, data, logs and skills. `gate uninstall --purge` requires typing `DELETE` and removes all Gate data.
+
+## Manual and advanced installation
+
 
 Cross-platform guide for macOS, Linux, and Windows. The local gateway listens on port `8761`. ngrok exposes this port over HTTPS. ChatGPT connects to `/mcp` and handles the OAuth flow automatically.
 
@@ -635,3 +669,29 @@ Both tools are enabled by default and can be disabled independently in `config/t
 skills_search = true
 skills_read = true
 ```
+
+## Maintainer release workflow
+
+Stable installation is driven by GitHub Releases. A tag push runs `.github/workflows/release.yml`, which builds and publishes:
+
+```text
+gate-vX.Y.Z.tar.gz
+SHA256SUMS
+```
+
+Release steps:
+
+1. Update `VERSION` and `CHANGELOG.md`.
+2. Commit and push the release code.
+3. Create and push the matching stable tag:
+
+```bash
+git tag vX.Y.Z
+git push origin vX.Y.Z
+```
+
+4. Wait for the **Release Gate** GitHub Actions workflow to finish.
+5. Confirm the GitHub Release contains both assets.
+6. Test the public one-line installer from a clean user environment.
+
+The installer and `gate update` use the GitHub Releases API, download the custom archive and `SHA256SUMS`, then verify the archive before extraction. Draft and prerelease releases are not returned by GitHub's `releases/latest` endpoint. Edge updates remain based on an immutable commit SHA and do not use stable release assets.

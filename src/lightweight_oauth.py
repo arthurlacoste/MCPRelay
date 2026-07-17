@@ -11,16 +11,17 @@ from urllib.parse import parse_qs, urlencode
 import jwt
 from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.hazmat.primitives import serialization
-from dotenv import load_dotenv
 from fastapi import FastAPI, Form, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 
+from environment_config import gateway_paths, load_gateway_environment
 from oauth_access_gate import OAuthAccessGate, client_address, login_page, trusted_proxy_networks
 
 BASE_DIR = Path(__file__).resolve().parent.parent
-load_dotenv(BASE_DIR / "config" / ".env")
+load_gateway_environment(BASE_DIR)
+GATEWAY_PATHS = gateway_paths(BASE_DIR)
 
-DATA_DIR = BASE_DIR / "data"
+DATA_DIR = GATEWAY_PATHS.data
 DATA_DIR.mkdir(exist_ok=True)
 CLIENTS_FILE = DATA_DIR / "oauth_clients.json"
 CODES_FILE = DATA_DIR / "oauth_codes.json"

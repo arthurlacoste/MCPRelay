@@ -1,0 +1,42 @@
+name: Release Gate
+
+on:
+  push:
+    tags:
+      - "v[0-9]+.[0-9]+.[0-9]+"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref }}
+
+      - name: Verify version matches tag
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "v$(tr -d '\n' < VERSION)" = "${GITHUB_REF_NAME}"
+
+      - name: Build release archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          archive="gate-${GITHUB_REF_NAME}.tar.gz"
+          git archive --format=tar.gz --prefix="MCPRelay-${GITHUB_REF_NAME}/" -o "$archive" "$GITHUB_REF_NAME"
+          sha256sum "$archive" > SHA256SUMS
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            "gate-${GITHUB_REF_NAME}.tar.gz" \
+            SHA256SUMS \
+            --verify-tag \
+            --generate-notes \
+            --title "Gate $GITHUB_REF_NAME"

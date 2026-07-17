@@ -8,6 +8,18 @@ The goal of this tool is to let ChatGPT work through your local machine and brow
 
 ## Installation and usage
 
+Install Gate on macOS, Linux or WSL:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/arthurlacoste/MCPRelay/main/install.sh | bash
+```
+
+Then run:
+
+```bash
+gate
+```
+
 See the **[installation and usage guide](docs/installation.md)**.
 
 ---

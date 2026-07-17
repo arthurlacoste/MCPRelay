@@ -12,6 +12,8 @@ import sys
 import termios
 import time
 import tty
+import urllib.request
+import webbrowser
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -19,9 +21,11 @@ from dotenv import dotenv_values
 
 
 BASE_DIR = Path(__file__).resolve().parent.parent
-CONFIG_FILE = BASE_DIR / "config" / ".env"
+CONFIG_FILE = Path(os.environ.get("MCP_CONFIG_ROOT", BASE_DIR / "config")) / ".env"
 PYTHON = BASE_DIR / ".venv" / "bin" / "python"
-NGROK_LOG = Path("/tmp/mcprelay-ngrok-run.log")
+LOG_ROOT = Path(os.environ.get("MCP_LOG_ROOT", BASE_DIR / "logs"))
+NGROK_LOG = LOG_ROOT / "ngrok.log"
+SERVICE_LOG = LOG_ROOT / "services" / "launcher.log"
 NGROK_PORT = 8761
 NGROK_INSPECT_URL = "http://127.0.0.1:4040"
 CHATGPT_CONNECTOR_URL = (
@@ -38,6 +42,27 @@ class StartupError(RuntimeError):
 
 class ShutdownRequested(RuntimeError):
     """Raised when shutdown is requested during startup."""
+
+
+class ExistingProcess:
+    def __init__(self, pid: int):
+        self.pid = pid
+
+    def poll(self):
+        try:
+            os.kill(self.pid, 0)
+            return None
+        except ProcessLookupError:
+            return 1
+
+    def wait(self, timeout=None):
+        deadline = None if timeout is None else time.monotonic() + timeout
+        while self.poll() is None:
+            if deadline is not None and time.monotonic() >= deadline:
+                raise subprocess.TimeoutExpired(["pid", str(self.pid)], timeout)
+            time.sleep(0.05)
+        return 0
+
 
 
 def request_shutdown(*_args) -> None:
@@ -79,6 +104,26 @@ def terminal_input():
         termios.tcsetattr(fd, termios.TCSADRAIN, previous)
 
 
+def log_tail(path: Path, max_lines: int = 8) -> str:
+    try:
+        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return ""
+    return "\n".join(lines[-max_lines:]).strip()
+
+
+def startup_failure_message(name: str, code: int) -> str:
+    if name != "Gateway":
+        return f"{name} failed to start (exit {code}). Check {NGROK_LOG}."
+
+    details = log_tail(SERVICE_LOG)
+    message = f"Gateway failed to start (exit {code})."
+    if details:
+        message += f"\n\nLast startup output:\n{details}"
+    message += f"\n\nFull log: {SERVICE_LOG}"
+    return message
+
+
 def wait_for_start(process: subprocess.Popen, name: str, seconds: float = 2) -> None:
     deadline = time.monotonic() + seconds
     while time.monotonic() < deadline:
@@ -86,22 +131,28 @@ def wait_for_start(process: subprocess.Popen, name: str, seconds: float = 2) -> 
             raise ShutdownRequested
         code = process.poll()
         if code is not None:
-            raise StartupError(f"{name} failed to start (exit {code}).")
+            raise StartupError(startup_failure_message(name, code))
         time.sleep(0.1)
 
 
-def terminate_group(process: subprocess.Popen | None) -> None:
+def terminate_group(process: subprocess.Popen | ExistingProcess | None) -> None:
     if process is None or process.poll() is not None:
         return
     try:
-        os.killpg(process.pid, signal.SIGTERM)
+        if isinstance(process, ExistingProcess):
+            os.kill(process.pid, signal.SIGTERM)
+        else:
+            os.killpg(process.pid, signal.SIGTERM)
     except ProcessLookupError:
         return
     try:
         process.wait(timeout=4)
     except subprocess.TimeoutExpired:
         try:
-            os.killpg(process.pid, signal.SIGKILL)
+            if isinstance(process, ExistingProcess):
+                os.kill(process.pid, signal.SIGKILL)
+            else:
+                os.killpg(process.pid, signal.SIGKILL)
         except ProcessLookupError:
             pass
         try:
@@ -111,16 +162,23 @@ def terminate_group(process: subprocess.Popen | None) -> None:
 
 
 def start_services() -> subprocess.Popen:
-    return subprocess.Popen(
-        [str(PYTHON), str(BASE_DIR / "start_services.py")],
-        cwd=BASE_DIR,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        start_new_session=True,
-    )
+    SERVICE_LOG.parent.mkdir(parents=True, exist_ok=True)
+    with SERVICE_LOG.open("w", encoding="utf-8") as log_file:
+        return subprocess.Popen(
+            [str(PYTHON), str(BASE_DIR / "start_services.py")],
+            cwd=BASE_DIR,
+            stdout=log_file,
+            stderr=subprocess.STDOUT,
+            start_new_session=True,
+        )
 
 
-def start_ngrok() -> tuple[subprocess.Popen, str]:
+def start_ngrok() -> tuple[subprocess.Popen | ExistingProcess, str]:
+    existing = os.environ.get("GATE_EXISTING_NGROK_PID", "")
+    if existing.isdigit():
+        process = ExistingProcess(int(existing))
+        if process.poll() is None:
+            return process, "onboarding tunnel reused"
     if shutil.which("caffeinate"):
         command = ["caffeinate", "-i", "ngrok", "http", str(NGROK_PORT)]
         label = "caffeinate active"
@@ -138,6 +196,33 @@ def start_ngrok() -> tuple[subprocess.Popen, str]:
         )
     return process, label
 
+
+
+def wait_for_oauth_health(seconds: float = 15) -> bool:
+    deadline = time.monotonic() + seconds
+    url = f"http://127.0.0.1:{NGROK_PORT}/oauth/health"
+    while time.monotonic() < deadline:
+        try:
+            with urllib.request.urlopen(url, timeout=1) as response:
+                if response.status < 500:
+                    return True
+        except OSError:
+            time.sleep(0.25)
+    return False
+
+
+def open_url(url: str) -> bool:
+    return webbrowser.open(url)
+
+
+def open_chatgpt_setup() -> bool:
+    if not wait_for_oauth_health():
+        print(f"! OAuth health check failed. Open manually: {CHATGPT_CONNECTOR_URL}", flush=True)
+        return False
+    if not open_url(CHATGPT_CONNECTOR_URL):
+        print(f"Open ChatGPT setup: {CHATGPT_CONNECTOR_URL}", flush=True)
+        return False
+    return True
 
 def monitor(services: subprocess.Popen, ngrok: subprocess.Popen) -> int:
     with terminal_input() as input_fd:
@@ -175,6 +260,7 @@ def main() -> int:
         print(f"\033[1;32m✓ Gateway running (PID {services.pid})\033[0m")
         print(f"\033[1;32m✓ ngrok running (PID {ngrok.pid}) [{keep_awake}]\033[0m")
         print(f"  ngrok inspector → {NGROK_INSPECT_URL}")
+        open_chatgpt_setup()
         return monitor(services, ngrok)
     except ShutdownRequested:
         return 0

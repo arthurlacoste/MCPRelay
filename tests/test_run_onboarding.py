@@ -398,3 +398,17 @@ def test_ctrl_c_exits_after_showing_connection_details(tmp_path):
             except ChildProcessError:
                 pass
         os.close(fd)
+
+def test_onboarding_reuses_detected_ngrok_process():
+    content = RUN_SCRIPT.read_text()
+    launcher = INTERACTIVE_LAUNCHER.read_text()
+
+    assert 'export GATE_EXISTING_NGROK_PID="$ONBOARDING_NGROK_PID"' in content
+    assert 'GATE_EXISTING_NGROK_PID' in launcher
+    onboarding = content[content.index('open_temporary_ngrok()'):content.index('ensure_onboarding()')]
+    assert 'kill "$temp_pid"' not in onboarding
+
+def test_onboarding_copies_generated_secret_when_clipboard_exists():
+    content = RUN_SCRIPT.read_text()
+    assert "copy_access_secret" in content
+    assert "Secret copied to clipboard." in content
