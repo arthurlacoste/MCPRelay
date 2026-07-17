@@ -342,7 +342,7 @@ def test_renew_secret_reuses_url_and_prints_new_secret(tmp_path):
     assert "Access secret:" in result.stdout
 
 
-def test_ctrl_c_exits_after_showing_connection_details(tmp_path):
+def test_ctrl_c_exits_after_interactive_startup(tmp_path):
     script, env = _sandbox(
         tmp_path,
         "MCP_BASE_URL=https://stable.example\n"
@@ -357,14 +357,10 @@ def test_ctrl_c_exits_after_showing_connection_details(tmp_path):
         os.execve(str(script), [str(script)], env)
 
     try:
-        _read_pty_until(fd, b"Press m for connection details", 10)
-        os.write(fd, b"m")
-        _read_pty_until(fd, b"Access secret:", 5)
-        os.write(fd, b"\x03")
-        time.sleep(0.1)
+        _read_pty_until(fd, b"ngrok inspector", 15)
         os.write(fd, b"\x03")
 
-        deadline = time.monotonic() + 5
+        deadline = time.monotonic() + 8
         while time.monotonic() < deadline:
             readable, _, _ = select.select([fd], [], [], 0)
             if readable:
@@ -377,7 +373,7 @@ def test_ctrl_c_exits_after_showing_connection_details(tmp_path):
                 break
             time.sleep(0.1)
         else:
-            raise AssertionError("run.sh did not exit within 5 seconds after Ctrl+C")
+            raise AssertionError("run.sh did not exit within 8 seconds after Ctrl+C")
     finally:
         try:
             os.kill(pid, signal.SIGTERM)

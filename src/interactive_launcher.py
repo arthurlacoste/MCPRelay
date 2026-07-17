@@ -12,8 +12,6 @@ import sys
 import termios
 import time
 import tty
-import urllib.request
-import webbrowser
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -198,31 +196,6 @@ def start_ngrok() -> tuple[subprocess.Popen | ExistingProcess, str]:
 
 
 
-def wait_for_oauth_health(seconds: float = 15) -> bool:
-    deadline = time.monotonic() + seconds
-    url = f"http://127.0.0.1:{NGROK_PORT}/oauth/health"
-    while time.monotonic() < deadline:
-        try:
-            with urllib.request.urlopen(url, timeout=1) as response:
-                if response.status < 500:
-                    return True
-        except OSError:
-            time.sleep(0.25)
-    return False
-
-
-def open_url(url: str) -> bool:
-    return webbrowser.open(url)
-
-
-def open_chatgpt_setup() -> bool:
-    if not wait_for_oauth_health():
-        print(f"! OAuth health check failed. Open manually: {CHATGPT_CONNECTOR_URL}", flush=True)
-        return False
-    if not open_url(CHATGPT_CONNECTOR_URL):
-        print(f"Open ChatGPT setup: {CHATGPT_CONNECTOR_URL}", flush=True)
-        return False
-    return True
 
 def monitor(services: subprocess.Popen, ngrok: subprocess.Popen) -> int:
     with terminal_input() as input_fd:
@@ -260,7 +233,6 @@ def main() -> int:
         print(f"\033[1;32m✓ Gateway running (PID {services.pid})\033[0m")
         print(f"\033[1;32m✓ ngrok running (PID {ngrok.pid}) [{keep_awake}]\033[0m")
         print(f"  ngrok inspector → {NGROK_INSPECT_URL}")
-        open_chatgpt_setup()
         return monitor(services, ngrok)
     except ShutdownRequested:
         return 0

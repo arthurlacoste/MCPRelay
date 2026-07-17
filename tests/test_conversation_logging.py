@@ -24,9 +24,8 @@ def test_conversation_note_appends_jsonl(tmp_path, monkeypatch):
     assert payload['content'] == 'Implement logging'
 
 
-def test_conversation_start_does_not_use_browser_by_default(tmp_path, monkeypatch):
+def test_conversation_start_never_uses_browser(tmp_path, monkeypatch):
     monkeypatch.setattr(mod, 'CONVERSATION_DIR', tmp_path)
-    monkeypatch.setattr(mod, 'CHATGPT_STARTUP_BROWSER_ASSIST', False)
 
     def fail_if_called(*args, **kwargs):
         raise AssertionError('subprocess.run must not be called')
@@ -39,29 +38,17 @@ def test_conversation_start_does_not_use_browser_by_default(tmp_path, monkeypatc
     assert result['startup_browser_assist']['opened_new_tab'] is False
 
 
-def test_browser_assist_opt_in_uses_script_runner(monkeypatch):
+def test_browser_assist_stays_disabled_even_when_legacy_flag_is_true(monkeypatch):
     monkeypatch.setattr(mod, 'CHATGPT_STARTUP_BROWSER_ASSIST', True)
 
-    class Completed:
-        returncode = 0
-        stdout = 'opened_new\n'
-        stderr = ''
+    def fail_if_called(*args, **kwargs):
+        raise AssertionError('subprocess.run must not be called')
 
-    calls = []
-
-    def fake_run(*args, **kwargs):
-        calls.append((args, kwargs))
-        return Completed()
-
-    monkeypatch.setattr(mod.subprocess, 'run', fake_run)
-
+    monkeypatch.setattr(mod.subprocess, 'run', fail_if_called)
     result = mod.chatgpt_startup_browser_assist()
 
-    assert calls
-    assert calls[0][0][0][0] == 'osascript'
-    assert result['action'] == 'opened_new'
-    assert result['opened_new_tab'] is True
-
+    assert result['action'] == 'disabled'
+    assert result['enabled'] is False
 
 def test_sanitize_blocks_path_escape():
     value = mod.sanitize_conversation_id('../../etc/passwd')

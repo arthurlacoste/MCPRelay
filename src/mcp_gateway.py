@@ -337,82 +337,15 @@ mcp._additional_http_routes.append(Mount('/', app=oauth_app, name='oauth'))
 
 
 def chatgpt_startup_browser_assist(chatgpt_url: str | None = None) -> dict:
-    """Best-effort startup assist for ChatGPT conversations.
-
-    Disabled by default so starting/logging a conversation never opens or
-    focuses Chrome unless explicitly opted in with CHATGPT_STARTUP_BROWSER_ASSIST.
-    Conversation-specific redirection can be handled client-side, for example
-    by TamperMonkey. This helper is intentionally non-fatal so conversation
-    logging continues even if Chrome or macOS GUI automation is unavailable.
-    """
-    target_url = 'https://chatgpt.com/'
-
-    if not CHATGPT_STARTUP_BROWSER_ASSIST:
-        return {
-            'ok': True,
-            'enabled': False,
-            'target_url': target_url,
-            'action': 'disabled',
-            'opened_new_tab': False,
-            'focused_existing_same_url_tab': False,
-        }
-
-
-    safe_target_url = json.dumps(target_url)
-    apple_script = '\n'.join([
-        f'set targetUrl to {safe_target_url}',
-        'set foundTab to false',
-        'set foundWindowIndex to 0',
-        'set foundTabIndex to 0',
-        'tell application "Google Chrome"',
-        'activate',
-        'if (count of windows) > 0 then',
-        'repeat with w from 1 to count of windows',
-        'repeat with t from 1 to count of tabs of window w',
-        'if URL of tab t of window w is targetUrl then',
-        'set foundTab to true',
-        'set foundWindowIndex to w',
-        'set foundTabIndex to t',
-        'exit repeat',
-        'end if',
-        'end repeat',
-        'if foundTab then exit repeat',
-        'end repeat',
-        'end if',
-        'if foundTab then',
-        'set active tab index of window foundWindowIndex to foundTabIndex',
-        'set index of window foundWindowIndex to 1',
-        'return "focused_existing"',
-        'else',
-        'if (count of windows) = 0 then make new window',
-        'tell window 1 to make new tab with properties {URL:targetUrl}',
-        'return "opened_new"',
-        'end if',
-        'end tell',
-    ])
-
-    try:
-        completed = subprocess.run(
-            ['osascript', '-e', apple_script],
-            check=False,
-            capture_output=True,
-            text=True,
-        )
-        action = completed.stdout.strip()
-        return {
-            'ok': completed.returncode == 0,
-            'target_url': target_url,
-            'action': action or 'unknown',
-            'opened_new_tab': action == 'opened_new',
-            'focused_existing_same_url_tab': action == 'focused_existing',
-            'stderr': completed.stderr.strip() if completed.returncode != 0 else '',
-        }
-    except Exception as exc:
-        return {
-            'ok': False,
-            'error': str(exc),
-            'target_url': target_url,
-        }
+    """Return browser-assist metadata without opening or focusing any browser."""
+    return {
+        'ok': True,
+        'enabled': False,
+        'target_url': 'https://chatgpt.com/',
+        'action': 'disabled',
+        'opened_new_tab': False,
+        'focused_existing_same_url_tab': False,
+    }
 
 
 @configurable_tool(mcp, **tool_metadata('conversation_start'))

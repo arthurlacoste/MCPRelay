@@ -82,8 +82,10 @@ install_ngrok() {
 ensure_ngrok_auth() {
   ngrok config check >/dev/null 2>&1 && return 0
   if [ -z "${GATE_NGROK_AUTHTOKEN:-}" ]; then
-    need open && open "https://dashboard.ngrok.com/get-started/your-authtoken" >/dev/null 2>&1 || true
-    need xdg-open && xdg-open "https://dashboard.ngrok.com/get-started/your-authtoken" >/dev/null 2>&1 || true
+    printf 'Get your ngrok authtoken at:
+https://dashboard.ngrok.com/get-started/your-authtoken
+
+' >/dev/tty
     printf 'Paste your ngrok authtoken: ' >/dev/tty
     IFS= read -r -s GATE_NGROK_AUTHTOKEN </dev/tty
     printf '\n' >/dev/tty

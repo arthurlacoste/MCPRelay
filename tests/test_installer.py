@@ -46,3 +46,10 @@ def test_installer_switches_current_symlink_with_python_os_replace():
     content = (Path(__file__).resolve().parents[1] / "install.sh").read_text()
     assert "os.replace(temporary, current)" in content
     assert 'mv -f "$GATE_ROOT/current.next" "$GATE_ROOT/current"' not in content
+
+
+def test_installer_never_opens_a_browser():
+    content = (Path(__file__).resolve().parents[1] / "install.sh").read_text()
+    assert 'open "https://' not in content
+    assert "xdg-open" not in content
+    assert "webbrowser" not in content

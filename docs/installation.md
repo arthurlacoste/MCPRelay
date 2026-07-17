@@ -395,7 +395,6 @@ Get-Content logs/services/gateway.log -Wait
 Platform notes:
 
 - macOS: Computer Use manages its own Screen Recording and Accessibility permissions.
-- `CHATGPT_STARTUP_BROWSER_ASSIST` uses AppleScript and is macOS-only. It is disabled by default. Core MCP features do not depend on it.
 - Shell commands use the native operating-system shell. Commands written for Bash will not automatically work in Windows `cmd.exe`.
 
 ## 11. Enable ChatGPT developer mode
