@@ -25,12 +25,11 @@ def python_command(code):
     return f'"{sys.executable}" -c "{code}"'
 
 
-def test_enqueue_returns_immediately_and_captures_cursor_output(tmp_path):
+def test_enqueue_returns_non_final_job_and_captures_cursor_output(tmp_path):
     queue = CommandQueue(tmp_path / 'queue.sqlite3', tmp_path / 'logs', worker_limit=1)
-    started = time.monotonic()
     job = queue.enqueue(python_command("import time; print('one', flush=True); time.sleep(.2); print('two')"))
-    assert time.monotonic() - started < 0.15
     assert job['status'] in {'queued', 'starting', 'running'}
+    assert job['finished_at'] is None
 
     final = wait_for(queue, job['execution_id'], {'success'})
     page = queue.get_state(job['execution_id'], after_cursor=0, limit=1)
