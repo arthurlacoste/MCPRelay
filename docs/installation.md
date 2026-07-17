@@ -130,6 +130,7 @@ Edit `config/.env`:
 
 ```dotenv
 MCP_BASE_URL=https://example.ngrok-free.dev
+MCP_SERVERS_CONFIG=config/mcp.json
 OAUTH_ISSUER=https://example.ngrok-free.dev/oauth
 LOCAL_OAUTH_ISSUER=https://example.ngrok-free.dev/oauth
 OAUTH_AUDIENCE=https://mcp.local
@@ -141,7 +142,6 @@ OAUTH_LOGIN_MAX_ATTEMPTS=5
 OAUTH_TRUSTED_PROXY_NETWORKS=127.0.0.0/8,::1/128
 OAUTH_AUTO_REGISTER_AUTH_CLIENTS=true
 ENABLE_OAUTH=true
-MCP_FILESYSTEM_ROOTS=/absolute/path/to/allowed/files
 ```
 
 All three public URL values must use the exact same ngrok domain. Do not append `/mcp` to `MCP_BASE_URL`.
@@ -156,11 +156,60 @@ On Windows, run the same command as `.venv\\Scripts\\python.exe -c "..."`. Copy 
 
 `OAUTH_TRUSTED_PROXY_NETWORKS` lets the local ngrok proxy provide the real client IP for login limiting. Keep it restricted to loopback for the documented setup. Leave it empty if no trusted local reverse proxy is used.
 
-`MCP_FILESYSTEM_ROOTS` controls which directories the filesystem tools can access.
-Separate multiple paths with `:` on macOS/Linux and `;` on Windows. If omitted,
-access defaults to the volume root (`/` on macOS/Linux).
-
 Git ignores `config/.env`. Never add the ngrok token to it.
+
+### Configure MCP subservers
+
+Install the pinned Open Computer Use MCP server:
+
+```bash
+npm install --global open-computer-use@0.2.0
+open-computer-use doctor
+open-computer-use call list_apps
+```
+
+On macOS, grant Accessibility and Screen Recording permissions when requested.
+
+Then copy the Computer Use example:
+
+```bash
+cp config/mcp.json.example config/mcp.json
+```
+
+Windows PowerShell:
+
+```powershell
+Copy-Item config/mcp.json.example config/mcp.json
+```
+
+MCPRelay reads the classic `mcpServers` JSON format. It supports stdio entries with `command`, `args`, `env`, and `cwd`, plus HTTP/SSE entries with `url`, `transport`, `headers`, and `auth`.
+
+`toolPrefix` controls the public namespace. Without it, the server name is converted to snake_case. For example, `computer-use` exposes tools as `computer_use_*`.
+
+MCPRelay-specific options:
+
+```json
+{
+  "mcpServers": {
+    "example": {
+      "command": "${EXAMPLE_MCP_BIN}",
+      "args": ["serve"],
+      "cwd": "workspace",
+      "toolPrefix": "example",
+      "enabled": true,
+      "initTimeoutMs": 10000,
+      "timeout": 30000,
+      "tools": {
+        "dangerous_tool": {"enabled": false}
+      }
+    }
+  }
+}
+```
+
+`${VAR}` placeholders are resolved from `config/.env` and the process environment. Relative `cwd` values resolve from the MCPRelay project root. Restart MCPRelay after editing this file.
+
+The local `config/mcp.json` file is ignored by Git because it may contain secrets. Prefer `${VAR}` placeholders. Missing variables, unavailable binaries, and unreachable servers disable only the affected server.
 
 ## 7. Start the server
 
@@ -304,16 +353,14 @@ Get-Content logs/services/gateway.log -Wait
 | Capability | macOS | Linux | Windows |
 |---|---:|---:|---:|
 | Gateway, OAuth, ngrok | Yes | Yes | Yes |
-| Filesystem and shell | Yes | Yes | Yes |
-| Screenshot, mouse, keyboard | Yes | X11 recommended | Yes |
+| Shell and configurable MCP proxies | Yes | Yes | Yes |
+| Computer Use example | Yes | No | No |
 | One-command launcher | `run.sh` | `run.sh` | `run.ps1` |
 | Automatic sleep prevention | `caffeinate` | Optional `systemd-inhibit` | Optional PowerToys Awake |
 
 Platform notes:
 
-- macOS: grant **Screen Recording** and **Accessibility** permissions to Terminal, Python, or the service process.
-- Linux: install `scrot` and `python3-tk` when screenshot or GUI tools require them. Wayland may block synthetic input or screenshots; use an X11 session for best compatibility.
-- Windows: run inside a normal unlocked desktop session. Windows service/session isolation prevents GUI automation.
+- macOS: Computer Use manages its own Screen Recording and Accessibility permissions.
 - `CHATGPT_STARTUP_BROWSER_ASSIST` uses AppleScript and is macOS-only. It is disabled by default. Core MCP features do not depend on it.
 - Shell commands use the native operating-system shell. Commands written for Bash will not automatically work in Windows `cmd.exe`.
 

@@ -5,12 +5,13 @@ import shutil
 import signal
 import stat
 import subprocess
+import sys
 import time
 from pathlib import Path
 
 
 RUN_SCRIPT = Path(__file__).resolve().parents[1] / "run.sh"
-VENV_PYTHON = RUN_SCRIPT.parent / ".venv" / "bin" / "python"
+VENV_PYTHON = Path(sys.executable)
 INTERACTIVE_LAUNCHER = RUN_SCRIPT.parent / "src" / "interactive_launcher.py"
 
 
