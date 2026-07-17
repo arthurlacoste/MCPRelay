@@ -108,6 +108,7 @@ def test_main_installs_update_after_services_stop(monkeypatch):
     monkeypatch.setattr(interactive_launcher, "monitor", fake_monitor)
     monkeypatch.setattr(interactive_launcher, "terminate_group", lambda process: events.append(("stop", process)))
     monkeypatch.setattr(interactive_launcher, "install_update", lambda: events.append(("update", None)) or 0)
+    monkeypatch.setattr(interactive_launcher.os, "execv", lambda *args: None)
 
     assert interactive_launcher.main() == 0
     assert events == [("stop", ngrok), ("stop", services), ("update", None)]
