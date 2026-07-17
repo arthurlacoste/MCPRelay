@@ -16,6 +16,7 @@ Then tunnel with ngrok:
 import os
 import argparse
 import signal
+import shutil
 import socket
 import subprocess
 import sys
@@ -86,6 +87,18 @@ def ensure_venv():
 
 
 def ensure_deps():
+    uv = shutil.which("uv")
+    if uv:
+        subprocess.check_call([
+            uv,
+            "pip",
+            "install",
+            "--python",
+            str(PYTHON),
+            "-r",
+            str(REQUIREMENTS),
+        ])
+        return
     subprocess.check_call([
         str(PYTHON),
         "-m",

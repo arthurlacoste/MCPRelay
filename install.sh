@@ -144,8 +144,17 @@ install_release() {
   uv venv --python "$python" "$release.next/.venv"
   uv pip install --python "$release.next/.venv/bin/python" -r "$release.next/requirements.txt"
   mv "$release.next" "$release"
-  ln -sfn "$release" "$GATE_ROOT/current.next"
-  mv -f "$GATE_ROOT/current.next" "$GATE_ROOT/current"
+  GATE_RELEASE="$release" GATE_ROOT="$GATE_ROOT" uv run --python "$PYTHON_VERSION" python - <<'PYCODE'
+import os
+from pathlib import Path
+root = Path(os.environ["GATE_ROOT"])
+release = Path(os.environ["GATE_RELEASE"])
+current = root / "current"
+temporary = root / ".current.next"
+temporary.unlink(missing_ok=True)
+temporary.symlink_to(release)
+os.replace(temporary, current)
+PYCODE
   rm -rf "$tmp" "$archive"
   printf '{"schema_version":1,"channel":"stable","active_version":"%s","active_release":"%s","previous_version":"","previous_release":"","commit":null}\n' "${tag#v}" "$release" > "$GATE_ROOT/state.json"
 }

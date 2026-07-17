@@ -8,7 +8,7 @@ def test_installer_is_pipe_safe_and_does_not_require_git():
     assert "api.github.com/repos/arthurlacoste/gate/releases/latest" in content
     assert "git clone" not in content
     assert '"$HOME/.local/bin/gate"' in content
-    assert "~/.gate/current" in content or '"$GATE_ROOT/current"' in content
+    assert 'root / "current"' in content
 
 
 def test_installer_bootstraps_uv_nvm_node_and_ngrok():
@@ -41,3 +41,8 @@ def test_generated_launcher_exposes_src_package():
     content = (Path(__file__).resolve().parents[1] / "install.sh").read_text()
     assert 'export PYTHONPATH="$ROOT/current/src${PYTHONPATH:+:$PYTHONPATH}"' in content
     assert '"$ROOT/current/.venv/bin/python" -m gate_cli' in content
+
+def test_installer_switches_current_symlink_with_python_os_replace():
+    content = (Path(__file__).resolve().parents[1] / "install.sh").read_text()
+    assert "os.replace(temporary, current)" in content
+    assert 'mv -f "$GATE_ROOT/current.next" "$GATE_ROOT/current"' not in content

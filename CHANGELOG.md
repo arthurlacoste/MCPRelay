@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.3
+
+### Fixed
+
+- Install runtime dependencies through `uv pip` when Gate uses an uv-managed virtual environment without bundled `pip`.
+- Replace the active release symlink atomically on macOS without following the previous directory symlink.
+
 ## 0.1.2
 
 ### Fixed
