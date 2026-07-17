@@ -29,6 +29,7 @@ SERVICE_LOG = LOG_ROOT / "services" / "launcher.log"
 NGROK_PORT = 8761
 NGROK_INSPECT_URL = "http://127.0.0.1:4040"
 VERSION_FILE = BASE_DIR / "VERSION"
+CHANGELOG_FILE = BASE_DIR / "CHANGELOG.md"
 LATEST_RELEASE_API = "https://api.github.com/repos/arthurlacoste/gate/releases/latest"
 GATE_COMMAND = Path.home() / ".local" / "bin" / "gate"
 CHATGPT_CONNECTOR_URL = (
@@ -79,6 +80,40 @@ def install_update() -> int:
     return subprocess.run([str(GATE_COMMAND), "update"], check=False).returncode
 
 
+def relaunch_gate() -> int:
+    os.execv(str(GATE_COMMAND), [str(GATE_COMMAND)])
+    return 0
+
+
+def install_update_and_relaunch() -> int:
+    code = install_update()
+    return code if code else relaunch_gate()
+
+
+def latest_changelog(version: str | None = None) -> str:
+    try:
+        current = version or VERSION_FILE.read_text(encoding="utf-8").strip()
+        text = CHANGELOG_FILE.read_text(encoding="utf-8")
+    except OSError:
+        return "Changelog unavailable."
+    marker = f"## {current}"
+    start = text.find(marker)
+    if start < 0:
+        return "No changelog entry found."
+    start += len(marker)
+    end = text.find("\n## ", start)
+    section = text[start:end if end >= 0 else None].strip()
+    return section or "No changes listed."
+
+
+def control_lines(update_version: str | None = None) -> list[str]:
+    lines = ["[m]    Connection details", "[c]    Changelog"]
+    if update_version:
+        lines.append(f"[u]    Install update {update_version}")
+    lines.append("[^C]   Stop Gate")
+    return lines
+
+
 class StartupError(RuntimeError):
     """Raised when a managed process fails during startup."""
 
@@ -113,23 +148,50 @@ def request_shutdown(*_args) -> None:
     STOP_REQUESTED = True
 
 
-def show_connection_details() -> None:
+def connection_detail_lines() -> list[str]:
     values = dotenv_values(CONFIG_FILE)
     public_url = (values.get("MCP_BASE_URL") or "").strip()
     access_secret = (values.get("OAUTH_ACCESS_SECRET") or "").strip()
     if not public_url or not access_secret:
-        print("! OAuth setup incomplete. Run: ./run.sh setup", flush=True)
-        return
+        return ["! OAuth setup incomplete. Run: ./run.sh setup"]
+    return [
+        f"Public MCP:      {public_url}/mcp",
+        f"Public OAuth:    {public_url}/oauth",
+        f"Local MCP:       http://127.0.0.1:{NGROK_PORT}/mcp",
+        f"Local OAuth:     http://127.0.0.1:{NGROK_PORT}/oauth",
+        f"OAuth health:    http://127.0.0.1:{NGROK_PORT}/oauth/health",
+        f"ngrok inspector: {NGROK_INSPECT_URL}",
+        f"ChatGPT setup:   {CHATGPT_CONNECTOR_URL}",
+        f"Access secret:   {access_secret}",
+    ]
 
+
+def show_connection_details() -> None:
     print("\n\033[1;34mConnection details\033[0m")
-    print(f"Public MCP:      {public_url}/mcp")
-    print(f"Public OAuth:    {public_url}/oauth")
-    print(f"Local MCP:       http://127.0.0.1:{NGROK_PORT}/mcp")
-    print(f"Local OAuth:     http://127.0.0.1:{NGROK_PORT}/oauth")
-    print(f"OAuth health:    http://127.0.0.1:{NGROK_PORT}/oauth/health")
-    print(f"ngrok inspector: {NGROK_INSPECT_URL}")
-    print(f"ChatGPT setup:   {CHATGPT_CONNECTOR_URL}")
-    print(f"Access secret:   {access_secret}", flush=True)
+    print("\n".join(connection_detail_lines()), flush=True)
+
+
+def clear_terminal() -> None:
+    print("\033[2J\033[H", end="", flush=True)
+
+
+def render_screen(services, ngrok, keep_awake: str, update_version: str | None, panel: str | None) -> None:
+    clear_terminal()
+    print(f"\033[1;32m✓ Gateway running (PID {services.pid})\033[0m")
+    print(f"\033[1;32m✓ ngrok running (PID {ngrok.pid}) [{keep_awake}]\033[0m")
+    print(f"  ngrok inspector → {NGROK_INSPECT_URL}\n")
+    if panel == "connections":
+        print("\033[1;34mConnection details\033[0m\n")
+        print("\n".join(connection_detail_lines()))
+        print("\n[m] / [Esc]   Close", flush=True)
+    elif panel == "changelog":
+        current = VERSION_FILE.read_text(encoding="utf-8").strip()
+        print(f"\033[1;34mChangelog · Gate {current}\033[0m\n")
+        print(latest_changelog(current))
+        print("\n[c] / [Esc]   Close", flush=True)
+    else:
+        print("\033[1mControls\033[0m\n")
+        print("\n".join(control_lines(update_version)), flush=True)
 
 
 @contextmanager
@@ -242,13 +304,11 @@ def start_ngrok() -> tuple[subprocess.Popen | ExistingProcess, str]:
 
 
 
-def monitor(services: subprocess.Popen, ngrok: subprocess.Popen, update_version: str | None = None) -> int:
+def monitor(services, ngrok, keep_awake: str, update_version: str | None = None) -> int:
     global UPDATE_REQUESTED
+    panel: str | None = None
     with terminal_input() as input_fd:
-        controls = "Press m for connection details"
-        if update_version:
-            controls += f". Update {update_version} available — press u to install"
-        print(f"\n{controls}. Ctrl+C to stop.", flush=True)
+        render_screen(services, ngrok, keep_awake, update_version, panel)
         while not STOP_REQUESTED:
             if services.poll() is not None:
                 print("Error: Gateway stopped unexpectedly.", file=sys.stderr)
@@ -256,20 +316,27 @@ def monitor(services: subprocess.Popen, ngrok: subprocess.Popen, update_version:
             if ngrok.poll() is not None:
                 print(f"Error: ngrok stopped. Check {NGROK_LOG}.", file=sys.stderr)
                 return 1
-
             if input_fd is None:
                 time.sleep(0.2)
                 continue
-
             readable, _, _ = select.select([input_fd], [], [], 0.2)
-            if readable:
-                key = os.read(input_fd, 1).lower()
-                if key == b"m":
-                    show_connection_details()
-                elif key == b"u" and update_version:
-                    UPDATE_REQUESTED = True
-                    print(f"\nUpdating Gate to {update_version}…", flush=True)
-                    return 0
+            if not readable:
+                continue
+            key = os.read(input_fd, 1).lower()
+            if key == b"m":
+                panel = None if panel == "connections" else "connections"
+                render_screen(services, ngrok, keep_awake, update_version, panel)
+            elif key == b"c":
+                panel = None if panel == "changelog" else "changelog"
+                render_screen(services, ngrok, keep_awake, update_version, panel)
+            elif key == b"\x1b" and panel is not None:
+                panel = None
+                render_screen(services, ngrok, keep_awake, update_version, panel)
+            elif key == b"u" and update_version and panel is None:
+                UPDATE_REQUESTED = True
+                clear_terminal()
+                print(f"Updating Gate to {update_version}…", flush=True)
+                return 0
     return 0
 
 
@@ -288,11 +355,8 @@ def main() -> int:
         ngrok, keep_awake = start_ngrok()
         wait_for_start(ngrok, "ngrok")
 
-        print(f"\033[1;32m✓ Gateway running (PID {services.pid})\033[0m")
-        print(f"\033[1;32m✓ ngrok running (PID {ngrok.pid}) [{keep_awake}]\033[0m")
-        print(f"  ngrok inspector → {NGROK_INSPECT_URL}")
         update_version = available_update()
-        exit_code = monitor(services, ngrok, update_version)
+        exit_code = monitor(services, ngrok, keep_awake, update_version)
     except ShutdownRequested:
         exit_code = 0
     except (OSError, StartupError) as exc:
@@ -306,7 +370,7 @@ def main() -> int:
             print("✓ Services stopped", flush=True)
 
     if UPDATE_REQUESTED:
-        return install_update()
+        return install_update_and_relaunch()
     return exit_code
 
 

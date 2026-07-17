@@ -112,3 +112,107 @@ def test_main_installs_update_after_services_stop(monkeypatch):
 
     assert interactive_launcher.main() == 0
     assert events == [("stop", ngrok), ("stop", services), ("update", None)]
+
+
+def test_latest_changelog_returns_current_version_section(monkeypatch, tmp_path):
+    changelog = tmp_path / "CHANGELOG.md"
+    changelog.write_text(
+        "# Changelog\n\n## 0.1.7\n\n### Added\n\n- New menu.\n\n## 0.1.6\n\n- Older.\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(interactive_launcher, "CHANGELOG_FILE", changelog)
+
+    assert interactive_launcher.latest_changelog("0.1.7") == "### Added\n\n- New menu."
+
+
+def test_controls_are_aligned_in_one_key_column():
+    lines = interactive_launcher.control_lines("0.1.8")
+
+    assert lines == [
+        "[m]    Connection details",
+        "[c]    Changelog",
+        "[u]    Install update 0.1.8",
+        "[^C]   Stop Gate",
+    ]
+
+
+def test_update_relaunches_gate_after_success(monkeypatch):
+    events = []
+    monkeypatch.setattr(interactive_launcher, "install_update", lambda: events.append("update") or 0)
+    monkeypatch.setattr(interactive_launcher, "relaunch_gate", lambda: events.append("relaunch") or 0)
+
+    assert interactive_launcher.install_update_and_relaunch() == 0
+    assert events == ["update", "relaunch"]
+
+
+def test_update_does_not_relaunch_after_failure(monkeypatch):
+    events = []
+    monkeypatch.setattr(interactive_launcher, "install_update", lambda: events.append("update") or 1)
+    monkeypatch.setattr(interactive_launcher, "relaunch_gate", lambda: events.append("relaunch") or 0)
+
+    assert interactive_launcher.install_update_and_relaunch() == 1
+    assert events == ["update"]
+
+
+def test_monitor_toggles_panels_with_same_key_and_escape(monkeypatch):
+    rendered_panels = []
+    keys = iter([b"m", b"m", b"c", b"\x1b", b"u"])
+
+    class Process:
+        pid = 123
+        def poll(self):
+            return None
+
+    class TerminalInput:
+        def __enter__(self):
+            return 42
+        def __exit__(self, *args):
+            return False
+
+    monkeypatch.setattr(interactive_launcher, "STOP_REQUESTED", False)
+    monkeypatch.setattr(interactive_launcher, "UPDATE_REQUESTED", False)
+    monkeypatch.setattr(interactive_launcher, "terminal_input", lambda: TerminalInput())
+    monkeypatch.setattr(interactive_launcher.select, "select", lambda *args: ([42], [], []))
+    monkeypatch.setattr(interactive_launcher.os, "read", lambda *args: next(keys))
+    monkeypatch.setattr(
+        interactive_launcher,
+        "render_screen",
+        lambda services, ngrok, keep_awake, update_version, panel: rendered_panels.append(panel),
+    )
+    monkeypatch.setattr(interactive_launcher, "clear_terminal", lambda: None)
+
+    assert interactive_launcher.monitor(Process(), Process(), "active", "0.1.8") == 0
+    assert rendered_panels == [None, "connections", None, "changelog", None]
+    assert interactive_launcher.UPDATE_REQUESTED is True
+
+
+def test_monitor_ignores_update_key_while_panel_is_open(monkeypatch):
+    rendered_panels = []
+    keys = iter([b"m", b"u", b"m", b"u"])
+
+    class Process:
+        pid = 123
+        def poll(self):
+            return None
+
+    class TerminalInput:
+        def __enter__(self):
+            return 42
+        def __exit__(self, *args):
+            return False
+
+    monkeypatch.setattr(interactive_launcher, "STOP_REQUESTED", False)
+    monkeypatch.setattr(interactive_launcher, "UPDATE_REQUESTED", False)
+    monkeypatch.setattr(interactive_launcher, "terminal_input", lambda: TerminalInput())
+    monkeypatch.setattr(interactive_launcher.select, "select", lambda *args: ([42], [], []))
+    monkeypatch.setattr(interactive_launcher.os, "read", lambda *args: next(keys))
+    monkeypatch.setattr(
+        interactive_launcher,
+        "render_screen",
+        lambda services, ngrok, keep_awake, update_version, panel: rendered_panels.append(panel),
+    )
+    monkeypatch.setattr(interactive_launcher, "clear_terminal", lambda: None)
+
+    assert interactive_launcher.monitor(Process(), Process(), "active", "0.1.8") == 0
+    assert rendered_panels == [None, "connections", None]
+    assert interactive_launcher.UPDATE_REQUESTED is True
