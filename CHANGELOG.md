@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.1.8
+
+### Added
+
+- Add an aligned interactive controls menu for connection details, changelog, updates, and shutdown.
+- Allow connection details and changelog panels to be toggled with their shortcut or closed with Escape.
+- Relaunch Gate automatically after a successful interactive update.
+
+### Changed
+
+- Replace the single-line startup prompt with a clearer multi-line terminal interface.
+
 ## 0.1.7
 
 ### Fixed
