@@ -368,23 +368,73 @@ start_daemon() {
     echo "  Status:     ./run.sh status"
 }
 
-stop_daemon() {
-    if [ ! -f "$PID_FILE" ]; then
-        echo "ℹ No daemon running"
-        exit 0
+gateway_port_pids() {
+    local pid
+
+    if command -v fuser >/dev/null 2>&1; then
+        fuser -n tcp "$NGROK_PORT" 2>/dev/null | tr ' ' '\n' | grep -E '^[0-9]+$' || true
+        return
     fi
 
-    IFS=: read -r SERVICES_PID NGROK_PID < "$PID_FILE"
-    echo "⟶ stopping ngrok (PID $NGROK_PID)…"
-    kill "$NGROK_PID" 2>/dev/null || true
-    echo "⟶ stopping gateway (PID $SERVICES_PID)…"
-    kill "$SERVICES_PID" 2>/dev/null || true
+    if command -v lsof >/dev/null 2>&1; then
+        lsof -nP -tiTCP:"$NGROK_PORT" -sTCP:LISTEN 2>/dev/null || true
+        return
+    fi
+
+    if command -v ss >/dev/null 2>&1; then
+        ss -ltnp "sport = :$NGROK_PORT" 2>/dev/null \
+            | sed -n 's/.*pid=\([0-9][0-9]*\).*/\1/p' \
+            | sort -u
+    fi
+}
+
+stop_gateway_port() {
+    local pids remaining pid
+    pids="$(gateway_port_pids)"
+    [ -n "$pids" ] || return 0
+
+    warn "Stopping process still listening on port $NGROK_PORT."
+    while IFS= read -r pid; do
+        [ -n "$pid" ] && [ "$pid" != "$$" ] && kill "$pid" 2>/dev/null || true
+    done <<< "$pids"
 
     for _ in 1 2 3 4 5; do
-        kill -0 "$SERVICES_PID" 2>/dev/null || break
+        remaining="$(gateway_port_pids)"
+        [ -z "$remaining" ] && return 0
         sleep 1
     done
-    kill -9 "$SERVICES_PID" 2>/dev/null || true
+
+    warn "Forcing process on port $NGROK_PORT to stop."
+    while IFS= read -r pid; do
+        [ -n "$pid" ] && [ "$pid" != "$$" ] && kill -9 "$pid" 2>/dev/null || true
+    done <<< "$remaining"
+}
+
+stop_daemon() {
+    local SERVICES_PID="" NGROK_PID=""
+
+    if [ -f "$PID_FILE" ]; then
+        IFS=: read -r SERVICES_PID NGROK_PID < "$PID_FILE"
+    fi
+
+    if [ -n "$NGROK_PID" ]; then
+        echo "⟶ stopping ngrok (PID $NGROK_PID)…"
+        kill "$NGROK_PID" 2>/dev/null || true
+    fi
+
+    if [ -n "$SERVICES_PID" ]; then
+        echo "⟶ stopping gateway (PID $SERVICES_PID)…"
+        kill "$SERVICES_PID" 2>/dev/null || true
+
+        for _ in 1 2 3 4 5; do
+            kill -0 "$SERVICES_PID" 2>/dev/null || break
+            sleep 1
+        done
+        kill -9 "$SERVICES_PID" 2>/dev/null || true
+    fi
+
+    stop_gateway_port
+    cleanup_stale_ngrok
     rm -f "$PID_FILE"
     echo "✓ Gateway stopped"
 }

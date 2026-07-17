@@ -23,9 +23,10 @@ def run_cli(tmp_path: Path, *args: str, input_text: str = "") -> subprocess.Comp
 
 
 def test_version_reads_root_version_file(tmp_path):
+    expected_version = (Path(__file__).resolve().parents[1] / "VERSION").read_text().strip()
     result = run_cli(tmp_path, "--version")
     assert result.returncode == 0
-    assert result.stdout.strip() == "Gate 0.1.5"
+    assert result.stdout.strip() == f"Gate {expected_version}"
 
 
 def test_status_never_prints_access_secret(tmp_path):

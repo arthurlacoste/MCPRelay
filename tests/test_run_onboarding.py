@@ -408,3 +408,15 @@ def test_onboarding_copies_generated_secret_when_clipboard_exists():
     content = RUN_SCRIPT.read_text()
     assert "copy_access_secret" in content
     assert "Secret copied to clipboard." in content
+
+
+def test_stop_cleans_gateway_port_without_pid_file():
+    content = RUN_SCRIPT.read_text()
+    stop = content[content.index("gateway_port_pids()") : content.index("status()")]
+
+    assert 'fuser -n tcp "$NGROK_PORT"' in stop
+    assert 'lsof -nP -tiTCP:"$NGROK_PORT" -sTCP:LISTEN' in stop
+    assert 'ss -ltnp "sport = :$NGROK_PORT"' in stop
+    assert "stop_gateway_port" in stop
+    assert 'if [ ! -f "$PID_FILE" ]' not in stop
+    assert 'kill -9 "$pid"' in stop

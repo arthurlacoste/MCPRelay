@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.1.6
+
+### Added
+
+- Check for a newer stable Gate release at interactive startup.
+- Show `press u to install` when an update is available.
+- Stop managed services before launching the update command.
+
+### Fixed
+
+- Stop gateway processes still listening on port 8761 even when the PID file is missing or stale.
+- Make the CLI version test read `VERSION` dynamically instead of requiring edits for every release.
+
 ## 0.1.5
 
 ### Changed

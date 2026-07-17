@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import select
 import shutil
@@ -12,6 +13,7 @@ import sys
 import termios
 import time
 import tty
+import urllib.request
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -26,12 +28,55 @@ NGROK_LOG = LOG_ROOT / "ngrok.log"
 SERVICE_LOG = LOG_ROOT / "services" / "launcher.log"
 NGROK_PORT = 8761
 NGROK_INSPECT_URL = "http://127.0.0.1:4040"
+VERSION_FILE = BASE_DIR / "VERSION"
+LATEST_RELEASE_API = "https://api.github.com/repos/arthurlacoste/gate/releases/latest"
+GATE_COMMAND = Path.home() / ".local" / "bin" / "gate"
 CHATGPT_CONNECTOR_URL = (
     "https://chatgpt.com/plugins#settings/Connectors"
     "?create-connector=true&redirectAfter=%2Fplugins"
 )
 
 STOP_REQUESTED = False
+UPDATE_REQUESTED = False
+
+
+
+
+def version_tuple(value: str) -> tuple[int, int, int]:
+    normalized = value.strip().removeprefix("v")
+    parts = normalized.split(".")
+    if len(parts) != 3 or not all(part.isdigit() for part in parts):
+        raise ValueError(f"Invalid semantic version: {value}")
+    return tuple(int(part) for part in parts)
+
+
+def fetch_latest_release_tag() -> str | None:
+    request = urllib.request.Request(
+        LATEST_RELEASE_API,
+        headers={"Accept": "application/vnd.github+json", "User-Agent": "Gate"},
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=1.5) as response:
+            payload = json.load(response)
+    except (OSError, ValueError, json.JSONDecodeError):
+        return None
+    tag = payload.get("tag_name")
+    return tag if isinstance(tag, str) else None
+
+
+def available_update() -> str | None:
+    try:
+        current = VERSION_FILE.read_text(encoding="utf-8").strip()
+        latest_tag = fetch_latest_release_tag()
+        if not latest_tag or version_tuple(latest_tag) <= version_tuple(current):
+            return None
+        return latest_tag.removeprefix("v")
+    except (OSError, ValueError):
+        return None
+
+
+def install_update() -> int:
+    return subprocess.run([str(GATE_COMMAND), "update"], check=False).returncode
 
 
 class StartupError(RuntimeError):
@@ -197,9 +242,13 @@ def start_ngrok() -> tuple[subprocess.Popen | ExistingProcess, str]:
 
 
 
-def monitor(services: subprocess.Popen, ngrok: subprocess.Popen) -> int:
+def monitor(services: subprocess.Popen, ngrok: subprocess.Popen, update_version: str | None = None) -> int:
+    global UPDATE_REQUESTED
     with terminal_input() as input_fd:
-        print("\nPress m for connection details. Ctrl+C to stop.", flush=True)
+        controls = "Press m for connection details"
+        if update_version:
+            controls += f". Update {update_version} available — press u to install"
+        print(f"\n{controls}. Ctrl+C to stop.", flush=True)
         while not STOP_REQUESTED:
             if services.poll() is not None:
                 print("Error: Gateway stopped unexpectedly.", file=sys.stderr)
@@ -213,14 +262,23 @@ def monitor(services: subprocess.Popen, ngrok: subprocess.Popen) -> int:
                 continue
 
             readable, _, _ = select.select([input_fd], [], [], 0.2)
-            if readable and os.read(input_fd, 1).lower() == b"m":
-                show_connection_details()
+            if readable:
+                key = os.read(input_fd, 1).lower()
+                if key == b"m":
+                    show_connection_details()
+                elif key == b"u" and update_version:
+                    UPDATE_REQUESTED = True
+                    print(f"\nUpdating Gate to {update_version}…", flush=True)
+                    return 0
     return 0
 
 
 def main() -> int:
+    global UPDATE_REQUESTED
     services = None
     ngrok = None
+    exit_code = 0
+    UPDATE_REQUESTED = False
     signal.signal(signal.SIGINT, request_shutdown)
     signal.signal(signal.SIGTERM, request_shutdown)
 
@@ -233,18 +291,23 @@ def main() -> int:
         print(f"\033[1;32m✓ Gateway running (PID {services.pid})\033[0m")
         print(f"\033[1;32m✓ ngrok running (PID {ngrok.pid}) [{keep_awake}]\033[0m")
         print(f"  ngrok inspector → {NGROK_INSPECT_URL}")
-        return monitor(services, ngrok)
+        update_version = available_update()
+        exit_code = monitor(services, ngrok, update_version)
     except ShutdownRequested:
-        return 0
+        exit_code = 0
     except (OSError, StartupError) as exc:
         print(f"Error: {exc}", file=sys.stderr, flush=True)
-        return 1
+        exit_code = 1
     finally:
         if services is not None or ngrok is not None:
             print("\n⟶ stopping services…", flush=True)
             terminate_group(ngrok)
             terminate_group(services)
             print("✓ Services stopped", flush=True)
+
+    if UPDATE_REQUESTED:
+        return install_update()
+    return exit_code
 
 
 if __name__ == "__main__":
