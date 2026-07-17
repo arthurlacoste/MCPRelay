@@ -25,7 +25,7 @@ def run_cli(tmp_path: Path, *args: str, input_text: str = "") -> subprocess.Comp
 def test_version_reads_root_version_file(tmp_path):
     result = run_cli(tmp_path, "--version")
     assert result.returncode == 0
-    assert result.stdout.strip() == "Gate 0.1.3"
+    assert result.stdout.strip() == "Gate 0.1.4"
 
 
 def test_status_never_prints_access_secret(tmp_path):
@@ -172,3 +172,16 @@ def test_rollback_running_gate_prompts_stop_and_restart(monkeypatch, tmp_path):
 
     assert main_module.main(["rollback"]) == 0
     assert events == ["confirm", "stop", "start"]
+
+def test_delegate_run_script_swallows_keyboard_interrupt(monkeypatch, tmp_path, capsys):
+    import gate_cli.main as main_module
+    project = tmp_path / "project"
+    project.mkdir()
+    script = project / "run.sh"
+    script.write_text("#!/usr/bin/env bash\n")
+    script.chmod(0o755)
+    monkeypatch.setattr(main_module, "project_dir", lambda: project)
+    monkeypatch.setattr(main_module.subprocess, "run", lambda *args, **kwargs: (_ for _ in ()).throw(KeyboardInterrupt))
+
+    assert main_module.delegate_run_script() == 130
+    assert "Interrupted." in capsys.readouterr().out

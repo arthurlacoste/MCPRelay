@@ -162,7 +162,11 @@ def delegate_run_script(command: str | None = None) -> int:
         print(f"Missing launcher: {script}")
         return 1
     args = [str(script)] + ([command] if command else [])
-    return subprocess.run(args, cwd=project_dir(), check=False).returncode
+    try:
+        return subprocess.run(args, cwd=project_dir(), check=False).returncode
+    except KeyboardInterrupt:
+        print("Interrupted.")
+        return 130
 
 
 def main(argv: list[str] | None = None) -> int:

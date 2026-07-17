@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.4
+
+### Fixed
+
+- Handle Ctrl+C in the global Gate CLI without displaying a Python `KeyboardInterrupt` traceback.
+- Return the standard shell interrupt exit code `130` after a clean shutdown.
+
 ## 0.1.3
 
 ### Fixed
