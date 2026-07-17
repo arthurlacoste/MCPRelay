@@ -18,7 +18,7 @@ def _archive(path: Path, version: str = "0.2.0") -> None:
     (source / "requirements.txt").write_text("")
     (source / "run.sh").write_text("#!/usr/bin/env bash\n")
     with tarfile.open(path, "w:gz") as handle:
-        handle.add(source, arcname="MCPRelay-test")
+        handle.add(source, arcname="Gate-test")
 
 
 def test_install_archive_release_extracts_and_activates(tmp_path):

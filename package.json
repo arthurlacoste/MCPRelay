@@ -1,5 +1,5 @@
 {
-  "name": "mcprelay-development",
+  "name": "gate-development",
   "private": true,
   "scripts": {
     "dedup": "jscpd"

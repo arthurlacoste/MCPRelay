@@ -31,7 +31,7 @@ def _issue_url(old_version: str, new_version: str, report: Path, error: str) -> 
         f"Error: {error}\nLocal report: {report}\n"
     )
     query = urlencode({"title": f"Migration failure {old_version} to {new_version}", "body": body})
-    return f"https://github.com/arthurlacoste/MCPRelay/issues/new?{query}"
+    return f"https://github.com/arthurlacoste/gate/issues/new?{query}"
 
 
 def run_migrations(paths: GatePaths, old_version: str, new_version: str, migrations) -> None:

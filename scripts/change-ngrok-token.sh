@@ -10,17 +10,17 @@ elif [ -f "$PWD/run.sh" ]; then
   PROJECT_DIR="$PWD"
 elif [ "$SCRIPT_DIR" != "/tmp" ] && [ -f "$SCRIPT_DIR/../run.sh" ]; then
   PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
-elif [ -f "$HOME/MCPRelay/run.sh" ]; then
-  PROJECT_DIR="$HOME/MCPRelay"
+elif [ -f "$HOME/gate/run.sh" ]; then
+  PROJECT_DIR="$HOME/gate"
 else
-  printf 'Error: MCPRelay project not found. Pass its path as the first argument.\n' >&2
+  printf 'Error: Gate project not found. Pass its path as the first argument.\n' >&2
   exit 1
 fi
 
 ENV_FILE="$PROJECT_DIR/config/.env"
 NGROK_PORT="8761"
 NGROK_API_URL="http://127.0.0.1:4040/api/tunnels"
-NGROK_LOG="/tmp/mcprelay-ngrok-change.log"
+NGROK_LOG="/tmp/gate-ngrok-change.log"
 NGROK_PID=""
 
 info() { printf '\n\033[1;34m%s\033[0m\n' "$*"; }
@@ -132,5 +132,5 @@ echo "New MCP URL: $PUBLIC_URL/mcp"
 echo "Update the ChatGPT connector with this URL."
 echo "https://chatgpt.com/plugins#settings/Connectors?create-connector=true&redirectAfter=%2Fplugins"
 echo
-echo "The temporary ngrok tunnel will now stop. Start MCPRelay with:"
+echo "The temporary ngrok tunnel will now stop. Start Gate with:"
 echo "  cd \"$PROJECT_DIR\" && ./run.sh"

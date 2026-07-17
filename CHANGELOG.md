@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.1.1
+
+### Changed
+
+- Renamed the project and all legacy user-facing references to Gate.
+- Moved the canonical GitHub repository to `arthurlacoste/gate`.
+- Renamed runtime identifiers, environment variables, package metadata and widget URIs to Gate.
+
 ## 0.1.0
 
 ### Added

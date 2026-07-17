@@ -88,7 +88,7 @@ def test_install_archive_runs_migrations_before_activation(tmp_path):
     (source / "run.sh").write_text("#!/usr/bin/env bash\n")
     archive = tmp_path / "release.tar.gz"
     with tarfile.open(archive, "w:gz") as handle:
-        handle.add(source, arcname="MCPRelay-test")
+        handle.add(source, arcname="Gate-test")
     events = []
 
     install_archive_release(

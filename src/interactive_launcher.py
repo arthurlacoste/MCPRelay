@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Interactive POSIX launcher for MCPRelay services and ngrok."""
+"""Interactive POSIX launcher for Gate services and ngrok."""
 
 from __future__ import annotations
 

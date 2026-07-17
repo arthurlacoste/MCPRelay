@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-REPO="arthurlacoste/MCPRelay"
+REPO="arthurlacoste/gate"
 API="https://api.github.com/repos/$REPO"
-RELEASE_API="https://api.github.com/repos/arthurlacoste/MCPRelay/releases/latest"
+RELEASE_API="https://api.github.com/repos/arthurlacoste/gate/releases/latest"
 GATE_ROOT="${GATE_INSTALL_DIR:-$HOME/.gate}"
 BIN_DIR="$HOME/.local/bin"
 NODE_VERSION="22"

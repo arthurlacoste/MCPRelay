@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# MCPRelay gateway + ngrok tunnel manager
+# Gate gateway + ngrok tunnel manager
 set -Eeuo pipefail
 
 PROJECT_DIR="$(cd "$(dirname "$0")" && pwd)"
-PID_FILE="${MCPRELAY_PID_FILE:-/tmp/mcp_gateway.pid}"
+PID_FILE="${GATE_PID_FILE:-/tmp/mcp_gateway.pid}"
 NGROK_PORT=8761
 CONFIG_ROOT="${MCP_CONFIG_ROOT:-$PROJECT_DIR/config}"
 CONFIG_FILE="$CONFIG_ROOT/.env"
@@ -168,7 +168,7 @@ oooooo     oooo ooooo  .oooooo..o ooooo   .oooooo.   ooooo      ooo
      `888'       888  oo     .d8P  888  `88b    d88'  8       `888
       `8'       o888o 8""88888P'  o888o  `Y8bood8P'  o8o        `8
 
-formerly MCPRelay, made with <3 by arthak
+formerly Gate, made with <3 by arthak
 
 EOF
 }
@@ -274,7 +274,7 @@ ensure_onboarding() {
         access_secret=""
     else
         warn "OAuth configuration incomplete. Starting setup."
-        command -v ngrok >/dev/null 2>&1 || die "ngrok is required. Install it before running MCPRelay."
+        command -v ngrok >/dev/null 2>&1 || die "ngrok is required. Install it before running Gate."
         command -v curl >/dev/null 2>&1 || die "curl is required."
 
         info "First-run setup"
@@ -312,7 +312,7 @@ ensure_onboarding() {
         CHATGPT_STARTUP_BROWSER_ASSIST "false"
     ensure_env_notes
 
-    printf '\nMCPRelay is configured.\n'
+    printf '\nGate is configured.\n'
     copy_access_secret "$access_secret" || true
     show_connection_details
     printf '\n'
@@ -436,7 +436,7 @@ parse_runtime_args() {
     case "$RUNTIME_COMMAND" in
         stop|status|setup|renew-secret)
             if [ "$widget" = true ] || [ "$realtime" = true ]; then
-                die "Runtime flags are only valid when starting MCPRelay."
+                die "Runtime flags are only valid when starting Gate."
             fi
             ;;
     esac

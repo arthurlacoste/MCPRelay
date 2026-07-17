@@ -51,7 +51,7 @@ processes = []
 
 
 def parse_args(argv=None):
-    parser = argparse.ArgumentParser(description="Start the MCPRelay gateway")
+    parser = argparse.ArgumentParser(description="Start the Gate gateway")
     parser.add_argument("--widget", action="store_true", help="enable the ChatGPT command widget")
     parser.add_argument(
         "--realtime",

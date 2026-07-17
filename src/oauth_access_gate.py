@@ -152,7 +152,7 @@ def login_page(request_id: str, details: dict, error: str | None = None) -> str:
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Authorize MCPRelay</title>
+<title>Authorize Gate</title>
 <style>
 :root{{color-scheme:light dark;--background:#fff;--surface:#fff;--text:#111;--muted:#6b6b6b;--field:#f3f3f3;--border:#d7d7d7;--primary:#000;--primary-text:#fff;--danger:#b42318}}
 *{{box-sizing:border-box}}
@@ -182,8 +182,8 @@ button{{padding:.75rem 1rem;border:1px solid transparent;font-weight:650;cursor:
 </head>
 <body>
 <main>
-<header class="brand"><img src="/oauth/assets/vision.webp" alt="MCPRelay Vision"></header>
-<h1>Authorize MCPRelay</h1>
+<header class="brand"><img src="/oauth/assets/vision.webp" alt="Gate Vision"></header>
+<h1>Authorize Gate</h1>
 <p class="intro"><strong>{client_name}</strong> requests access.</p>
 {message}
 <form method="post" action="/oauth/authorize">

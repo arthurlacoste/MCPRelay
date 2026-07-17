@@ -24,12 +24,12 @@ EXTERNAL_ACTION = {
 TOOL_METADATA: dict[str, dict[str, Any]] = {
     'conversation_start': {
         'title': 'Start conversation log',
-        'description': 'Create or resume a local MCPRelay conversation log and return its stable conversation ID.',
+        'description': 'Create or resume a local Gate conversation log and return its stable conversation ID.',
         'annotations': LOCAL_WRITE,
     },
     'conversation_note': {
         'title': 'Add conversation note',
-        'description': 'Append a structured note to an existing local MCPRelay conversation log.',
+        'description': 'Append a structured note to an existing local Gate conversation log.',
         'annotations': LOCAL_WRITE,
     },
     'auth_status': {

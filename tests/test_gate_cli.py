@@ -25,7 +25,7 @@ def run_cli(tmp_path: Path, *args: str, input_text: str = "") -> subprocess.Comp
 def test_version_reads_root_version_file(tmp_path):
     result = run_cli(tmp_path, "--version")
     assert result.returncode == 0
-    assert result.stdout.strip() == "Gate 0.1.0"
+    assert result.stdout.strip() == "Gate 0.1.1"
 
 
 def test_status_never_prints_access_secret(tmp_path):
@@ -151,7 +151,7 @@ def test_update_migration_error_prints_report_and_issue(monkeypatch, capsys, tmp
     from gate_cli.migrations import MigrationError
     report = tmp_path / "report.log"
     report.write_text("traceback")
-    error = MigrationError("boom", report, "https://github.com/arthurlacoste/MCPRelay/issues/new?x=1")
+    error = MigrationError("boom", report, "https://github.com/arthurlacoste/gate/issues/new?x=1")
     monkeypatch.setattr(main_module, "gate_is_running", lambda: False)
     monkeypatch.setattr(main_module, "perform_gate_update", lambda edge, stable: (_ for _ in ()).throw(error))
 

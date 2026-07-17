@@ -1,8 +1,8 @@
-# MCPRelay agent guide
+# Gate agent guide
 
 ## Purpose
 
-MCPRelay is a local MCP gateway exposed to ChatGPT through ngrok. It provides OAuth, filesystem access, shell execution, browser automation, public file sharing, screenshots, keyboard control, and mouse control.
+Gate is a local MCP gateway exposed to ChatGPT through ngrok. It provides OAuth, filesystem access, shell execution, browser automation, public file sharing, screenshots, keyboard control, and mouse control.
 
 User-facing installation and usage belong in `docs/installation.md`. Keep `README.md` short and product-focused.
 

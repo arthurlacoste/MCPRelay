@@ -949,7 +949,7 @@ def resolve_command_recovery(action: Literal['resume', 'clear']) -> dict:
 
 
 if __name__ == '__main__':
-    print(f"MCPRelay runtime: {runtime_mode_summary(RUNTIME_FEATURES)}", flush=True)
+    print(f"Gate runtime: {runtime_mode_summary(RUNTIME_FEATURES)}", flush=True)
     log_action('gateway_start', {
         'host': '0.0.0.0',
         'port': 8761,

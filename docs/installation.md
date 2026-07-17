@@ -5,7 +5,7 @@
 Supported in the first scope: macOS, Linux and WSL.
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/arthurlacoste/MCPRelay/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/arthurlacoste/gate/main/install.sh | bash
 ```
 
 The installer uses `~/.gate` for releases and persistent data, creates `~/.local/bin/gate`, installs uv with Python 3.12, nvm with Node 22, and ngrok when missing. Interactive input is read from `/dev/tty`, so the command works through a shell pipe.
@@ -58,7 +58,7 @@ node --version
 HTTPS:
 
 ```bash
-git clone https://github.com/arthurlacoste/MCPRelay.git myMCP
+git clone https://github.com/arthurlacoste/gate.git myMCP
 cd myMCP
 ```
 
@@ -216,11 +216,11 @@ Windows PowerShell:
 Copy-Item config/mcp.json.example config/mcp.json
 ```
 
-MCPRelay reads the classic `mcpServers` JSON format. It supports stdio entries with `command`, `args`, `env`, and `cwd`, plus HTTP/SSE entries with `url`, `transport`, `headers`, and `auth`.
+Gate reads the classic `mcpServers` JSON format. It supports stdio entries with `command`, `args`, `env`, and `cwd`, plus HTTP/SSE entries with `url`, `transport`, `headers`, and `auth`.
 
 `toolPrefix` controls the public namespace. Without it, the server name is converted to snake_case. For example, `computer-use` exposes tools as `computer_use_*`.
 
-MCPRelay-specific options:
+Gate-specific options:
 
 ```json
 {
@@ -241,7 +241,7 @@ MCPRelay-specific options:
 }
 ```
 
-`${VAR}` placeholders are resolved from `config/.env` and the process environment. Relative `cwd` values resolve from the MCPRelay project root. Restart MCPRelay after editing this file.
+`${VAR}` placeholders are resolved from `config/.env` and the process environment. Relative `cwd` values resolve from the Gate project root. Restart Gate after editing this file.
 
 The local `config/mcp.json` file is ignored by Git because it may contain secrets. Prefer `${VAR}` placeholders. Missing variables, unavailable binaries, and unreachable servers disable only the affected server.
 
@@ -338,14 +338,14 @@ Sleep prevention matters because sleep stops the gateway, ngrok tunnel, and GUI 
 On systemd-based distributions:
 
 ```bash
-systemd-inhibit --what=sleep --why="MCPRelay is running" ./run.sh
+systemd-inhibit --what=sleep --why="Gate is running" ./run.sh
 ```
 
 `systemd-inhibit` holds a sleep inhibitor only while `run.sh` is running. It is optional. Other init systems need their own equivalent.
 
 ### Windows: PowerToys Awake
 
-Use [Microsoft PowerToys Awake](https://learn.microsoft.com/en-us/windows/powertoys/awake). Enable **Keep awake indefinitely** while MCPRelay is running. Enable **Keep screen on** when testing vision or GUI automation.
+Use [Microsoft PowerToys Awake](https://learn.microsoft.com/en-us/windows/powertoys/awake). Enable **Keep awake indefinitely** while Gate is running. Enable **Keep screen on** when testing vision or GUI automation.
 
 PowerToys Awake works only while the user is signed in. GUI automation also requires an unlocked interactive desktop.
 
@@ -429,7 +429,7 @@ The interface may call it a **Plugin**, **App**, or **custom MCP app**.
 4. Complete the **New Plugin** form:
 
    - **Name**: `mcp dl`
-   - **Description**: `Local computer tools through MCPRelay` (optional)
+   - **Description**: `Local computer tools through Gate` (optional)
    - **Connection**: `Server URL`
    - **Server URL**: your ngrok URL followed by `/mcp`
    - **Authentication**: `OAuth`
@@ -445,7 +445,7 @@ The interface may call it a **Plugin**, **App**, or **custom MCP app**.
 5. Wait for OAuth settings discovery. Open **Advanced OAuth settings** only if ChatGPT reports an error.
 6. Check **I understand and want to continue**. This server provides access to your computer. Continue only if you own and trust this repository and tunnel.
 7. Click **Create**.
-8. On the MCPRelay authorization page, enter the access secret and click **Authorize**. MCPRelay then creates the code and ChatGPT exchanges it automatically.
+8. On the Gate authorization page, enter the access secret and click **Authorize**. Gate then creates the code and ChatGPT exchanges it automatically.
 
 The plugin is ready when `mcp dl` appears in the installed plugins list.
 
@@ -457,9 +457,9 @@ Do not confuse these values:
 |---|---|---|
 | ngrok token | ngrok dashboard | `ngrok config add-authtoken ...` on the local computer |
 | ngrok URL | `ngrok http 8761` | Plugin/app URL field: URL + `/mcp` |
-| OAuth code and access token | Generated automatically by MCPRelay during connection | Automatic exchange between ChatGPT and `/oauth/token` |
+| OAuth code and access token | Generated automatically by Gate during connection | Automatic exchange between ChatGPT and `/oauth/token` |
 
-ChatGPT automatically registers an OAuth client and opens `/oauth/authorize`. MCPRelay issues a code only after the access secret is accepted, then ChatGPT exchanges it for an access token. Never copy an OAuth JWT into the plugin settings.
+ChatGPT automatically registers an OAuth client and opens `/oauth/authorize`. Gate issues a code only after the access secret is accepted, then ChatGPT exchanges it for an access token. Never copy an OAuth JWT into the plugin settings.
 
 ### Rotate or revoke OAuth access
 
@@ -469,9 +469,9 @@ On macOS or Linux, rotate the readable secret and its Argon2id hash together:
 ./run.sh renew-secret
 ```
 
-Save the printed secret, then restart MCPRelay. This blocks new authorizations with the old secret, but existing tokens remain valid until `OAUTH_TOKEN_TTL_SECONDS` expires.
+Save the printed secret, then restart Gate. This blocks new authorizations with the old secret, but existing tokens remain valid until `OAUTH_TOKEN_TTL_SECONDS` expires.
 
-For emergency revocation, stop MCPRelay, delete `data/oauth_private_key.pem`, and restart. A new signing key is generated and every previously issued token becomes invalid.
+For emergency revocation, stop Gate, delete `data/oauth_private_key.pem`, and restart. A new signing key is generated and every previously issued token becomes invalid.
 
 ## 13. Permissions: safe or YOLO
 
@@ -486,7 +486,7 @@ Mapping from older labels:
 - `All actions` exposes everything, but may still request confirmation.
 - Full YOLO mode = `All actions` + `Never ask`.
 
-**Danger: MCPRelay exposes shell, filesystem, keyboard, mouse, and browser controls. `All actions` + `Never ask` may run commands, modify/delete files, or control the computer without confirmation. Use it only on a test machine, with a non-admin user and no sensitive data.**
+**Danger: Gate exposes shell, filesystem, keyboard, mouse, and browser controls. `All actions` + `Never ask` may run commands, modify/delete files, or control the computer without confirmation. Use it only on a test machine, with a non-admin user and no sensitive data.**
 
 OpenAI may still block especially risky actions. Reference: [app permissions and controls](https://help.openai.com/en/articles/11509118-admin-controls-security-and-compliance-for-plugins-and-apps).
 
@@ -562,7 +562,7 @@ Get-Content logs/services/gateway.log -Tail 100
 ### ngrok URL changed
 
 1. Update `config/.env`.
-2. Restart MCPRelay.
+2. Restart Gate.
 3. Recreate or update the ChatGPT app with the new URL + `/mcp`.
 
 ## 16. Stop the server
@@ -614,11 +614,11 @@ After a gateway restart, formerly active commands become `interrupted` and pendi
 
 ## Agent Skills catalogue
 
-MCPRelay can expose a trusted local catalogue of [Agent Skills](https://agentskills.io/) through `skills_search` and `skills_read`. It does not bundle, install, execute, or automatically inject skills into conversations.
+Gate can expose a trusted local catalogue of [Agent Skills](https://agentskills.io/) through `skills_search` and `skills_read`. It does not bundle, install, execute, or automatically inject skills into conversations.
 
 The default root is `~/.gate/skills`. The onboarding launcher creates it automatically when it is missing.
 
-To use another directory, add `MCP_SKILLS_ROOT` to `config/.env`, then rerun onboarding or restart MCPRelay:
+To use another directory, add `MCP_SKILLS_ROOT` to `config/.env`, then rerun onboarding or restart Gate:
 
 ```dotenv
 # Relative `~` paths and absolute paths are supported.
@@ -640,7 +640,7 @@ You can also link an existing skill package without copying it:
 ln -s /absolute/path/to/my-skill ~/.gate/skills/my-skill
 ```
 
-MCPRelay follows symlinked skill package directories, while still rejecting files that escape the linked package. Skills are discovered at request time, so adding or updating a package does not require rebuilding MCPRelay.
+Gate follows symlinked skill package directories, while still rejecting files that escape the linked package. Skills are discovered at request time, so adding or updating a package does not require rebuilding Gate.
 
 The running MCP server itself never creates directories. If the configured root is later removed or changed to a missing path without rerunning onboarding, the catalogue returns no skills and includes a structured configuration warning.
 

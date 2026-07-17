@@ -47,7 +47,7 @@ def paths() -> GatePaths:
 
 
 def gate_pid_file() -> Path:
-    return Path(os.environ.get("MCPRELAY_PID_FILE", "/tmp/mcp_gateway.pid"))
+    return Path(os.environ.get("GATE_PID_FILE", "/tmp/mcp_gateway.pid"))
 
 
 def gate_is_running() -> bool:

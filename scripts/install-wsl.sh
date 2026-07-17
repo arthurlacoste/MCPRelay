@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-REPO_URL="https://github.com/arthurlacoste/MCPRelay.git"
-DEFAULT_INSTALL_DIR="$HOME/MCPRelay"
+REPO_URL="https://github.com/arthurlacoste/gate.git"
+DEFAULT_INSTALL_DIR="$HOME/gate"
 NODE_VERSION="22"
 PYTHON_VERSION="3.12"
 NGROK_PORT="8761"
-NGROK_LOG="/tmp/mcprelay-ngrok-install.log"
-DOCS_URL="https://github.com/arthurlacoste/MCPRelay/blob/main/docs/installation.md#12-add-the-mcp-dl-plugin"
+NGROK_LOG="/tmp/gate-ngrok-install.log"
+DOCS_URL="https://github.com/arthurlacoste/gate/blob/main/docs/installation.md#12-add-the-mcp-dl-plugin"
 CHATGPT_CONNECTOR_URL="https://chatgpt.com/plugins#settings/Connectors?create-connector=true&redirectAfter=%2Fplugins"
 
 info() { printf '\n\033[1;34m%s\033[0m\n' "$*"; }
@@ -54,7 +54,7 @@ fix_obsolete_bullseye_backports() {
 
   while IFS= read -r -d '' source_file; do
     grep -q 'bullseye-backports' "$source_file" || continue
-    backup_file="${source_file}.mcprelay-backup"
+    backup_file="${source_file}.gate-backup"
     sudo cp -n "$source_file" "$backup_file"
 
     case "$source_file" in
@@ -62,7 +62,7 @@ fix_obsolete_bullseye_backports() {
         sudo awk '
           BEGIN { RS=""; ORS="\n\n" }
           /Suites:.*bullseye-backports/ {
-            print "# Disabled by MCPRelay installer: obsolete bullseye-backports stanza"
+            print "# Disabled by Gate installer: obsolete bullseye-backports stanza"
             next
           }
           { print }
@@ -70,7 +70,7 @@ fix_obsolete_bullseye_backports() {
         sudo mv "${source_file}.tmp" "$source_file"
         ;;
       *)
-        sudo sed -i '/bullseye-backports/s/^/# Disabled by MCPRelay installer: /' "$source_file"
+        sudo sed -i '/bullseye-backports/s/^/# Disabled by Gate installer: /' "$source_file"
         ;;
     esac
 
@@ -83,7 +83,7 @@ fix_obsolete_bullseye_backports() {
   )
 
   if [ "$changed" -eq 1 ]; then
-    echo "Backups were saved with the .mcprelay-backup suffix."
+    echo "Backups were saved with the .gate-backup suffix."
   fi
 }
 
@@ -126,15 +126,15 @@ trap cleanup_ngrok EXIT
 is_wsl || die "Run this script inside Ubuntu/WSL, not PowerShell."
 command -v sudo >/dev/null 2>&1 || die "sudo is required."
 
-info "MCPRelay WSL installer"
-echo "This installs MCPRelay, Python $PYTHON_VERSION, Node.js $NODE_VERSION and ngrok."
+info "Gate WSL installer"
+echo "This installs Gate, Python $PYTHON_VERSION, Node.js $NODE_VERSION and ngrok."
 echo "GUI automation from WSL can be limited. Filesystem, shell, OAuth and MCP work normally."
 
 INSTALL_DIR="$(prompt_default "Installation directory" "$DEFAULT_INSTALL_DIR")"
-FILESYSTEM_ROOTS="$(prompt_default "Directories exposed to MCPRelay" "$HOME")"
+FILESYSTEM_ROOTS="$(prompt_default "Directories exposed to Gate" "$HOME")"
 
 if [ "$FILESYSTEM_ROOTS" = "/" ]; then
-  warn "You selected /. MCPRelay will be able to access the entire WSL filesystem."
+  warn "You selected /. Gate will be able to access the entire WSL filesystem."
 fi
 
 info "Checking Debian package sources"
@@ -282,7 +282,7 @@ unset OAUTH_ACCESS_SECRET_HASH
 ok "Configuration saved"
 
 if [ -n "$GENERATED_OAUTH_SECRET" ]; then
-  printf '\nYour MCPRelay access secret:\n\n%s\n\nSave it now. It will not be shown again.\n' "$GENERATED_OAUTH_SECRET"
+  printf '\nYour Gate access secret:\n\n%s\n\nSave it now. It will not be shown again.\n' "$GENERATED_OAUTH_SECRET"
   unset GENERATED_OAUTH_SECRET
 fi
 
@@ -296,7 +296,7 @@ printf '%s\n' \
   "MCP URL:     $PUBLIC_URL/mcp" \
   "Auth:        OAuth" \
   "Name:        mcp dl" \
-  "Description: Local computer tools through MCPRelay"
+  "Description: Local computer tools through Gate"
 
 echo
 echo "ChatGPT setup guide:"
@@ -311,11 +311,11 @@ echo "  Authentication: OAuth"
 echo
 echo "ChatGPT does not currently expose documented URL parameters to prefill these fields."
 echo "The free ngrok URL can change after restart. Update config/.env and ChatGPT when it changes."
-echo "WSL note: keep Windows awake and unlocked while MCPRelay is running."
+echo "WSL note: keep Windows awake and unlocked while Gate is running."
 
-if prompt_yes_no "Start MCPRelay now?" "y"; then
+if prompt_yes_no "Start Gate now?" "y"; then
   echo
-  echo "Starting MCPRelay. Press Ctrl+C to stop it."
+  echo "Starting Gate. Press Ctrl+C to stop it."
   trap - EXIT
   exec ./run.sh
 fi

@@ -80,4 +80,4 @@ def test_widget_enables_realtime_mode():
 
     assert snapshot["widget"] is True
     assert snapshot["realtime"] is True
-    assert "ui://mcprelay/terminal.html" in snapshot["resources"]
+    assert "ui://gate/terminal.html" in snapshot["resources"]

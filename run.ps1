@@ -40,7 +40,7 @@ $Gateway = Start-Process `
 
 try {
     Start-Sleep -Seconds 2
-    Write-Host "MCPRelay ready on http://localhost:8761/mcp"
+    Write-Host "Gate ready on http://localhost:8761/mcp"
     Write-Host "Starting ngrok. Press Ctrl+C to stop."
     & ngrok http 8761
 } finally {

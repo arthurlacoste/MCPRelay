@@ -1,6 +1,6 @@
 ![VISION](docs/assets/vision.webp)
 
-# MCPRelay — Local MCP Gateway
+# Gate — Local MCP Gateway
 
 A local MCP (Model Context Protocol) gateway with configurable MCP subservers, shell access, file sharing and built-in OAuth authentication.
 
@@ -11,7 +11,7 @@ The goal of this tool is to let ChatGPT work through your local machine and brow
 Install Gate on macOS, Linux or WSL:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/arthurlacoste/MCPRelay/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/arthurlacoste/gate/main/install.sh | bash
 ```
 
 Then run:

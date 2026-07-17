@@ -8,7 +8,7 @@ from tool_registry import configurable_tool
 
 
 def test_terminal_widget_contains_queue_terminal_and_recovery_controls():
-    assert 'MCPRelay Live Queue' in TERMINAL_APP_HTML
+    assert 'Gate Live Queue' in TERMINAL_APP_HTML
     assert 'Relancer' in TERMINAL_APP_HTML
     assert 'Vider' in TERMINAL_APP_HTML
     assert 'get_queue_state' in TERMINAL_APP_HTML

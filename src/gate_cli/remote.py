@@ -17,7 +17,7 @@ class StableRelease:
 
 
 class GitHubRepository:
-    def __init__(self, repo: str = "arthurlacoste/MCPRelay", opener: Callable = urllib.request.urlopen):
+    def __init__(self, repo: str = "arthurlacoste/gate", opener: Callable = urllib.request.urlopen):
         self.repo = repo
         self.opener = opener
         self.api = f"https://api.github.com/repos/{repo}"

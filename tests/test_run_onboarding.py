@@ -49,7 +49,7 @@ def _sandbox(tmp_path: Path, env_content: str) -> tuple[Path, dict[str, str]]:
     _write_executable(fake_bin / "pgrep", "#!/usr/bin/env bash\nexit 1\n")
     env = os.environ.copy()
     env["PATH"] = f"{fake_bin}:{env['PATH']}"
-    env["MCPRELAY_PID_FILE"] = str(tmp_path / "mcp_gateway.pid")
+    env["GATE_PID_FILE"] = str(tmp_path / "mcp_gateway.pid")
     return script, env
 
 
@@ -282,7 +282,7 @@ def test_vision_banner_is_shown_at_script_start():
     content = RUN_SCRIPT.read_text()
 
     assert "oooooo     oooo ooooo  .oooooo..o" in content
-    assert "formerly MCPRelay, made with <3 by arthak" in content
+    assert "formerly Gate, made with <3 by arthak" in content
     assert "printf '\\033[2J\\033[H'" in content
     assert content.index("clear_screen\nshow_banner\n\ncase") < content.index('case "${1:-}"')
 

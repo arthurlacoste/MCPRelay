@@ -27,7 +27,7 @@ jobs:
         run: |
           set -euo pipefail
           archive="gate-${GITHUB_REF_NAME}.tar.gz"
-          git archive --format=tar.gz --prefix="MCPRelay-${GITHUB_REF_NAME}/" -o "$archive" "$GITHUB_REF_NAME"
+          git archive --format=tar.gz --prefix="Gate-${GITHUB_REF_NAME}/" -o "$archive" "$GITHUB_REF_NAME"
           sha256sum "$archive" > SHA256SUMS
 
       - name: Create GitHub Release
