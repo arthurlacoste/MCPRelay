@@ -319,9 +319,38 @@ ensure_onboarding() {
     printf 'The access secret is stored locally in config/.env with mode 600.\n'
 }
 
+daemon_pid_is_alive() {
+    local services_pid=""
+    [ -f "$PID_FILE" ] || return 1
+    IFS=: read -r services_pid _ < "$PID_FILE"
+    [[ "$services_pid" =~ ^[0-9]+$ ]] || return 1
+    kill -0 "$services_pid" 2>/dev/null
+}
+
+reconcile_pid_file() {
+    [ -f "$PID_FILE" ] || return 1
+    if daemon_pid_is_alive; then
+        return 0
+    fi
+    warn "Removing stale daemon PID file: $PID_FILE"
+    rm -f "$PID_FILE"
+    return 1
+}
+
 run_interactive() {
     cd "$PROJECT_DIR"
-    [ ! -f "$PID_FILE" ] || die "Daemon PID file exists. Run ./run.sh stop first."
+    if reconcile_pid_file; then
+        IFS=: read -r SERVICES_PID NGROK_PID < "$PID_FILE"
+        echo "✓ Gate already running (PID $SERVICES_PID)"
+        if [ -n "${NGROK_PID:-}" ] && kill -0 "$NGROK_PID" 2>/dev/null; then
+            echo "✓ ngrok tunnel     (PID $NGROK_PID)"
+            show_ngrok_inspector
+        fi
+        echo ""
+        echo "  Stop with:  ./run.sh stop"
+        echo "  Status:     ./run.sh status"
+        return 0
+    fi
     cleanup_stale_ngrok
     ensure_python_environment
     ensure_onboarding

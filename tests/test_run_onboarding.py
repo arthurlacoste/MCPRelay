@@ -50,6 +50,10 @@ def _sandbox(tmp_path: Path, env_content: str) -> tuple[Path, dict[str, str]]:
     env = os.environ.copy()
     env["PATH"] = f"{fake_bin}:{env['PATH']}"
     env["GATE_PID_FILE"] = str(tmp_path / "mcp_gateway.pid")
+    env["MCP_CONFIG_ROOT"] = str(tmp_path / "config")
+    env["MCP_LOG_ROOT"] = str(tmp_path / "logs")
+    env.pop("GATE_PROJECT_DIR", None)
+    env.pop("GATE_ROOT", None)
     return script, env
 
 
@@ -95,6 +99,55 @@ def test_run_script_bootstraps_python_before_onboarding():
     assert daemon.index("ensure_python_environment") < daemon.index("ensure_onboarding")
     assert "setup)   ensure_python_environment; ensure_onboarding ;;" in content
     assert "renew-secret) ensure_python_environment; ensure_onboarding true ;;" in content
+
+
+def test_interactive_launch_reports_existing_live_daemon(tmp_path):
+    script, env = _sandbox(
+        tmp_path,
+        "MCP_BASE_URL=https://stable.example\n"
+        "OAUTH_ACCESS_SECRET=readable-secret\n"
+        "OAUTH_ACCESS_SECRET_HASH=$argon2id$valid\n",
+    )
+    Path(env["GATE_PID_FILE"]).write_text(f"{os.getpid()}:{os.getpid()}\n")
+
+    result = subprocess.run(
+        [str(script)],
+        cwd=tmp_path,
+        env=env,
+        text=True,
+        capture_output=True,
+        timeout=15,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert f"Gate already running (PID {os.getpid()})" in result.stdout
+    assert "Daemon PID file exists" not in result.stderr
+    assert "ngrok inspector" in result.stdout
+
+
+def test_interactive_launch_removes_stale_pid_file(tmp_path):
+    content = RUN_SCRIPT.read_text()
+    definitions = content[: content.index('parse_runtime_args "$@"')]
+    harness = tmp_path / "reconcile.sh"
+    _write_executable(
+        harness,
+        definitions
+        + "\nif reconcile_pid_file; then exit 9; fi\n"
+        + '[ ! -e "$PID_FILE" ]\n',
+    )
+    pid_file = tmp_path / "stale.pid"
+    pid_file.write_text("99999999:99999998\n")
+    env = os.environ.copy()
+    env["GATE_PID_FILE"] = str(pid_file)
+
+    result = subprocess.run(
+        [str(harness)], env=env, text=True, capture_output=True, check=False
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "Removing stale daemon PID file" in result.stdout
+    assert not pid_file.exists()
 
 
 def test_python_bootstrap_uses_canonical_requirements():
@@ -274,7 +327,7 @@ def test_ngrok_inspector_is_shown_for_running_modes():
     launcher = INTERACTIVE_LAUNCHER.read_text()
 
     assert 'NGROK_INSPECT_URL="http://127.0.0.1:4040"' in content
-    assert content.count("show_ngrok_inspector") == 3
+    assert content.count("show_ngrok_inspector") == 4
     assert 'NGROK_INSPECT_URL = "http://127.0.0.1:4040"' in launcher
 
 

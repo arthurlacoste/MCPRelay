@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.1.9
+
+### Fixed
+
+- Treat an existing live daemon PID file as an already-running Gate instance instead of failing interactive startup.
+- Remove stale daemon PID files automatically before interactive startup.
+- Isolate onboarding and CLI tests from the developer's real Gate config, logs, and release state.
+
 ## 0.1.8
 
 ### Added

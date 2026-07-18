@@ -12,6 +12,9 @@ def run_cli(tmp_path: Path, *args: str, input_text: str = "") -> subprocess.Comp
     env["HOME"] = str(tmp_path)
     env["PYTHONPATH"] = str(Path(__file__).resolve().parents[1] / "src")
     env["GATE_PROJECT_DIR"] = str(Path(__file__).resolve().parents[1])
+    env["GATE_ROOT"] = str(tmp_path / ".gate")
+    env.pop("MCP_CONFIG_ROOT", None)
+    env.pop("MCP_LOG_ROOT", None)
     return subprocess.run(
         [sys.executable, "-m", "gate_cli", *args],
         env=env,
