@@ -63,11 +63,24 @@ def _enable_interactive_fakes(tmp_path: Path) -> None:
     (tmp_path / "src").mkdir()
     shutil.copy2(INTERACTIVE_LAUNCHER, tmp_path / "src" / "interactive_launcher.py")
     (tmp_path / "start_services.py").write_text(
-        "import signal\n"
-        "import time\n"
+        "import signal, json, threading\n"
+        "from http.server import HTTPServer, BaseHTTPRequestHandler\n"
+        "class H(BaseHTTPRequestHandler):\n"
+        "    def do_GET(self):\n"
+        "        self.send_response(200)\n"
+        "        self.send_header('Content-Type','application/json')\n"
+        "        self.end_headers()\n"
+        "        self.wfile.write(json.dumps({'ok':True}).encode())\n"
+        "    def log_message(self, *a): pass\n"
+        "def run(port):\n"
+        "    s = HTTPServer(('0.0.0.0', port), H)\n"
+        "    while True: s.handle_request()\n"
+        "for p in (8761, 4040):\n"
+        "    threading.Thread(target=run, args=(p,), daemon=True).start()\n"
         "def stop(*_): raise SystemExit(0)\n"
         "signal.signal(signal.SIGINT, stop)\n"
         "signal.signal(signal.SIGTERM, stop)\n"
+        "import time\n"
         "while True: time.sleep(1)\n"
     )
     (venv_bin / "activate").write_text(f'export PATH="{venv_bin}:$PATH"\n')

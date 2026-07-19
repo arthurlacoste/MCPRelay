@@ -87,7 +87,7 @@ def ensure_venv():
 
 
 def ensure_deps():
-    sentinel = PYTHON.parent / ".deps_sentinel"
+    sentinel = BASE_DIR / ".venv" / ".deps_sentinel"
     req_mtime = REQUIREMENTS.stat().st_mtime
     if sentinel.exists():
         try:
@@ -116,6 +116,7 @@ def ensure_deps():
             "-r",
             str(REQUIREMENTS),
         ])
+    sentinel.parent.mkdir(parents=True, exist_ok=True)
     sentinel.write_text(str(req_mtime), encoding="utf-8")
 
 
