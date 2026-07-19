@@ -98,7 +98,8 @@ def test_main_installs_update_after_services_stop(monkeypatch):
     monkeypatch.setattr(interactive_launcher.signal, "signal", lambda *args: None)
     monkeypatch.setattr(interactive_launcher, "start_services", lambda: services)
     monkeypatch.setattr(interactive_launcher, "start_ngrok", lambda: (ngrok, "test"))
-    monkeypatch.setattr(interactive_launcher, "wait_for_start", lambda *args: None)
+    monkeypatch.setattr(interactive_launcher, "wait_for_gateway_health", lambda *args, **kwargs: None)
+    monkeypatch.setattr(interactive_launcher, "wait_for_ngrok_ready", lambda *args, **kwargs: None)
     monkeypatch.setattr(interactive_launcher, "available_update", lambda: "0.1.6")
 
     def fake_monitor(*args):
@@ -181,7 +182,7 @@ def test_monitor_toggles_panels_with_same_key_and_escape(monkeypatch):
     )
     monkeypatch.setattr(interactive_launcher, "clear_terminal", lambda: None)
 
-    assert interactive_launcher.monitor(Process(), Process(), "active", "0.1.8") == 0
+    assert interactive_launcher.monitor(Process(), Process(), "active", ["0.1.8"]) == 0
     assert rendered_panels == [None, "connections", None, "changelog", None]
     assert interactive_launcher.UPDATE_REQUESTED is True
 
@@ -213,6 +214,6 @@ def test_monitor_ignores_update_key_while_panel_is_open(monkeypatch):
     )
     monkeypatch.setattr(interactive_launcher, "clear_terminal", lambda: None)
 
-    assert interactive_launcher.monitor(Process(), Process(), "active", "0.1.8") == 0
+    assert interactive_launcher.monitor(Process(), Process(), "active", ["0.1.8"]) == 0
     assert rendered_panels == [None, "connections", None]
     assert interactive_launcher.UPDATE_REQUESTED is True

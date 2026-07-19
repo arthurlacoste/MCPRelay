@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.1.10
+
+### Changed
+
+- Replace fixed 2-second startup waits with health-check polls for faster startup.
+- Gateway waits for `/oauth/health` instead of sleeping blindly.
+- ngrok waits for the local API tunnel response instead of sleeping blindly.
+- Move GitHub update check to a background thread so it never blocks the UI.
+
+### Fixed
+
+- Skip redundant dependency installation on warm starts using an mtime sentinel.
+
 ## 0.1.9
 
 ### Fixed

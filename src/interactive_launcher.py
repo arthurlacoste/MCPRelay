@@ -11,6 +11,7 @@ import signal
 import subprocess
 import sys
 import termios
+import threading
 import time
 import tty
 import urllib.request
@@ -229,15 +230,46 @@ def startup_failure_message(name: str, code: int) -> str:
     return message
 
 
-def wait_for_start(process: subprocess.Popen, name: str, seconds: float = 2) -> None:
-    deadline = time.monotonic() + seconds
+GATEWAY_HEALTH_URL = f"http://127.0.0.1:{NGROK_PORT}/oauth/health"
+NGROK_TUNNELS_URL = f"{NGROK_INSPECT_URL}/api/tunnels"
+
+
+def wait_for_gateway_health(process: subprocess.Popen | ExistingProcess, timeout: float = 5.0) -> None:
+    deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         if STOP_REQUESTED:
             raise ShutdownRequested
         code = process.poll()
         if code is not None:
-            raise StartupError(startup_failure_message(name, code))
+            raise StartupError(startup_failure_message("Gateway", code))
+        try:
+            req = urllib.request.Request(GATEWAY_HEALTH_URL, method="GET")
+            with urllib.request.urlopen(req, timeout=0.5) as resp:
+                if resp.status == 200:
+                    return
+        except (OSError, ValueError):
+            pass
         time.sleep(0.1)
+    raise StartupError("Gateway did not become ready within timeout.")
+
+
+def wait_for_ngrok_ready(process: subprocess.Popen | ExistingProcess, timeout: float = 5.0) -> None:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if STOP_REQUESTED:
+            raise ShutdownRequested
+        code = process.poll()
+        if code is not None and not isinstance(process, ExistingProcess):
+            raise StartupError(startup_failure_message("ngrok", code))
+        try:
+            req = urllib.request.Request(NGROK_TUNNELS_URL, method="GET")
+            with urllib.request.urlopen(req, timeout=0.5) as resp:
+                if resp.status == 200:
+                    return
+        except (OSError, ValueError):
+            pass
+        time.sleep(0.1)
+    raise StartupError("ngrok did not become ready within timeout.")
 
 
 def terminate_group(process: subprocess.Popen | ExistingProcess | None) -> None:
@@ -304,11 +336,11 @@ def start_ngrok() -> tuple[subprocess.Popen | ExistingProcess, str]:
 
 
 
-def monitor(services, ngrok, keep_awake: str, update_version: str | None = None) -> int:
+def monitor(services, ngrok, keep_awake: str, update_result: list[str | None] | None = None) -> int:
     global UPDATE_REQUESTED
     panel: str | None = None
     with terminal_input() as input_fd:
-        render_screen(services, ngrok, keep_awake, update_version, panel)
+        render_screen(services, ngrok, keep_awake, update_result[0] if update_result else None, panel)
         while not STOP_REQUESTED:
             if services.poll() is not None:
                 print("Error: Gateway stopped unexpectedly.", file=sys.stderr)
@@ -325,17 +357,17 @@ def monitor(services, ngrok, keep_awake: str, update_version: str | None = None)
             key = os.read(input_fd, 1).lower()
             if key == b"m":
                 panel = None if panel == "connections" else "connections"
-                render_screen(services, ngrok, keep_awake, update_version, panel)
+                render_screen(services, ngrok, keep_awake, update_result[0] if update_result else None, panel)
             elif key == b"c":
                 panel = None if panel == "changelog" else "changelog"
-                render_screen(services, ngrok, keep_awake, update_version, panel)
+                render_screen(services, ngrok, keep_awake, update_result[0] if update_result else None, panel)
             elif key == b"\x1b" and panel is not None:
                 panel = None
-                render_screen(services, ngrok, keep_awake, update_version, panel)
-            elif key == b"u" and update_version and panel is None:
+                render_screen(services, ngrok, keep_awake, update_result[0] if update_result else None, panel)
+            elif key == b"u" and update_result and update_result[0] and panel is None:
                 UPDATE_REQUESTED = True
                 clear_terminal()
-                print(f"Updating Gate to {update_version}…", flush=True)
+                print(f"Updating Gate to {update_result[0]}…", flush=True)
                 return 0
     return 0
 
@@ -351,12 +383,17 @@ def main() -> int:
 
     try:
         services = start_services()
-        wait_for_start(services, "Gateway")
+        wait_for_gateway_health(services)
         ngrok, keep_awake = start_ngrok()
-        wait_for_start(ngrok, "ngrok")
+        wait_for_ngrok_ready(ngrok)
 
-        update_version = available_update()
-        exit_code = monitor(services, ngrok, keep_awake, update_version)
+        update_result: list[str | None] = [None]
+        def _fetch_update() -> None:
+            update_result[0] = available_update()
+        update_thread = threading.Thread(target=_fetch_update, daemon=True)
+        update_thread.start()
+
+        exit_code = monitor(services, ngrok, keep_awake, update_result)
     except ShutdownRequested:
         exit_code = 0
     except (OSError, StartupError) as exc:

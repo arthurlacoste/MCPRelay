@@ -87,6 +87,15 @@ def ensure_venv():
 
 
 def ensure_deps():
+    sentinel = PYTHON.parent / ".deps_sentinel"
+    req_mtime = REQUIREMENTS.stat().st_mtime
+    if sentinel.exists():
+        try:
+            cached_mtime = float(sentinel.read_text(encoding="utf-8").strip())
+            if cached_mtime >= req_mtime:
+                return
+        except (ValueError, OSError):
+            pass
     uv = shutil.which("uv")
     if uv:
         subprocess.check_call([
@@ -98,15 +107,16 @@ def ensure_deps():
             "-r",
             str(REQUIREMENTS),
         ])
-        return
-    subprocess.check_call([
-        str(PYTHON),
-        "-m",
-        "pip",
-        "install",
-        "-r",
-        str(REQUIREMENTS),
-    ])
+    else:
+        subprocess.check_call([
+            str(PYTHON),
+            "-m",
+            "pip",
+            "install",
+            "-r",
+            str(REQUIREMENTS),
+        ])
+    sentinel.write_text(str(req_mtime), encoding="utf-8")
 
 
 def start_service(service, env=None):
@@ -159,7 +169,6 @@ def main(argv=None):
 
     for service in SERVICES:
         start_service(service, child_env)
-        time.sleep(1)
 
     print("services running")
     print(f"gateway log: {LOG_DIR / 'gateway.log'}")
