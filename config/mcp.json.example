@@ -5,7 +5,13 @@
       "args": ["mcp"],
       "toolPrefix": "computer_use",
       "enabled": true,
-      "initTimeoutMs": 10000
+      "initTimeoutMs": 10000,
+      "commandGuards": {
+        "run_command": {
+          "commandArgument": "command",
+          "cwdArgument": "cwd"
+        }
+      }
     }
   }
 }

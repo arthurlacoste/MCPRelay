@@ -15,6 +15,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Callable
 
+from cryptography.fernet import Fernet, InvalidToken
+
 TERMINAL_STATUSES = {'success', 'failed', 'cancelled', 'timeout', 'interrupted'}
 ACTIVE_STATUSES = {'starting', 'running'}
 
@@ -98,6 +100,8 @@ class CommandQueue:
         max_lines_per_execution: int = 20_000,
         history_limit: int = 2_000,
         on_event: Callable[[str, dict], None] | None = None,
+        redact_text=None,
+        inspect_command=None,
     ):
         self.database_path = Path(database_path)
         self.log_dir = Path(log_dir)
@@ -105,6 +109,11 @@ class CommandQueue:
         self.max_lines = max(100, int(max_lines_per_execution))
         self.history_limit = max(10, int(history_limit))
         self.on_event = on_event
+        self.persist_raw_commands = redact_text is None
+        self.redact_text = redact_text or (lambda value: value)
+        self.inspect_command = inspect_command
+        self._pending_commands: dict[str, str] = {}
+        self._payload_cipher = self._load_payload_cipher() if not self.persist_raw_commands else None
         self.database_path.parent.mkdir(parents=True, exist_ok=True)
         self.log_dir.mkdir(parents=True, exist_ok=True)
         self._lock = threading.RLock()
@@ -152,7 +161,8 @@ class CommandQueue:
                     log_path TEXT NOT NULL,
                     conversation_id TEXT,
                     purpose TEXT,
-                    include_output INTEGER NOT NULL DEFAULT 0
+                    include_output INTEGER NOT NULL DEFAULT 0,
+                    command_payload TEXT
                 );
                 CREATE TABLE IF NOT EXISTS output_lines (
                     cursor INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -176,6 +186,33 @@ class CommandQueue:
                     created_at TEXT NOT NULL
                 );
             ''')
+            columns = {row['name'] for row in connection.execute('PRAGMA table_info(executions)')}
+            if 'command_payload' not in columns:
+                connection.execute('ALTER TABLE executions ADD COLUMN command_payload TEXT')
+
+    def _load_payload_cipher(self) -> Fernet:
+        key_path = self.database_path.with_suffix(self.database_path.suffix + '.key')
+        if key_path.exists():
+            key = key_path.read_bytes().strip()
+        else:
+            key = Fernet.generate_key()
+            key_path.write_bytes(key + b'\n')
+            try:
+                key_path.chmod(0o600)
+            except OSError:
+                pass
+        return Fernet(key)
+
+    def _encrypt_command(self, command: str) -> str | None:
+        return self._payload_cipher.encrypt(command.encode()).decode() if self._payload_cipher else None
+
+    def _decrypt_command(self, payload: str | None) -> str | None:
+        if not payload or not self._payload_cipher:
+            return None
+        try:
+            return self._payload_cipher.decrypt(payload.encode()).decode()
+        except (InvalidToken, UnicodeDecodeError):
+            return None
 
     def _recover_database(self) -> None:
         with self._connect() as connection:
@@ -245,16 +282,18 @@ class CommandQueue:
         execution_id = f'exec_{secrets.token_hex(8)}'
         log_path = self.log_dir / f'{execution_id}.log'
         with log_path.open('w', encoding='utf-8') as handle:
-            handle.write(f'COMMAND:\n{command}\n\n')
+            handle.write(f'COMMAND:\n{self.redact_text(command)}\n\n')
         with self._connect() as connection:
             recovery = self._recovery_required(connection)
             status = 'waiting' if recovery else 'queued'
             connection.execute(
                 'INSERT INTO executions(execution_id,status,command,cwd,timeout_seconds,created_at,'
-                'log_path,conversation_id,purpose,include_output) VALUES(?,?,?,?,?,?,?,?,?,?)',
-                (execution_id, status, command, resolved_cwd, safe_timeout, utc_now(), str(log_path),
-                 conversation_id, purpose, int(include_output)),
+                'log_path,conversation_id,purpose,include_output,command_payload) VALUES(?,?,?,?,?,?,?,?,?,?,?)',
+                (execution_id, status, command if self.persist_raw_commands else self.redact_text(command), resolved_cwd, safe_timeout, utc_now(), str(log_path),
+                 conversation_id, purpose, int(include_output), self._encrypt_command(command)),
             )
+            if not self.persist_raw_commands:
+                self._pending_commands[execution_id] = command
             self._audit(connection, 'command_enqueued', {'execution_id': execution_id, 'status': status})
         result = self.get_state(execution_id, include_lines=False)
         self._dispatch()
@@ -293,9 +332,19 @@ class CommandQueue:
             ).fetchone()
         if not job:
             return
+        command = self._pending_commands.pop(execution_id, job['command'] if self.persist_raw_commands else self._decrypt_command(job['command_payload']))
+        if command is None:
+            self._finish(execution_id, 'interrupted', None, system_line='Command payload unavailable after restart; retry the guarded command.')
+            return
+        if self.inspect_command is not None:
+            result = self.inspect_command(command, job['cwd'])
+            if getattr(result, 'decision', None) == 'deny':
+                denial = json.dumps({'status': 'denied', **result.as_dict()}, ensure_ascii=False)
+                self._finish(execution_id, 'cancelled', None, system_line=denial)
+                return
         try:
             process = subprocess.Popen(
-                job['command'], shell=True, cwd=job['cwd'], stdout=subprocess.PIPE,
+                command, shell=True, cwd=job['cwd'], stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE, bufsize=0, **process_group_options(),
             )
         except Exception as error:
@@ -354,6 +403,7 @@ class CommandQueue:
             pipe.close()
 
     def _append_line(self, execution_id: str, stream: str, text: str, replace: bool = False) -> None:
+        text = self.redact_text(text)
         with self._lock:
             now = utc_now()
             with self._connect() as connection:
@@ -567,7 +617,7 @@ class CommandQueue:
         except ValueError:
             duration = 0
         return {
-            'execution_id': row['execution_id'], 'status': row['status'], 'command': row['command'],
+            'execution_id': row['execution_id'], 'status': row['status'], 'command': self.redact_text(row['command']),
             'cwd': row['cwd'], 'pid': row['pid'], 'created_at': row['created_at'],
             'started_at': row['started_at'], 'finished_at': row['finished_at'],
             'duration_ms': duration, 'exit_code': row['exit_code'], 'last_line': row['last_line'],

@@ -140,6 +140,7 @@ def command_uninstall(*, purge: bool) -> int:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="gate")
     parser.add_argument("--version", action="store_true")
+    parser.add_argument("--noguard", action="store_true", help="disable command guards for this Gate launch only")
     sub = parser.add_subparsers(dest="command")
     for name in ("start", "stop", "restart", "status", "secret", "setup", "renew-secret", "rollback", "doctor"):
         sub.add_parser(name)
@@ -156,14 +157,18 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def delegate_run_script(command: str | None = None) -> int:
+def delegate_run_script(command: str | None = None, *, noguard: bool = False) -> int:
     script = project_dir() / "run.sh"
     if not script.exists():
         print(f"Missing launcher: {script}")
         return 1
     args = [str(script)] + ([command] if command else [])
     try:
-        return subprocess.run(args, cwd=project_dir(), check=False).returncode
+        env = os.environ.copy()
+        if noguard:
+            env["MCP_COMMAND_GUARD_PROVIDER"] = "disabled"
+            print("WARNING: command guard disabled for this launch.")
+        return subprocess.run(args, cwd=project_dir(), env=env, check=False).returncode
     except KeyboardInterrupt:
         print("Interrupted.")
         return 130
@@ -207,7 +212,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if args.command == "restart":
         stopped = delegate_run_script("stop")
-        return stopped or delegate_run_script("start")
+        return stopped or delegate_run_script("start", noguard=args.noguard)
     if args.command == "rollback":
         from .updater import rollback_release
         was_running = gate_is_running()
@@ -229,5 +234,5 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Rolled back to Gate {state.active_version}")
         return 0
     if args.command in {"start", "stop", "setup", "renew-secret"}:
-        return delegate_run_script(args.command)
-    return delegate_run_script()
+        return delegate_run_script(args.command, noguard=args.noguard)
+    return delegate_run_script(noguard=args.noguard)

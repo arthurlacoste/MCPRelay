@@ -5,7 +5,7 @@ def test_installer_is_pipe_safe_and_does_not_require_git():
     content = (Path(__file__).resolve().parents[1] / "install.sh").read_text()
 
     assert "/dev/tty" in content
-    assert "api.github.com/repos/arthurlacoste/gate/releases/latest" in content
+    assert "api.github.com/repos/spelcc/gate/releases/latest" in content
     assert "git clone" not in content
     assert '"$HOME/.local/bin/gate"' in content
     assert 'root / "current"' in content

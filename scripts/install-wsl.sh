@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-REPO_URL="https://github.com/arthurlacoste/gate.git"
+REPO_URL="https://github.com/spelcc/gate.git"
 DEFAULT_INSTALL_DIR="$HOME/gate"
 NODE_VERSION="22"
 PYTHON_VERSION="3.12"
 NGROK_PORT="8761"
 NGROK_LOG="/tmp/gate-ngrok-install.log"
-DOCS_URL="https://github.com/arthurlacoste/gate/blob/main/docs/installation.md#12-add-the-mcp-dl-plugin"
+DOCS_URL="https://github.com/spelcc/gate/blob/main/docs/installation.md#12-add-the-mcp-dl-plugin"
 CHATGPT_CONNECTOR_URL="https://chatgpt.com/plugins#settings/Connectors?create-connector=true&redirectAfter=%2Fplugins"
 
 info() { printf '\n\033[1;34m%s\033[0m\n' "$*"; }

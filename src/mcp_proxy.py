@@ -19,10 +19,34 @@ from fastmcp.server.middleware import Middleware, MiddlewareContext
 from fastmcp.server.providers.proxy import StatefulProxyClient
 from fastmcp.server.transforms import ToolTransform
 from fastmcp.tools.tool_transform import ToolTransformConfig
+from command_guard import GuardService, current_guard_request
 
 
 VARIABLE = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
 logger = logging.getLogger(__name__)
+
+
+class ProxyCommandGuardMiddleware(Middleware):
+    def __init__(self, server_name: str, mappings: Mapping[str, Mapping[str, str]], guard: GuardService) -> None:
+        self.server_name = server_name
+        self.mappings = mappings
+        self.guard = guard
+
+    async def on_call_tool(self, context: MiddlewareContext, call_next):
+        mapping = self.mappings.get(context.message.name)
+        if mapping:
+            arguments = context.message.arguments or {}
+            command = arguments.get(mapping.get("commandArgument", "command"))
+            cwd = arguments.get(mapping.get("cwdArgument", "cwd"))
+            if not isinstance(command, str):
+                raise ValueError("configured guarded proxy tool requires a string command argument")
+            result = self.guard.inspect(current_guard_request(
+                f"{self.server_name}_{context.message.name}", arguments, command, cwd,
+                mapping.get("host"),
+            ))
+            if result.decision == "deny":
+                raise PermissionError(json.dumps({"status": "denied", **result.as_dict()}))
+        return await call_next(context)
 
 
 class ProxyCallLoggingMiddleware(Middleware):
@@ -143,6 +167,7 @@ class MCPProxyManager:
         project_root: str | Path,
         environ: Mapping[str, str] | None = None,
         event_logger: Callable[[str, dict[str, Any]], None] | None = None,
+        command_guard: GuardService | None = None,
     ) -> None:
         self.project_root = Path(project_root)
         candidate = Path(config_path)
@@ -151,6 +176,7 @@ class MCPProxyManager:
         )
         self.environ = os.environ if environ is None else environ
         self.event_logger = event_logger
+        self.command_guard = command_guard
         self._clients: list[Client] = []
 
     async def start(self, gateway: FastMCP) -> None:
@@ -171,6 +197,11 @@ class MCPProxyManager:
 
             config = dict(server.config)
             raw_transforms = config.pop("tools", {})
+            guard_mappings = {
+                "run_command": {"commandArgument": "command", "cwdArgument": "cwd"},
+                "filesystem_execute_tool": {"commandArgument": "command", "cwdArgument": "cwd"},
+                **config.pop("commandGuards", {}),
+            }
             client: Client | None = None
             try:
                 parsed = MCPConfig.from_dict({"mcpServers": {server.name: config}})
@@ -210,6 +241,10 @@ class MCPProxyManager:
                     transport.forward_incoming_headers = False
                 if transforms:
                     proxy.add_transform(ToolTransform(transforms))
+                if guard_mappings and self.command_guard is not None:
+                    proxy.add_middleware(
+                        ProxyCommandGuardMiddleware(server.name, guard_mappings, self.command_guard)
+                    )
                 if self.event_logger is not None:
                     proxy.add_middleware(
                         ProxyCallLoggingMiddleware(server.name, self.event_logger)
