@@ -48,3 +48,17 @@ jobs:
 
       - name: Detect duplicate code
         run: npm run dedup
+
+  alpine-installer:
+    name: Alpine installer
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Node through Alpine path
+        run: |
+          docker run --rm -v "$PWD:/work" -w /work alpine:3.22 sh -c '
+            apk add --no-cache bash >/dev/null &&
+            GATE_INSTALLER_LIB_ONLY=true bash -c "source ./install.sh; install_node; test \"\$(node_major_version)\" -ge 22"
+          '
