@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.1.13
+
+### Fixed
+
+- Support Alpine Linux 3.22 in the installer by installing Node.js 22 with `apk` instead of requesting unavailable musl binaries through NVM.
+- Run NVM outside `nounset` mode with a defined temporary directory on non-Alpine systems.
+
+### Tests
+
+- Add automated Alpine installer coverage using the `alpine:3.22` container image.
+
 ## 0.1.12
 
 ### Added
