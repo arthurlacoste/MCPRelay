@@ -5,7 +5,7 @@
 Supported in the first scope: macOS, Linux and WSL.
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/arthurlacoste/gate/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/spelcc/gate/main/install.sh | bash
 ```
 
 The installer uses `~/.gate` for releases and persistent data, creates `~/.local/bin/gate`, installs uv with Python 3.12, nvm with Node 22, and ngrok when missing. Interactive input is read from `/dev/tty`, so the command works through a shell pipe.
@@ -58,7 +58,7 @@ node --version
 HTTPS:
 
 ```bash
-git clone https://github.com/arthurlacoste/gate.git myMCP
+git clone https://github.com/spelcc/gate.git myMCP
 cd myMCP
 ```
 
@@ -668,6 +668,37 @@ Both tools are enabled by default and can be disabled independently in `config/t
 skills_search = true
 skills_read = true
 ```
+
+## Destructive-command guard
+
+Gate inspects `run_command` before logging, queueing, proxy forwarding, or process creation. During first setup, Gate asks whether to use the built-in provider or `dcg`; built-in remains the default. The dependency-free `builtin` provider is enabled by default and denies destructive filesystem, Git, Docker, database, Kubernetes, Terraform, disk, PowerShell, cmd, and WSL operations with a reason and safer remediation sequence. A denied final command is never executed automatically; every remediation or retry is a new guarded call.
+
+Select the provider during onboarding or set:
+
+```dotenv
+MCP_COMMAND_GUARD_PROVIDER=builtin
+MCP_COMMAND_GUARD_FALLBACK=builtin
+```
+
+Set `GATE_COMMAND_GUARD_PROVIDER=dcg` while running setup to select [Destructive Command Guard](https://github.com/Dicklesworthstone/destructive_command_guard). Gate detects an existing v0.6.7 executable or downloads the pinned platform release and mandatory SHA256 sidecar, verifies both checksum and version, and records the executable/version. Unsupported platforms, download failures, crashes, timeouts, and malformed output fall back safely to `builtin`.
+
+Disable the guard for one CLI launch only:
+
+```bash
+gate --noguard start
+```
+
+This does not change the saved provider. Gate prints a warning and the launched gateway uses the `disabled` provider only for that process.
+
+Equivalent downstream shell tools are guarded only when declared in `config/mcp.json` so arbitrary proxy text is not misclassified:
+
+```json
+"commandGuards": {
+  "run_command": {"commandArgument": "command", "cwdArgument": "cwd", "host": "optional-host"}
+}
+```
+
+Guard audit records include provider, decision, rule, reason, and remediation but apply secret redaction and omit raw proxy arguments. Commands and output are also redacted for known environment secrets and common credential forms before log or conversation persistence.
 
 ## Maintainer release workflow
 

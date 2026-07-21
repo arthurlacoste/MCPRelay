@@ -5,7 +5,7 @@ Use Ubuntu in WSL. Do not run these commands from PowerShell.
 ## One-script installation
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/arthurlacoste/gate/main/scripts/install-wsl.sh -o /tmp/install-gate.sh
+curl -fsSL https://raw.githubusercontent.com/spelcc/gate/main/scripts/install-wsl.sh -o /tmp/install-gate.sh
 bash /tmp/install-gate.sh
 ```
 

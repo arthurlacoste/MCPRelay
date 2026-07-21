@@ -253,9 +253,39 @@ open_temporary_ngrok() {
     return 1
 }
 
+ensure_command_guard() {
+    local provider bin_dir choice
+    if [ "${MCP_COMMAND_GUARD_PROVIDER:-}" = "disabled" ]; then
+        warn "Command guard disabled for this launch."
+        return 0
+    fi
+    provider="$(env_value MCP_COMMAND_GUARD_PROVIDER)"
+    [ -n "$provider" ] && return 0
+    provider="${GATE_COMMAND_GUARD_PROVIDER:-}"
+    if [ -z "$provider" ] && [ "${RUNTIME_COMMAND:-}" = setup ] && [ -t 0 ] && [ -t 1 ]; then
+        printf '\nCommand safety guard\n1. Built-in guard (default)\n2. Destructive Command Guard (dcg)\nChoose [1/2]: ' > /dev/tty
+        IFS= read -r choice < /dev/tty || choice=""
+        provider="builtin"
+        [ "$choice" = "2" ] && provider="dcg"
+    fi
+    provider="${provider:-builtin}"
+    bin_dir="${GATE_ROOT:-$HOME/.gate}/runtime/bin"
+    if [ ! -f "$PROJECT_DIR/src/dcg_installer.py" ]; then
+        set_env_values MCP_COMMAND_GUARD_PROVIDER builtin MCP_COMMAND_GUARD_FALLBACK builtin
+        return 0
+    fi
+    "$PROJECT_DIR/.venv/bin/python" "$PROJECT_DIR/src/dcg_installer.py" \
+        --config-root "$CONFIG_ROOT" --bin-dir "$bin_dir" --provider "$provider" || {
+        warn "Command guard setup failed; using builtin."
+        set_env_values MCP_COMMAND_GUARD_PROVIDER builtin MCP_COMMAND_GUARD_FALLBACK builtin
+    }
+}
+
 ensure_onboarding() {
     local renew_secret="${1:-false}" public_url access_secret access_hash
 
+    mkdir -p "$CONFIG_ROOT"
+    ensure_command_guard
     public_url="$(env_value MCP_BASE_URL)"
     access_secret="$(env_value OAUTH_ACCESS_SECRET)"
     access_hash="$(env_value OAUTH_ACCESS_SECRET_HASH)"

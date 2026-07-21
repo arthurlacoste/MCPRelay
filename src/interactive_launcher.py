@@ -31,7 +31,7 @@ NGROK_PORT = 8761
 NGROK_INSPECT_URL = "http://127.0.0.1:4040"
 VERSION_FILE = BASE_DIR / "VERSION"
 CHANGELOG_FILE = BASE_DIR / "CHANGELOG.md"
-LATEST_RELEASE_API = "https://api.github.com/repos/arthurlacoste/gate/releases/latest"
+LATEST_RELEASE_API = "https://api.github.com/repos/spelcc/gate/releases/latest"
 GATE_COMMAND = Path.home() / ".local" / "bin" / "gate"
 CHATGPT_CONNECTOR_URL = (
     "https://chatgpt.com/plugins#settings/Connectors"

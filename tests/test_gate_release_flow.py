@@ -75,4 +75,4 @@ def test_migration_failure_restores_backup_and_writes_safe_report(tmp_path):
     content = report.read_text()
     assert "boom" in content
     assert "do-not-leak" not in content
-    assert "github.com/arthurlacoste/gate/issues/new" in caught.value.issue_url
+    assert "github.com/spelcc/gate/issues/new" in caught.value.issue_url

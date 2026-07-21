@@ -46,10 +46,17 @@ class BlockingCommandResult:
 
 
 class BlockingCommandRunner:
-    def __init__(self, log_dir: Path, worker_limit: int = 4, max_output_chars: int = 50_000):
+    def __init__(
+        self,
+        log_dir: Path,
+        worker_limit: int = 4,
+        max_output_chars: int = 50_000,
+        redact_text=None,
+    ):
         self.log_dir = Path(log_dir)
         self.log_dir.mkdir(parents=True, exist_ok=True)
         self.max_output_chars = max_output_chars
+        self.redact_text = redact_text or (lambda value: value)
         self._capacity = threading.BoundedSemaphore(max(1, int(worker_limit)))
 
     def run(
@@ -65,7 +72,8 @@ class BlockingCommandRunner:
         started = time.monotonic()
         with self._capacity:
             log_path = self._new_log_path()
-            log_path.write_text(f"COMMAND:\n{command}\n\n", encoding="utf-8")
+            display_command = self.redact_text(command)
+            log_path.write_text(f"COMMAND:\n{display_command}\n\n", encoding="utf-8")
             process = subprocess.Popen(
                 command,
                 shell=True,
@@ -81,12 +89,12 @@ class BlockingCommandRunner:
             stderr_lines: list[str] = []
             stdout_thread = threading.Thread(
                 target=self._stream_pipe,
-                args=(process.stdout, log_path, stdout_lines, ""),
+                args=(process.stdout, log_path, stdout_lines, "", self.redact_text),
                 daemon=True,
             )
             stderr_thread = threading.Thread(
                 target=self._stream_pipe,
-                args=(process.stderr, log_path, stderr_lines, "[stderr] "),
+                args=(process.stderr, log_path, stderr_lines, "[stderr] ", self.redact_text),
                 daemon=True,
             )
             stdout_thread.start()
@@ -106,7 +114,7 @@ class BlockingCommandRunner:
                 handle.write(f"\nEXIT CODE: {process.returncode}\n")
 
         return BlockingCommandResult(
-            command=command,
+            command=display_command,
             exit_code=process.returncode,
             timed_out=timed_out,
             timeout_seconds=safe_timeout,
@@ -131,9 +139,10 @@ class BlockingCommandRunner:
         return str(path)
 
     @staticmethod
-    def _stream_pipe(pipe, log_path: Path, lines: list[str], prefix: str) -> None:
+    def _stream_pipe(pipe, log_path: Path, lines: list[str], prefix: str, redact_text) -> None:
         for line in iter(pipe.readline, ""):
-            lines.append(line)
+            safe_line = redact_text(line)
+            lines.append(safe_line)
             with log_path.open("a", encoding="utf-8") as handle:
-                handle.write(f"{prefix}{line}")
+                handle.write(f"{prefix}{safe_line}")
         pipe.close()

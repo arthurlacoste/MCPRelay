@@ -155,7 +155,7 @@ def test_update_migration_error_prints_report_and_issue(monkeypatch, capsys, tmp
     from gate_cli.migrations import MigrationError
     report = tmp_path / "report.log"
     report.write_text("traceback")
-    error = MigrationError("boom", report, "https://github.com/arthurlacoste/gate/issues/new?x=1")
+    error = MigrationError("boom", report, "https://github.com/spelcc/gate/issues/new?x=1")
     monkeypatch.setattr(main_module, "gate_is_running", lambda: False)
     monkeypatch.setattr(main_module, "perform_gate_update", lambda edge, stable: (_ for _ in ()).throw(error))
 
@@ -189,3 +189,17 @@ def test_delegate_run_script_swallows_keyboard_interrupt(monkeypatch, tmp_path, 
 
     assert main_module.delegate_run_script() == 130
     assert "Interrupted." in capsys.readouterr().out
+
+def test_noguard_sets_transient_environment(monkeypatch, tmp_path, capsys):
+    import gate_cli.main as main_module
+    project = tmp_path / "project"
+    project.mkdir()
+    script = project / "run.sh"
+    script.write_text("#!/usr/bin/env bash\n")
+    script.chmod(0o755)
+    captured = {}
+    monkeypatch.setattr(main_module, "project_dir", lambda: project)
+    monkeypatch.setattr(main_module.subprocess, "run", lambda *a, **k: captured.update(k) or type("R", (), {"returncode": 0})())
+    assert main_module.main(["--noguard", "start"]) == 0
+    assert captured["env"]["MCP_COMMAND_GUARD_PROVIDER"] == "disabled"
+    assert "disabled" in capsys.readouterr().out.lower()
