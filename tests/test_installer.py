@@ -53,3 +53,19 @@ def test_installer_never_opens_a_browser():
     assert 'open "https://' not in content
     assert "xdg-open" not in content
     assert "webbrowser" not in content
+
+
+def test_installer_uses_apk_for_alpine_node():
+    content = (Path(__file__).resolve().parents[1] / "install.sh").read_text()
+
+    assert "is_alpine" in content
+    assert 'apk add --no-cache nodejs npm' in content
+    assert "install_node" in content
+
+
+def test_installer_runs_nvm_without_nounset():
+    content = (Path(__file__).resolve().parents[1] / "install.sh").read_text()
+
+    assert 'export TMPDIR="${TMPDIR:-/tmp}"' in content
+    assert "set +u" in content
+    assert "set -u" in content

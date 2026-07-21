@@ -32,6 +32,14 @@ ask_yes() {
 
 need() { command -v "$1" >/dev/null 2>&1; }
 
+is_alpine() {
+  [ -f /etc/alpine-release ] || grep -q '^ID=alpine$' /etc/os-release 2>/dev/null
+}
+
+node_major_version() {
+  node -p 'process.versions.node.split(".")[0]' 2>/dev/null || printf '0\n'
+}
+
 install_uv() {
   need uv && return 0
   info "Installing uv"
@@ -47,15 +55,36 @@ install_python() {
 
 install_nvm_node() {
   export NVM_DIR="${NVM_DIR:-$HOME/.nvm}"
+  export TMPDIR="${TMPDIR:-/tmp}"
   if [ ! -s "$NVM_DIR/nvm.sh" ]; then
     info "Installing nvm"
     curl -fsSL https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.3/install.sh | bash
   fi
+  set +u
   # shellcheck disable=SC1090
   . "$NVM_DIR/nvm.sh"
   info "Preparing Node $NODE_VERSION"
   nvm install "$NODE_VERSION"
   nvm alias default "$NODE_VERSION" >/dev/null
+  set -u
+}
+
+install_alpine_node() {
+  need apk || die "Alpine Linux detected, but apk is unavailable."
+  info "Preparing Node $NODE_VERSION with apk"
+  apk add --no-cache nodejs npm
+}
+
+install_node() {
+  if [ "$(node_major_version)" -ge "$NODE_VERSION" ]; then
+    return 0
+  fi
+  if is_alpine; then
+    install_alpine_node
+  else
+    install_nvm_node
+  fi
+  [ "$(node_major_version)" -ge "$NODE_VERSION" ] || die "Node.js $NODE_VERSION or newer is required."
 }
 
 install_ngrok() {
@@ -191,17 +220,23 @@ EOF
   fi
 }
 
-mkdir -p "$GATE_ROOT"/{releases,config,data,logs,skills,runtime,cache,backups}
-install_uv
-install_python
-install_nvm_node
-install_ngrok
-ensure_ngrok_auth
-install_release
-install_launcher
-ok "Gate installed"
-if [ "$START" = "true" ] || { [ "$START" = "ask" ] && ask_yes "Start Gate now? [Y/n] "; }; then
-  "$HOME/.local/bin/gate"
-else
-  printf 'Run Gate with: %s\n' "$HOME/.local/bin/gate"
+main() {
+  mkdir -p "$GATE_ROOT"/{releases,config,data,logs,skills,runtime,cache,backups}
+  install_uv
+  install_python
+  install_node
+  install_ngrok
+  ensure_ngrok_auth
+  install_release
+  install_launcher
+  ok "Gate installed"
+  if [ "$START" = "true" ] || { [ "$START" = "ask" ] && ask_yes "Start Gate now? [Y/n] "; }; then
+    "$HOME/.local/bin/gate"
+  else
+    printf 'Run Gate with: %s\n' "$HOME/.local/bin/gate"
+  fi
+}
+
+if [ "${GATE_INSTALLER_LIB_ONLY:-false}" != true ]; then
+  main
 fi
