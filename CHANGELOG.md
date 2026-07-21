@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.11
+
+### Fixed
+
+- Keep the running Gate instance online when update discovery or download fails, including GitHub API rate limits.
+- Stop and restart services only after a release has been downloaded, verified, and installed successfully.
+
 ## 0.1.10
 
 ### Changed

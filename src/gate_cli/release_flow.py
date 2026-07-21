@@ -12,17 +12,14 @@ def update_with_lifecycle(
     start: Callable[[], int],
 ):
     was_running = is_running()
+    if was_running and not confirm("Gate is running. Stop it and continue? [Y/n] "):
+        return None
+
+    result = update()
+
     if was_running:
-        if not confirm("Gate is running. Stop it and continue? [Y/n] "):
-            return None
         if stop() != 0:
-            raise RuntimeError("Could not stop Gate before updating.")
-    try:
-        result = update()
-    except Exception:
-        if was_running:
-            start()
-        raise
-    if was_running and start() != 0:
-        raise RuntimeError("Gate updated, but restart failed.")
+            raise RuntimeError("Gate was updated, but the running instance could not be stopped.")
+        if start() != 0:
+            raise RuntimeError("Gate updated, but restart failed.")
     return result

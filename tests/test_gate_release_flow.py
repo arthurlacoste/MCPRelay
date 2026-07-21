@@ -21,13 +21,28 @@ def test_update_running_gate_prompts_stops_and_restarts(tmp_path):
         is_running=lambda: True,
         confirm=lambda prompt: events.append(prompt) or True,
         stop=lambda: events.append("stop") or 0,
-        update=lambda: ("0.2.0", True),
+        update=lambda: events.append("update") or ("0.2.0", True),
         start=lambda: events.append("start") or 0,
     )
 
     assert result == ("0.2.0", True)
-    assert events == ["Gate is running. Stop it and continue? [Y/n] ", "stop", "start"]
+    assert events == ["Gate is running. Stop it and continue? [Y/n] ", "update", "stop", "start"]
 
+
+
+def test_update_failure_keeps_running_gate_online():
+    events = []
+
+    with pytest.raises(RuntimeError, match="rate limit"):
+        update_with_lifecycle(
+            is_running=lambda: True,
+            confirm=lambda prompt: events.append("confirm") or True,
+            stop=lambda: events.append("stop") or 0,
+            update=lambda: events.append("update") or (_ for _ in ()).throw(RuntimeError("rate limit exceeded")),
+            start=lambda: events.append("start") or 0,
+        )
+
+    assert events == ["confirm", "update"]
 
 def test_update_running_gate_can_be_cancelled():
     called = []
