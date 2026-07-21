@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.1.12
+
+### Added
+
+- Add pluggable destructive-command guards with dependency-free `builtin` and optional verified `dcg` providers.
+- Return structured denial reasons and safe remediation commands before destructive shell execution.
+- Guard local and proxied shell tools, including `run_command` and `filesystem_execute_tool`.
+- Add temporary `gate --noguard` support for a single launch without changing saved configuration.
+- Add first-run command guard provider selection.
+
+### Changed
+
+- Encrypt queued command payloads so commands can safely resume after restart while displayed state remains redacted.
+- Add tool, host, platform, working directory, provider, rule, and remediation details to guard audit events.
+
+### Security
+
+- Redact secrets from command logs, queue state, proxy logs, and conversation logs.
+- Verify pinned DCG release checksums and executable versions before use, with automatic fallback to the built-in provider.
+
 ## 0.1.11
 
 ### Fixed
