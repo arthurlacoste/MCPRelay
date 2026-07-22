@@ -204,19 +204,15 @@ def load_snapshot(path: Path) -> dict:
 
 
 def format_age(call: dict, now: datetime | None = None) -> str:
-    if call.get("finished_at"):
-        seconds = max(0, int(call.get("duration_ms", 0)) // 1000)
-    else:
-        now = now or datetime.now(UTC)
-        raw = call.get("started_at") or call.get("created_at")
+    elapsed = int(call.get("duration_ms") or 0) // 1000
+    if not call.get("finished_at"):
         try:
-            seconds = max(0, int((now - datetime.fromisoformat(raw)).total_seconds()))
+            started = datetime.fromisoformat(call.get("started_at") or call.get("created_at"))
+            elapsed = int(((now or datetime.now(UTC)) - started).total_seconds())
         except (TypeError, ValueError):
-            seconds = 0
-    if seconds < 60:
-        return f"{seconds}s"
-    minutes, seconds = divmod(seconds, 60)
-    return f"{minutes}m{seconds:02d}s"
+            elapsed = 0
+    elapsed = max(0, elapsed)
+    return f"{elapsed}s" if elapsed < 60 else f"{elapsed // 60}m{elapsed % 60:02d}s"
 
 
 def _start_time(call: dict) -> str:
