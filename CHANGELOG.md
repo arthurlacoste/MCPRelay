@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.1.14
+
+### Fixed
+
+- Detect a compatible Python interpreter before creating the virtual environment, with clearer handling for unsupported Python versions.
+- Use the virtual environment interpreter for startup dependency and SSL checks.
+- Handle missing SSL support and ngrok `web_allow_hosts` startup edge cases more reliably.
+- Reduce flaky command queue, onboarding, skill catalog, and startup tests.
+
+### Tests
+
+- Add focused coverage for Python bootstrap, startup compatibility, onboarding, and command queue behavior.
+
 ## 0.1.13
 
 ### Fixed
