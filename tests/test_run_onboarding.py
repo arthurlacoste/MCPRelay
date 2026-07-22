@@ -166,7 +166,8 @@ def test_interactive_launch_removes_stale_pid_file(tmp_path):
 def test_python_bootstrap_uses_canonical_requirements():
     content = RUN_SCRIPT.read_text()
 
-    assert 'python3 -m venv "$PROJECT_DIR/.venv"' in content
+    assert 'find_compatible_python' in content
+    assert '"$python_bin" -m venv "$PROJECT_DIR/.venv"' in content
     assert '"$python" -m pip install -r "$requirements"' in content
     assert "pip install argon2-cffi" not in content
 
