@@ -106,9 +106,13 @@ def ensure_venv():
 
 
 def ensure_ssl():
-    try:
-        import _ssl  # noqa: F401
-    except ImportError:
+    result = subprocess.run(
+        [str(PYTHON), "-c", "import _ssl"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode != 0:
         print(
             "Python was compiled without SSL support (missing _ssl module).\n"
             "Install libssl-dev and recompile, or use pyenv: pyenv install 3.12",

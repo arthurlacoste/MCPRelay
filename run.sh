@@ -443,7 +443,7 @@ start_daemon() {
 
     source .venv/bin/activate
 
-    nohup python3 start_services.py > /dev/null 2>&1 &
+    nohup "$PROJECT_DIR/.venv/bin/python" start_services.py > /dev/null 2>&1 &
     SERVICES_PID=$!
     sleep 2
 
