@@ -19,6 +19,7 @@ def test_venv_python_path_for_windows():
 
 def test_ensure_deps_falls_back_to_python_pip_without_uv(monkeypatch):
     check_call = Mock()
+    monkeypatch.setattr(start_services, "ensure_ssl", lambda: None)
     sentinel = start_services.BASE_DIR / ".venv" / ".deps_sentinel"
     if sentinel.exists():
         sentinel.unlink()
@@ -62,6 +63,7 @@ def test_runtime_flags_override_child_environment_only(monkeypatch):
 def test_ensure_deps_uses_uv_for_uv_managed_venv(monkeypatch):
     import start_services
     calls = []
+    monkeypatch.setattr(start_services, "ensure_ssl", lambda: None)
     sentinel = start_services.BASE_DIR / ".venv" / ".deps_sentinel"
     if sentinel.exists():
         sentinel.unlink()

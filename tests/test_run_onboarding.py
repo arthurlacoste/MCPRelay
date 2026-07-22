@@ -166,9 +166,17 @@ def test_interactive_launch_removes_stale_pid_file(tmp_path):
 def test_python_bootstrap_uses_canonical_requirements():
     content = RUN_SCRIPT.read_text()
 
-    assert 'python3 -m venv "$PROJECT_DIR/.venv"' in content
+    assert 'find_compatible_python' in content
+    assert '"$python_bin" -m venv "$PROJECT_DIR/.venv"' in content
     assert '"$python" -m pip install -r "$requirements"' in content
     assert "pip install argon2-cffi" not in content
+
+
+def test_daemon_uses_venv_python_instead_of_path_python3():
+    content = RUN_SCRIPT.read_text()
+
+    assert 'nohup "$PROJECT_DIR/.venv/bin/python" start_services.py' in content
+    assert "nohup python3 start_services.py" not in content
 
 
 def test_run_script_onboards_before_starting_services():
@@ -181,7 +189,7 @@ def test_run_script_onboards_before_starting_services():
         "interactive_launcher.py", interactive
     )
     assert content.index("ensure_onboarding", daemon) < content.index(
-        "nohup python3 start_services.py", daemon
+        "nohup \"$PROJECT_DIR/.venv/bin/python\" start_services.py", daemon
     )
 
 
@@ -191,7 +199,7 @@ def test_running_modes_cleanup_ngrok_before_starting_services():
     daemon = content[content.index("start_daemon()") : content.index("stop_daemon()")]
 
     assert interactive.index("cleanup_stale_ngrok") < interactive.index("interactive_launcher.py")
-    assert daemon.index("cleanup_stale_ngrok") < daemon.index("nohup python3 start_services.py")
+    assert daemon.index("cleanup_stale_ngrok") < daemon.index("nohup \"$PROJECT_DIR/.venv/bin/python\" start_services.py")
 
 
 def test_ngrok_cleanup_escalates_and_verifies_process_exit(tmp_path):

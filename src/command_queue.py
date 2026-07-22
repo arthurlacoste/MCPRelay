@@ -374,8 +374,11 @@ class CommandQueue:
             timed_out = True
             terminate_process_tree(process)
             process.wait()
+        # The child has exited and both pipes are at EOF. Wait until readers
+        # have persisted every buffered line before publishing a terminal state.
+        # A timed join can expose a partial retention window as "success".
         for reader in readers:
-            reader.join(timeout=2)
+            reader.join()
         with self._connect() as connection:
             current = connection.execute(
                 'SELECT status FROM executions WHERE execution_id=?', (execution_id,)

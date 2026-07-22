@@ -18,17 +18,38 @@ ok() { printf '\033[1;32m✓ %s\033[0m\n' "$*"; }
 warn() { printf '\033[1;33m! %s\033[0m\n' "$*"; }
 die() { printf '\033[1;31mError: %s\033[0m\n' "$*" >&2; exit 1; }
 
+find_compatible_python() {
+    local candidate
+    for candidate in python3.13 python3.12 python3.11 python3.10 python3; do
+        command -v "$candidate" >/dev/null 2>&1 || continue
+        if "$candidate" -c 'import sys; exit(0 if sys.version_info >= (3, 10) else 1)' 2>/dev/null; then
+            echo "$candidate"
+            return 0
+        fi
+    done
+    return 1
+}
+
 ensure_python_environment() {
     local python="$PROJECT_DIR/.venv/bin/python"
     local requirements="$PROJECT_DIR/requirements.txt"
 
-    command -v python3 >/dev/null 2>&1 || die "Python 3 is required."
     [ -f "$requirements" ] || die "Missing requirements.txt."
 
     if [ ! -x "$python" ]; then
+        local python_bin
+        python_bin="$(find_compatible_python)" \
+            || die "Python >= 3.10 is required. Install python3.10+ and retry."
         info "Creating Python environment"
-        python3 -m venv "$PROJECT_DIR/.venv" ||
+        "$python_bin" -m venv "$PROJECT_DIR/.venv" ||
             die "Could not create .venv. On Debian/Ubuntu, install python3-venv."
+    fi
+
+    if ! "$python" -c 'import _ssl' >/dev/null 2>&1; then
+        die "Python was compiled without SSL support (missing _ssl module).
+Install libssl-dev and recompile, or use a different Python:
+  pyenv install 3.12
+  sudo apt install python3.12-venv"
     fi
 
     if ! "$python" -c 'import argon2' >/dev/null 2>&1; then
@@ -228,14 +249,26 @@ prompt_ngrok_token() {
 }
 
 open_temporary_ngrok() {
-    local public_url=""
+    local public_url="" raw_response
     mkdir -p "$(dirname "$NGROK_LOG")"
     : > "$NGROK_LOG"
     ngrok http "$NGROK_PORT" --log=stdout > "$NGROK_LOG" 2>&1 &
     ONBOARDING_NGROK_PID=$!
 
     for _ in $(seq 1 20); do
-        public_url="$(curl -fsS http://127.0.0.1:4040/api/tunnels 2>/dev/null \
+        raw_response="$(curl -s http://127.0.0.1:4040/api/tunnels 2>/dev/null || true)"
+
+        if printf '%s' "$raw_response" | grep -q "Rejected host"; then
+            warn "ngrok inspection API is blocking localhost."
+            warn "Add '127.0.0.1' and 'localhost' to web_allow_hosts in:"
+            warn "  ~/.config/ngrok/ngrok.yml"
+            kill "$ONBOARDING_NGROK_PID" 2>/dev/null || true
+            wait "$ONBOARDING_NGROK_PID" 2>/dev/null || true
+            ONBOARDING_NGROK_PID=""
+            return 1
+        fi
+
+        public_url="$(printf '%s' "$raw_response" \
             | python3 -c 'import json,sys; data=json.load(sys.stdin); print(next((t["public_url"] for t in data.get("tunnels", []) if t.get("proto") == "https"), ""))' \
             2>/dev/null || true)"
         if [ -n "$public_url" ]; then
@@ -281,6 +314,14 @@ ensure_command_guard() {
     }
 }
 
+ensure_ngrok_web_allow_hosts() {
+    local ngrok_cfg="$HOME/.config/ngrok/ngrok.yml"
+    [ -f "$ngrok_cfg" ] || return 0
+    grep -q '127\.0\.0\.1' "$ngrok_cfg" && return 0
+    warn "Adding 127.0.0.1 and localhost to ngrok web_allow_hosts."
+    sed -i '/web_allow_hosts:/a\        - 127.0.0.1\n        - localhost' "$ngrok_cfg"
+}
+
 ensure_onboarding() {
     local renew_secret="${1:-false}" public_url access_secret access_hash
 
@@ -311,6 +352,7 @@ ensure_onboarding() {
         if ! ngrok config check >/dev/null 2>&1; then
             prompt_ngrok_token || die "The ngrok authtoken cannot be empty."
         fi
+        ensure_ngrok_web_allow_hosts
 
         info "Detecting your ngrok URL"
         open_temporary_ngrok || {
@@ -401,7 +443,7 @@ start_daemon() {
 
     source .venv/bin/activate
 
-    nohup python3 start_services.py > /dev/null 2>&1 &
+    nohup "$PROJECT_DIR/.venv/bin/python" start_services.py > /dev/null 2>&1 &
     SERVICES_PID=$!
     sleep 2
 

@@ -14,6 +14,7 @@ import termios
 import threading
 import time
 import tty
+import urllib.error
 import urllib.request
 from contextlib import contextmanager
 from pathlib import Path
@@ -266,6 +267,15 @@ def wait_for_ngrok_ready(process: subprocess.Popen | ExistingProcess, timeout: f
             with urllib.request.urlopen(req, timeout=0.5) as resp:
                 if resp.status == 200:
                     return
+        except urllib.error.HTTPError as exc:
+            if exc.code in (401, 403):
+                body = exc.read().decode("utf-8", errors="replace")
+                if "Rejected host" in body:
+                    raise StartupError(
+                        "ngrok inspection API is blocking localhost.\n"
+                        "Add '127.0.0.1' and 'localhost' to web_allow_hosts in:\n"
+                        "  ~/.config/ngrok/ngrok.yml"
+                    ) from exc
         except (OSError, ValueError):
             pass
         time.sleep(0.1)
