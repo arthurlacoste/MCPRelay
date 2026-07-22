@@ -88,6 +88,45 @@ python -m pip install -r requirements.txt
 
 `requirements.txt` is the single source of truth for Python dependencies. `start_services.py` installs from this file at startup, so package names and versions are not duplicated.
 
+
+## Tunnel providers
+
+Gate supports three tunnel modes through `TUNNEL_PROVIDER`:
+
+```env
+TUNNEL_PROVIDER=ngrok
+```
+
+- `ngrok`: default. Gate starts ngrok and detects its public HTTPS URL. Existing installations keep this behavior.
+- `tailscale`: Gate validates the Tailscale CLI and login, starts `tailscale funnel --bg=false 8761`, and stores the Funnel HTTPS URL as `MCP_BASE_URL`. Tailscale Serve without Funnel is tailnet-only and cannot be reached directly by ChatGPT.
+- `external`: Gate does not start a tunnel. Set `MCP_BASE_URL` to a public HTTPS endpoint that forwards to local port `8761`.
+
+### Tailscale Funnel
+
+Install Tailscale, authenticate, and confirm the daemon is running:
+
+```bash
+tailscale up
+tailscale status
+```
+
+Then set:
+
+```env
+TUNNEL_PROVIDER=tailscale
+```
+
+Run `./run.sh setup` on macOS, Linux, or WSL. On Windows, set the same value in `config/.env` before launching `run.ps1`. Funnel availability depends on the tailnet policy and Tailscale account configuration. Gate reports an actionable error when the CLI, login, or public Funnel URL is unavailable.
+
+### Externally managed tunnel
+
+```env
+TUNNEL_PROVIDER=external
+MCP_BASE_URL=https://mcp.example.com
+```
+
+The external endpoint must use HTTPS and forward to `http://127.0.0.1:8761`. Do not append `/mcp` to `MCP_BASE_URL`. Gate still derives OAuth issuer and connector URLs from this canonical base URL.
+
 ## 4. Install and connect ngrok
 
 ### macOS

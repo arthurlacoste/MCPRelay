@@ -13,7 +13,6 @@ from pathlib import Path
 RUN_SCRIPT = Path(__file__).resolve().parents[1] / "run.sh"
 VENV_PYTHON = Path(sys.executable)
 INTERACTIVE_LAUNCHER = RUN_SCRIPT.parent / "src" / "interactive_launcher.py"
-NGROK_TARGET = RUN_SCRIPT.parent / "src" / "ngrok_target.py"
 
 
 def _write_executable(path: Path, content: str) -> None:
@@ -63,7 +62,7 @@ def _enable_interactive_fakes(tmp_path: Path) -> None:
     assert INTERACTIVE_LAUNCHER.exists(), "interactive supervisor missing"
     (tmp_path / "src").mkdir()
     shutil.copy2(INTERACTIVE_LAUNCHER, tmp_path / "src" / "interactive_launcher.py")
-    shutil.copy2(NGROK_TARGET, tmp_path / "src" / "ngrok_target.py")
+    shutil.copy2(RUN_SCRIPT.parent / "src" / "tunnel_provider.py", tmp_path / "src" / "tunnel_provider.py")
     (tmp_path / "start_services.py").write_text(
         "import signal, json, threading\n"
         "from http.server import HTTPServer, BaseHTTPRequestHandler\n"
@@ -330,9 +329,9 @@ def test_runtime_flags_are_ephemeral_and_forwarded_to_children():
     content = RUN_SCRIPT.read_text()
 
     assert '--widget' in content
-    assert '--queue' in content
+    assert '--realtime' in content
     assert 'export MCP_WIDGET_ENABLED=true' in content
-    assert 'export MCP_COMMAND_QUEUE_ENABLED=true' in content
+    assert 'export MCP_REALTIME_STATUS_ENABLED=true' in content
     assert 'set_env_values MCP_WIDGET_ENABLED' not in content
 
 
@@ -477,7 +476,6 @@ def test_onboarding_reuses_detected_ngrok_process():
 
     assert 'export GATE_EXISTING_NGROK_PID="$ONBOARDING_NGROK_PID"' in content
     assert 'GATE_EXISTING_NGROK_PID' in launcher
-    assert '([^[:space:]]*:)?${NGROK_PORT}' in content
     onboarding = content[content.index('open_temporary_ngrok()'):content.index('ensure_onboarding()')]
     assert 'kill "$temp_pid"' not in onboarding
 

@@ -115,7 +115,7 @@ def test_main_installs_update_after_services_stop(monkeypatch):
     ngrok = Process()
     monkeypatch.setattr(interactive_launcher.signal, "signal", lambda *args: None)
     monkeypatch.setattr(interactive_launcher, "start_services", lambda: services)
-    monkeypatch.setattr(interactive_launcher, "start_ngrok", lambda: (ngrok, "test"))
+    monkeypatch.setattr(interactive_launcher, "start_tunnel", lambda: (ngrok, "test"))
     monkeypatch.setattr(interactive_launcher, "wait_for_gateway_health", lambda *args, **kwargs: None)
     monkeypatch.setattr(interactive_launcher, "wait_for_ngrok_ready", lambda *args, **kwargs: None)
     monkeypatch.setattr(interactive_launcher, "available_update", lambda: "0.1.6")

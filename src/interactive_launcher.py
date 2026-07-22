@@ -17,11 +17,22 @@ import tty
 import urllib.error
 import urllib.request
 from contextlib import contextmanager
-from datetime import UTC, datetime
 from pathlib import Path
 
 from dotenv import dotenv_values
-from ngrok_target import gateway_health_url, resolve_ngrok_target
+
+try:
+    from src.tunnel_provider import (
+        TunnelConfigurationError,
+        build_tunnel_spec,
+        normalize_provider,
+    )
+except ModuleNotFoundError:
+    from tunnel_provider import (
+        TunnelConfigurationError,
+        build_tunnel_spec,
+        normalize_provider,
+    )
 
 
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -29,9 +40,8 @@ CONFIG_FILE = Path(os.environ.get("MCP_CONFIG_ROOT", BASE_DIR / "config")) / ".e
 PYTHON = BASE_DIR / ".venv" / "bin" / "python"
 LOG_ROOT = Path(os.environ.get("MCP_LOG_ROOT", BASE_DIR / "logs"))
 NGROK_LOG = LOG_ROOT / "ngrok.log"
+TAILSCALE_LOG = LOG_ROOT / "tailscale.log"
 SERVICE_LOG = LOG_ROOT / "services" / "launcher.log"
-REALTIME_CALLS_FILE = LOG_ROOT / "realtime_calls.json"
-REALTIME_REFRESH_SECONDS = max(0.25, int(os.environ.get("GATE_REALTIME_REFRESH_MS", "1000")) / 1000)
 NGROK_PORT = 8761
 NGROK_INSPECT_URL = "http://127.0.0.1:4040"
 VERSION_FILE = BASE_DIR / "VERSION"
@@ -113,7 +123,7 @@ def latest_changelog(version: str | None = None) -> str:
 
 
 def control_lines(update_version: str | None = None) -> list[str]:
-    lines = ["[m]    Connection details", "[c]    Changelog", "[r]    Realtime calls"]
+    lines = ["[m]    Connection details", "[c]    Changelog"]
     if update_version:
         lines.append(f"[u]    Install update {update_version}")
     lines.append("[^C]   Stop Gate")
@@ -154,6 +164,11 @@ def request_shutdown(*_args) -> None:
     STOP_REQUESTED = True
 
 
+def configured_tunnel_provider() -> str:
+    values = dotenv_values(CONFIG_FILE)
+    return normalize_provider(os.environ.get("TUNNEL_PROVIDER") or values.get("TUNNEL_PROVIDER"))
+
+
 def connection_detail_lines() -> list[str]:
     values = dotenv_values(CONFIG_FILE)
     public_url = (values.get("MCP_BASE_URL") or "").strip()
@@ -166,7 +181,7 @@ def connection_detail_lines() -> list[str]:
         f"Local MCP:       http://127.0.0.1:{NGROK_PORT}/mcp",
         f"Local OAuth:     http://127.0.0.1:{NGROK_PORT}/oauth",
         f"OAuth health:    http://127.0.0.1:{NGROK_PORT}/oauth/health",
-        f"ngrok inspector: {NGROK_INSPECT_URL}",
+        *([f"ngrok inspector: {NGROK_INSPECT_URL}"] if configured_tunnel_provider() == "ngrok" else []),
         f"ChatGPT setup:   {CHATGPT_CONNECTOR_URL}",
         f"Access secret:   {access_secret}",
     ]
@@ -181,98 +196,18 @@ def clear_terminal() -> None:
     print("\033[2J\033[H", end="", flush=True)
 
 
-
-def _single_line(value: str | None) -> str:
-    collapsed = " ".join((value or "").split())
-    return "".join(character for character in collapsed if character.isprintable())
-
-
-def shorten(value: str, width: int) -> str:
-    width = max(1, int(width))
-    value = _single_line(value)
-    if len(value) <= width:
-        return value
-    if width <= 3:
-        return "." * width
-    return value[: width - 3] + "..."
-
-
-def load_snapshot(path: Path) -> dict:
-    try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError, json.JSONDecodeError):
-        return {"updated_at": None, "calls": []}
-    return payload if isinstance(payload.get("calls"), list) else {"updated_at": None, "calls": []}
-
-
-def format_age(call: dict, now: datetime | None = None) -> str:
-    elapsed = int(call.get("duration_ms") or 0) // 1000
-    if not call.get("finished_at"):
-        try:
-            started = datetime.fromisoformat(call.get("started_at") or call.get("created_at"))
-            elapsed = int(((now or datetime.now(UTC)) - started).total_seconds())
-        except (TypeError, ValueError):
-            elapsed = 0
-    elapsed = max(0, elapsed)
-    return f"{elapsed}s" if elapsed < 60 else f"{elapsed // 60}m{elapsed % 60:02d}s"
-
-
-def _start_time(call: dict) -> str:
-    raw = call.get("started_at") or call.get("created_at") or ""
-    try:
-        return datetime.fromisoformat(raw).astimezone().strftime("%H:%M:%S")
-    except (TypeError, ValueError):
-        return "--:--:--"
-
-
-def realtime_rows(errors_only: bool = False) -> list[dict]:
-    calls = load_snapshot(REALTIME_CALLS_FILE).get("calls", [])
-    if errors_only:
-        calls = [call for call in calls if call.get("status") in {"failed", "timeout", "interrupted", "cancelled"}]
-    return calls
-
-
-def render_realtime_panel(selected: int = 0, errors_only: bool = False, paused: bool = False, details: bool = False) -> None:
-    clear_terminal()
-    width, height = shutil.get_terminal_size((120, 30))
-    calls = realtime_rows(errors_only)
-    selected = max(0, min(selected, max(0, len(calls) - 1)))
-    mode = "PAUSED" if paused else "LIVE"
-    filter_label = "errors" if errors_only else "all"
-    print(f"\033[1;34mRealtime calls\033[0m  {mode}  filter:{filter_label}\n")
-    if details and calls:
-        call = calls[selected]
-        print(f"Status:   {call.get('status', '').upper()}")
-        print(f"Tool:     {call.get('tool', 'run_command')}")
-        print(f"Purpose:  {call.get('purpose', 'No purpose')}")
-        print(f"Started:  {_start_time(call)}")
-        print(f"Age:      {format_age(call)}")
-        print(f"Exit:     {call.get('exit_code')}")
-        print(f"Preview:  {shorten(call.get('preview', ''), max(10, width - 10))}")
-        print("\n[Enter] Back  [q/Esc] Exit")
-        return
-    print("STATUS    START     AGE      TOOL                  PURPOSE")
-    print("=" * min(width, 100))
-    visible = max(1, (height - 9) // 2)
-    for index, call in enumerate(calls[:visible]):
-        marker = ">" if index == selected else " "
-        status = call.get("status", "").upper()[:8]
-        tool = shorten(call.get("tool", "run_command"), 20)
-        purpose = shorten(call.get("purpose", "No purpose"), max(8, width - 55))
-        print(f"{marker}{status:<9} {_start_time(call):<9} {format_age(call):<8} {tool:<21} {purpose}")
-        preview = call.get("preview", "")
-        if preview and index < visible:
-            print(f"  {shorten(preview, max(8, width - 2))}")
-    if not calls:
-        print("No calls yet.")
-    print("\n[q/Esc] Exit  [p] Pause  [r] Refresh  [e] Errors  [a] All  [↑/↓] Navigate  [Enter] Details", flush=True)
-
-
-def render_screen(services, ngrok, keep_awake: str, update_version: str | None, panel: str | None) -> None:
+def render_screen(services, tunnel, keep_awake: str, update_version: str | None, panel: str | None) -> None:
     clear_terminal()
     print(f"\033[1;32m✓ Gateway running (PID {services.pid})\033[0m")
-    print(f"\033[1;32m✓ ngrok running (PID {ngrok.pid}) [{keep_awake}]\033[0m")
-    print(f"  ngrok inspector → {NGROK_INSPECT_URL}\n")
+    provider = configured_tunnel_provider()
+    if tunnel is not None:
+        print(f"\033[1;32m✓ {provider} running (PID {tunnel.pid}) [{keep_awake}]\033[0m")
+    else:
+        print("\033[1;32m✓ external tunnel managed by user\033[0m")
+    if provider == "ngrok":
+        print(f"  ngrok inspector → {NGROK_INSPECT_URL}\n")
+    else:
+        print()
     if panel == "connections":
         print("\033[1;34mConnection details\033[0m\n")
         print("\n".join(connection_detail_lines()))
@@ -310,9 +245,12 @@ def log_tail(path: Path, max_lines: int = 8) -> str:
     return "\n".join(lines[-max_lines:]).strip()
 
 
-def startup_failure_message(name: str, code: int) -> str:
+def startup_failure_message(name: str, code: int, log_path: Path | None = None) -> str:
     if name != "Gateway":
-        return f"{name} failed to start (exit {code}). Check {NGROK_LOG}."
+        if log_path is None and name.lower() == "ngrok":
+            log_path = NGROK_LOG
+        suffix = f" Check {log_path}." if log_path else ""
+        return f"{name} failed to start (exit {code}).{suffix}"
 
     details = log_tail(SERVICE_LOG)
     message = f"Gateway failed to start (exit {code})."
@@ -322,7 +260,7 @@ def startup_failure_message(name: str, code: int) -> str:
     return message
 
 
-GATEWAY_HEALTH_URL = gateway_health_url(NGROK_PORT)
+GATEWAY_HEALTH_URL = f"http://127.0.0.1:{NGROK_PORT}/oauth/health"
 NGROK_TUNNELS_URL = f"{NGROK_INSPECT_URL}/api/tunnels"
 
 
@@ -411,21 +349,25 @@ def start_services() -> subprocess.Popen:
         )
 
 
-def start_ngrok() -> tuple[subprocess.Popen | ExistingProcess, str]:
-    existing = os.environ.get("GATE_EXISTING_NGROK_PID", "")
+def start_tunnel() -> tuple[subprocess.Popen | ExistingProcess | None, str]:
+    provider = configured_tunnel_provider()
+    if provider == "external":
+        return None, "user managed"
+    existing = os.environ.get("GATE_EXISTING_NGROK_PID", "") if provider == "ngrok" else ""
     if existing.isdigit():
         process = ExistingProcess(int(existing))
         if process.poll() is None:
             return process, "onboarding tunnel reused"
-    target = resolve_ngrok_target(NGROK_PORT)
+    spec = build_tunnel_spec(provider, NGROK_PORT, LOG_ROOT)
+    assert spec.command is not None and spec.log_path is not None
+    command = spec.command
+    label = "sleep inhibition inactive"
     if shutil.which("caffeinate"):
-        command = ["caffeinate", "-i", "ngrok", "http", target, "--log=stdout"]
+        command = ["caffeinate", "-i", *command]
         label = "caffeinate active"
-    else:
-        command = ["ngrok", "http", target, "--log=stdout"]
-        label = "sleep inhibition inactive"
 
-    with NGROK_LOG.open("w", encoding="utf-8") as log_file:
+    spec.log_path.parent.mkdir(parents=True, exist_ok=True)
+    with spec.log_path.open("w", encoding="utf-8") as log_file:
         process = subprocess.Popen(
             command,
             cwd=BASE_DIR,
@@ -437,27 +379,20 @@ def start_ngrok() -> tuple[subprocess.Popen | ExistingProcess, str]:
 
 
 
-
-def monitor(services, ngrok, keep_awake: str, update_result: list[str | None] | None = None) -> int:
+def monitor(services, tunnel, keep_awake: str, update_result: list[str | None] | None = None) -> int:
     global UPDATE_REQUESTED
     panel: str | None = None
-    realtime_selected = 0
-    realtime_paused = False
-    realtime_errors = False
-    realtime_details = False
-    last_realtime_render = 0.0
     with terminal_input() as input_fd:
-        render_screen(services, ngrok, keep_awake, update_result[0] if update_result else None, panel)
+        render_screen(services, tunnel, keep_awake, update_result[0] if update_result else None, panel)
         while not STOP_REQUESTED:
             if services.poll() is not None:
                 print("Error: Gateway stopped unexpectedly.", file=sys.stderr)
                 return 1
-            if ngrok.poll() is not None:
-                print(f"Error: ngrok stopped. Check {NGROK_LOG}.", file=sys.stderr)
+            if tunnel is not None and tunnel.poll() is not None:
+                provider = configured_tunnel_provider()
+                log_path = TAILSCALE_LOG if provider == "tailscale" else NGROK_LOG
+                print(f"Error: {provider} stopped. Check {log_path}.", file=sys.stderr)
                 return 1
-            if panel == "realtime" and not realtime_paused and time.monotonic() - last_realtime_render >= REALTIME_REFRESH_SECONDS:
-                render_realtime_panel(realtime_selected, realtime_errors, realtime_paused, realtime_details)
-                last_realtime_render = time.monotonic()
             if input_fd is None:
                 time.sleep(0.2)
                 continue
@@ -465,56 +400,15 @@ def monitor(services, ngrok, keep_awake: str, update_result: list[str | None] | 
             if not readable:
                 continue
             key = os.read(input_fd, 1).lower()
-            if panel == "realtime":
-                if key == b"\x1b":
-                    more, _, _ = select.select([input_fd], [], [], 0.02)
-                    if more:
-                        sequence = os.read(input_fd, 2)
-                        key = b"up" if sequence == b"[A" else b"down" if sequence == b"[B" else b"\x1b"
-                if key in {b"q", b"\x1b"}:
-                    panel = None
-                    realtime_details = False
-                    render_screen(services, ngrok, keep_awake, update_result[0] if update_result else None, panel)
-                elif key == b"p":
-                    realtime_paused = not realtime_paused
-                    render_realtime_panel(realtime_selected, realtime_errors, realtime_paused, realtime_details)
-                elif key == b"r":
-                    render_realtime_panel(realtime_selected, realtime_errors, realtime_paused, realtime_details)
-                elif key == b"e":
-                    realtime_errors = True
-                    realtime_selected = 0
-                    render_realtime_panel(realtime_selected, realtime_errors, realtime_paused, realtime_details)
-                elif key == b"a":
-                    realtime_errors = False
-                    realtime_selected = 0
-                    render_realtime_panel(realtime_selected, realtime_errors, realtime_paused, realtime_details)
-                elif key in {b"j", b"down"}:
-                    realtime_selected += 1
-                    render_realtime_panel(realtime_selected, realtime_errors, realtime_paused, realtime_details)
-                elif key in {b"k", b"up"}:
-                    realtime_selected = max(0, realtime_selected - 1)
-                    render_realtime_panel(realtime_selected, realtime_errors, realtime_paused, realtime_details)
-                elif key in {b"\r", b"\n"}:
-                    realtime_details = not realtime_details
-                    render_realtime_panel(realtime_selected, realtime_errors, realtime_paused, realtime_details)
-                continue
             if key == b"m":
                 panel = None if panel == "connections" else "connections"
-                render_screen(services, ngrok, keep_awake, update_result[0] if update_result else None, panel)
+                render_screen(services, tunnel, keep_awake, update_result[0] if update_result else None, panel)
             elif key == b"c":
                 panel = None if panel == "changelog" else "changelog"
-                render_screen(services, ngrok, keep_awake, update_result[0] if update_result else None, panel)
-            elif key == b"r":
-                panel = "realtime"
-                realtime_selected = 0
-                realtime_paused = False
-                realtime_errors = False
-                realtime_details = False
-                render_realtime_panel()
-                last_realtime_render = time.monotonic()
+                render_screen(services, tunnel, keep_awake, update_result[0] if update_result else None, panel)
             elif key == b"\x1b" and panel is not None:
                 panel = None
-                render_screen(services, ngrok, keep_awake, update_result[0] if update_result else None, panel)
+                render_screen(services, tunnel, keep_awake, update_result[0] if update_result else None, panel)
             elif key == b"u" and update_result and update_result[0] and panel is None:
                 UPDATE_REQUESTED = True
                 clear_terminal()
@@ -526,7 +420,7 @@ def monitor(services, ngrok, keep_awake: str, update_result: list[str | None] | 
 def main() -> int:
     global UPDATE_REQUESTED
     services = None
-    ngrok = None
+    tunnel = None
     exit_code = 0
     UPDATE_REQUESTED = False
     signal.signal(signal.SIGINT, request_shutdown)
@@ -535,8 +429,9 @@ def main() -> int:
     try:
         services = start_services()
         wait_for_gateway_health(services)
-        ngrok, keep_awake = start_ngrok()
-        wait_for_ngrok_ready(ngrok)
+        tunnel, keep_awake = start_tunnel()
+        if configured_tunnel_provider() == "ngrok" and tunnel is not None:
+            wait_for_ngrok_ready(tunnel)
 
         update_result: list[str | None] = [None]
         def _fetch_update() -> None:
@@ -544,16 +439,16 @@ def main() -> int:
         update_thread = threading.Thread(target=_fetch_update, daemon=True)
         update_thread.start()
 
-        exit_code = monitor(services, ngrok, keep_awake, update_result)
+        exit_code = monitor(services, tunnel, keep_awake, update_result)
     except ShutdownRequested:
         exit_code = 0
-    except (OSError, StartupError) as exc:
+    except (OSError, StartupError, TunnelConfigurationError) as exc:
         print(f"Error: {exc}", file=sys.stderr, flush=True)
         exit_code = 1
     finally:
-        if services is not None or ngrok is not None:
+        if services is not None or tunnel is not None:
             print("\n⟶ stopping services…", flush=True)
-            terminate_group(ngrok)
+            terminate_group(tunnel)
             terminate_group(services)
             print("✓ Services stopped", flush=True)
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Gate gateway + ngrok tunnel manager
+# Gate gateway + configurable tunnel manager
 set -Eeuo pipefail
 
 PROJECT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -11,12 +11,8 @@ NGROK_LOG="${MCP_LOG_ROOT:-$PROJECT_DIR/logs}/ngrok.log"
 NGROK_INSPECT_URL="http://127.0.0.1:4040"
 ONBOARDING_NGROK_PID=""
 ONBOARDING_PUBLIC_URL=""
+ONBOARDING_TAILSCALE_PID=""
 CHATGPT_CONNECTOR_URL="https://chatgpt.com/plugins#settings/Connectors?create-connector=true&redirectAfter=%2Fplugins"
-
-resolve_ngrok_target() {
-    PYTHONPATH="$PROJECT_DIR/src" "$PROJECT_DIR/.venv/bin/python" -c \
-        'from ngrok_target import resolve_ngrok_target; print(resolve_ngrok_target(8761))'
-}
 
 info() { printf '\n\033[1;34m%s\033[0m\n' "$*"; }
 ok() { printf '\033[1;32m✓ %s\033[0m\n' "$*"; }
@@ -112,6 +108,32 @@ ensure_env_notes() {
 }
 
 
+
+configured_tunnel_provider() {
+    local provider
+    provider="${TUNNEL_PROVIDER:-$(env_value TUNNEL_PROVIDER)}"
+    provider="${provider:-ngrok}"
+    case "$provider" in
+        ngrok|tailscale|external) printf '%s' "$provider" ;;
+        *) die "Unsupported TUNNEL_PROVIDER=$provider. Use ngrok, tailscale, or external." ;;
+    esac
+}
+
+ensure_tunnel_provider() {
+    local provider="$1"
+    case "$provider" in
+        ngrok)
+            command -v ngrok >/dev/null 2>&1 || die "ngrok is required. Install it and configure its authtoken."
+            ;;
+        tailscale)
+            command -v tailscale >/dev/null 2>&1 || die "Tailscale CLI is required. Install Tailscale, run 'tailscale up', then retry."
+            tailscale status --json 2>/dev/null | grep -q '"BackendState"[[:space:]]*:[[:space:]]*"Running"' \
+                || die "Tailscale is not authenticated or running. Run 'tailscale up' and retry."
+            ;;
+        external) ;;
+    esac
+}
+
 ensure_skills_directory() {
     local configured skills_dir
     configured="$(env_value MCP_SKILLS_ROOT)"
@@ -131,7 +153,7 @@ show_ngrok_inspector() {
 }
 
 ngrok_pids() {
-    pgrep -f "(^|[ /])ngrok[[:space:]]+http[[:space:]]+([^[:space:]]*:)?${NGROK_PORT}([[:space:]]|$)" 2>/dev/null || true
+    pgrep -f "(^|[ /])ngrok[[:space:]]+http[[:space:]]+${NGROK_PORT}([[:space:]]|$)" 2>/dev/null || true
 }
 
 signal_ngrok_pids() {
@@ -257,7 +279,7 @@ open_temporary_ngrok() {
     local public_url="" raw_response
     mkdir -p "$(dirname "$NGROK_LOG")"
     : > "$NGROK_LOG"
-    ngrok http "${GATE_NGROK_TARGET:-$NGROK_PORT}" --log=stdout > "$NGROK_LOG" 2>&1 &
+    ngrok http "$NGROK_PORT" --log=stdout > "$NGROK_LOG" 2>&1 &
     ONBOARDING_NGROK_PID=$!
 
     for _ in $(seq 1 20); do
@@ -288,6 +310,28 @@ open_temporary_ngrok() {
     kill "$ONBOARDING_NGROK_PID" 2>/dev/null || true
     wait "$ONBOARDING_NGROK_PID" 2>/dev/null || true
     ONBOARDING_NGROK_PID=""
+    return 1
+}
+
+open_temporary_tailscale() {
+    local output public_url=""
+    mkdir -p "${MCP_LOG_ROOT:-$PROJECT_DIR/logs}"
+    tailscale funnel --bg=false "$NGROK_PORT" > "${MCP_LOG_ROOT:-$PROJECT_DIR/logs}/tailscale.log" 2>&1 &
+    ONBOARDING_TAILSCALE_PID=$!
+    for _ in $(seq 1 20); do
+        output="$(tailscale funnel status --json 2>&1 || true)"
+        public_url="$(printf '%s' "$output" | grep -Eo 'https://[^[:space:]"'"'"']+' | head -n1 | sed 's#[/.,;)]$##')"
+        if [ -n "$public_url" ]; then
+            ONBOARDING_PUBLIC_URL="$public_url"
+            export GATE_EXISTING_TAILSCALE_PID="$ONBOARDING_TAILSCALE_PID"
+            return 0
+        fi
+        kill -0 "$ONBOARDING_TAILSCALE_PID" 2>/dev/null || break
+        sleep 1
+    done
+    kill "$ONBOARDING_TAILSCALE_PID" 2>/dev/null || true
+    wait "$ONBOARDING_TAILSCALE_PID" 2>/dev/null || true
+    ONBOARDING_TAILSCALE_PID=""
     return 1
 }
 
@@ -328,11 +372,12 @@ ensure_ngrok_web_allow_hosts() {
 }
 
 ensure_onboarding() {
-    local renew_secret="${1:-false}" public_url access_secret access_hash
+    local renew_secret="${1:-false}" public_url access_secret access_hash provider choice
 
     mkdir -p "$CONFIG_ROOT"
     ensure_command_guard
     public_url="$(env_value MCP_BASE_URL)"
+    provider="$(configured_tunnel_provider)"
     access_secret="$(env_value OAUTH_ACCESS_SECRET)"
     access_hash="$(env_value OAUTH_ACCESS_SECRET_HASH)"
     ensure_skills_directory
@@ -350,21 +395,37 @@ ensure_onboarding() {
         access_secret=""
     else
         warn "OAuth configuration incomplete. Starting setup."
-        command -v ngrok >/dev/null 2>&1 || die "ngrok is required. Install it before running Gate."
         command -v curl >/dev/null 2>&1 || die "curl is required."
+        if [ -z "${TUNNEL_PROVIDER:-$(env_value TUNNEL_PROVIDER)}" ] && [ -t 0 ] && [ -t 1 ]; then
+            printf '\nTunnel provider\n1. ngrok (default)\n2. Tailscale Funnel\nChoose [1/2]: ' > /dev/tty
+            IFS= read -r choice < /dev/tty || choice=""
+            provider="ngrok"
+            [ "$choice" = "2" ] && provider="tailscale"
+        fi
+        ensure_tunnel_provider "$provider"
 
         info "First-run setup"
-        if ! ngrok config check >/dev/null 2>&1; then
-            prompt_ngrok_token || die "The ngrok authtoken cannot be empty."
-        fi
-        ensure_ngrok_web_allow_hosts
-
-        info "Detecting your ngrok URL"
-        open_temporary_ngrok || {
-            cat "$NGROK_LOG" >&2 || true
-            die "Could not obtain the ngrok HTTPS URL. Check your ngrok token."
-        }
-        public_url="$ONBOARDING_PUBLIC_URL"
+        case "$provider" in
+            ngrok)
+                if ! ngrok config check >/dev/null 2>&1; then
+                    prompt_ngrok_token || die "The ngrok authtoken cannot be empty."
+                fi
+                ensure_ngrok_web_allow_hosts
+                info "Detecting your ngrok URL"
+                open_temporary_ngrok || { cat "$NGROK_LOG" >&2 || true; die "Could not obtain the ngrok HTTPS URL. Check your ngrok token."; }
+                public_url="$ONBOARDING_PUBLIC_URL"
+                ;;
+            tailscale)
+                info "Detecting your Tailscale Funnel URL"
+                open_temporary_tailscale || die "Could not obtain a public Tailscale Funnel HTTPS URL. Confirm Funnel is enabled for this tailnet."
+                public_url="$ONBOARDING_PUBLIC_URL"
+                ;;
+            external)
+                public_url="${MCP_BASE_URL:-$(env_value MCP_BASE_URL)}"
+                [ -n "$public_url" ] || die "TUNNEL_PROVIDER=external requires MCP_BASE_URL=https://..."
+                [[ "$public_url" == https://* ]] || die "MCP_BASE_URL must be a public HTTPS URL."
+                ;;
+        esac
         ok "Public URL: $public_url"
     fi
 
@@ -374,6 +435,7 @@ ensure_onboarding() {
     access_hash="$(OAUTH_ACCESS_SECRET="$access_secret" "$PROJECT_DIR/.venv/bin/python" -c 'import os; from argon2 import PasswordHasher; print(PasswordHasher().hash(os.environ["OAUTH_ACCESS_SECRET"]))')"
 
     set_env_values \
+        TUNNEL_PROVIDER "$provider" \
         MCP_BASE_URL "$public_url" \
         OAUTH_ISSUER "$public_url/oauth" \
         LOCAL_OAUTH_ISSUER "$public_url/oauth" \
@@ -417,20 +479,19 @@ reconcile_pid_file() {
 run_interactive() {
     cd "$PROJECT_DIR"
     if reconcile_pid_file; then
-        IFS=: read -r SERVICES_PID NGROK_PID < "$PID_FILE"
+        IFS=: read -r SERVICES_PID TUNNEL_PID TUNNEL_PROVIDER_PID < "$PID_FILE"
         echo "✓ Gate already running (PID $SERVICES_PID)"
-        if [ -n "${NGROK_PID:-}" ] && kill -0 "$NGROK_PID" 2>/dev/null; then
-            echo "✓ ngrok tunnel     (PID $NGROK_PID)"
-            show_ngrok_inspector
+        if [ -n "${TUNNEL_PID:-}" ] && kill -0 "$TUNNEL_PID" 2>/dev/null; then
+            echo "✓ ${TUNNEL_PROVIDER_PID:-ngrok} tunnel     (PID $TUNNEL_PID)"
+            [ "${TUNNEL_PROVIDER_PID:-ngrok}" != ngrok ] || show_ngrok_inspector
         fi
         echo ""
         echo "  Stop with:  ./run.sh stop"
         echo "  Status:     ./run.sh status"
         return 0
     fi
-    cleanup_stale_ngrok
+    [ "$(configured_tunnel_provider)" != ngrok ] || cleanup_stale_ngrok
     ensure_python_environment
-    export GATE_NGROK_TARGET="${GATE_NGROK_TARGET:-$(resolve_ngrok_target)}"
     ensure_onboarding
     source .venv/bin/activate
     "$PROJECT_DIR/.venv/bin/python" "$PROJECT_DIR/src/interactive_launcher.py"
@@ -443,9 +504,8 @@ start_daemon() {
         exit 1
     fi
 
-    cleanup_stale_ngrok
+    [ "$(configured_tunnel_provider)" != ngrok ] || cleanup_stale_ngrok
     ensure_python_environment
-    export GATE_NGROK_TARGET="${GATE_NGROK_TARGET:-$(resolve_ngrok_target)}"
     ensure_onboarding
 
     source .venv/bin/activate
@@ -454,23 +514,26 @@ start_daemon() {
     SERVICES_PID=$!
     sleep 2
 
-    if [ -n "${GATE_EXISTING_NGROK_PID:-}" ] && kill -0 "$GATE_EXISTING_NGROK_PID" 2>/dev/null; then
-        NGROK_PID="$GATE_EXISTING_NGROK_PID"
+    provider="$(configured_tunnel_provider)"
+    TUNNEL_PID=""
+    KEEP_AWAKE_LABEL="user managed"
+    if [ "$provider" = ngrok ] && [ -n "${GATE_EXISTING_NGROK_PID:-}" ] && kill -0 "$GATE_EXISTING_NGROK_PID" 2>/dev/null; then
+        TUNNEL_PID="$GATE_EXISTING_NGROK_PID"
         KEEP_AWAKE_LABEL="onboarding tunnel reused"
-    elif command -v caffeinate >/dev/null 2>&1; then
-        nohup caffeinate -i ngrok http "$GATE_NGROK_TARGET" > /dev/null 2>&1 &
-        NGROK_PID=$!
-        KEEP_AWAKE_LABEL="caffeinate active"
-    else
-        nohup ngrok http "$GATE_NGROK_TARGET" > /dev/null 2>&1 &
-        NGROK_PID=$!
-        KEEP_AWAKE_LABEL="sleep inhibition inactive"
+    elif [ "$provider" = tailscale ] && [ -n "${GATE_EXISTING_TAILSCALE_PID:-}" ] && kill -0 "$GATE_EXISTING_TAILSCALE_PID" 2>/dev/null; then
+        TUNNEL_PID="$GATE_EXISTING_TAILSCALE_PID"
+        KEEP_AWAKE_LABEL="onboarding tunnel reused"
+    elif [ "$provider" != external ]; then
+        if [ "$provider" = ngrok ]; then tunnel_cmd=(ngrok http "$NGROK_PORT"); else tunnel_cmd=(tailscale funnel --bg=false "$NGROK_PORT"); fi
+        if command -v caffeinate >/dev/null 2>&1; then tunnel_cmd=(caffeinate -i "${tunnel_cmd[@]}"); KEEP_AWAKE_LABEL="caffeinate active"; else KEEP_AWAKE_LABEL="sleep inhibition inactive"; fi
+        nohup "${tunnel_cmd[@]}" > /dev/null 2>&1 &
+        TUNNEL_PID=$!
     fi
 
-    echo "$SERVICES_PID:$NGROK_PID" > "$PID_FILE"
+    echo "$SERVICES_PID:$TUNNEL_PID:$provider" > "$PID_FILE"
     echo "✓ Gateway started  (PID $SERVICES_PID)"
-    echo "✓ ngrok tunnel     (PID $NGROK_PID) [$KEEP_AWAKE_LABEL]"
-    show_ngrok_inspector
+    if [ -n "$TUNNEL_PID" ]; then echo "✓ $provider tunnel (PID $TUNNEL_PID) [$KEEP_AWAKE_LABEL]"; else echo "✓ external tunnel managed by user"; fi
+    [ "$provider" != ngrok ] || show_ngrok_inspector
     echo ""
     echo "  Stop with:  ./run.sh stop"
     echo "  Status:     ./run.sh status"
@@ -531,15 +594,15 @@ stop_gateway_port() {
 }
 
 stop_daemon() {
-    local SERVICES_PID="" NGROK_PID=""
+    local SERVICES_PID="" TUNNEL_PID="" TUNNEL_PROVIDER_PID=""
 
     if [ -f "$PID_FILE" ]; then
-        IFS=: read -r SERVICES_PID NGROK_PID < "$PID_FILE"
+        IFS=: read -r SERVICES_PID TUNNEL_PID TUNNEL_PROVIDER_PID < "$PID_FILE"
     fi
 
-    if [ -n "$NGROK_PID" ]; then
-        echo "⟶ stopping ngrok (PID $NGROK_PID)…"
-        kill "$NGROK_PID" 2>/dev/null || true
+    if [ -n "$TUNNEL_PID" ]; then
+        echo "⟶ stopping tunnel (PID $TUNNEL_PID)…"
+        kill "$TUNNEL_PID" 2>/dev/null || true
     fi
 
     if [ -n "$SERVICES_PID" ]; then
@@ -565,7 +628,7 @@ status() {
         exit 0
     fi
 
-    IFS=: read -r SERVICES_PID NGROK_PID < "$PID_FILE"
+    IFS=: read -r SERVICES_PID TUNNEL_PID TUNNEL_PROVIDER_PID < "$PID_FILE"
     if kill -0 "$SERVICES_PID" 2>/dev/null; then
         echo "✓ Gateway running  (PID $SERVICES_PID)"
     else
@@ -574,27 +637,29 @@ status() {
         exit 1
     fi
 
-    if kill -0 "$NGROK_PID" 2>/dev/null; then
-        echo "✓ ngrok tunnel     (PID $NGROK_PID)"
-        show_ngrok_inspector
+    if [ "${TUNNEL_PROVIDER_PID:-ngrok}" = external ]; then
+        echo "✓ external tunnel managed by user"
+    elif [ -n "$TUNNEL_PID" ] && kill -0 "$TUNNEL_PID" 2>/dev/null; then
+        echo "✓ ${TUNNEL_PROVIDER_PID:-ngrok} tunnel     (PID $TUNNEL_PID)"
+        [ "${TUNNEL_PROVIDER_PID:-ngrok}" != ngrok ] || show_ngrok_inspector
     else
-        echo "✗ ngrok not running"
+        echo "✗ tunnel not running"
     fi
 
     echo ""
     echo "  Logs:"
     echo "    gateway → $PROJECT_DIR/logs/services/gateway.log"
     echo "  PIDs:"
-    echo "    $SERVICES_PID:$NGROK_PID"
+    echo "    $SERVICES_PID:$TUNNEL_PID"
 }
 
 parse_runtime_args() {
     RUNTIME_COMMAND=""
-    local widget=false queue=false arg
+    local widget=false realtime=false arg
     for arg in "$@"; do
         case "$arg" in
             --widget) widget=true ;;
-            --queue|--realtime) queue=true ;;
+            --realtime) realtime=true ;;
             start|stop|status|setup|renew-secret)
                 [ -z "$RUNTIME_COMMAND" ] || die "Only one command may be specified."
                 RUNTIME_COMMAND="$arg"
@@ -605,18 +670,18 @@ parse_runtime_args() {
 
     case "$RUNTIME_COMMAND" in
         stop|status|setup|renew-secret)
-            if [ "$widget" = true ] || [ "$queue" = true ]; then
+            if [ "$widget" = true ] || [ "$realtime" = true ]; then
                 die "Runtime flags are only valid when starting Gate."
             fi
             ;;
     esac
 
-    export MCP_COMMAND_QUEUE_ENABLED=false
+    export MCP_REALTIME_STATUS_ENABLED=false
     if [ "$widget" = true ]; then
         export MCP_WIDGET_ENABLED=true
     fi
-    if [ "$queue" = true ] || [ "$widget" = true ]; then
-        export MCP_COMMAND_QUEUE_ENABLED=true
+    if [ "$realtime" = true ] || [ "$widget" = true ]; then
+        export MCP_REALTIME_STATUS_ENABLED=true
     fi
 }
 
@@ -638,7 +703,7 @@ case "${1:-}" in
     renew-secret) ensure_python_environment; ensure_onboarding true ;;
     *)
         if [ $# -gt 0 ]; then
-            echo "Usage: $0 [start] [--queue] [--widget]"
+            echo "Usage: $0 [start] [--realtime] [--widget]"
             echo "       $0 {stop|status|setup|renew-secret}"
             echo ""
             echo "  (no arg)  Interactive mode – Ctrl+C stops everything"
