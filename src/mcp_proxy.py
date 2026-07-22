@@ -160,113 +160,30 @@ def load_proxy_config(
 
 
 class MCPProxyManager:
-    def __init__(
-        self,
-        config_path: str | Path,
-        *,
-        project_root: str | Path,
-        environ: Mapping[str, str] | None = None,
-        event_logger: Callable[[str, dict[str, Any]], None] | None = None,
-        command_guard: GuardService | None = None,
-    ) -> None:
-        self.project_root = Path(project_root)
-        candidate = Path(config_path)
-        self.config_path = (
-            candidate if candidate.is_absolute() else self.project_root / candidate
-        )
-        self.environ = os.environ if environ is None else environ
-        self.event_logger = event_logger
-        self.command_guard = command_guard
-        self._clients: list[Client] = []
+    """Compatibility facade around the hot-reload registry."""
+
+    def __init__(self, config_path: str | Path, **options: Any) -> None:
+        from mcp_registry import MCPRegistry
+
+        self.registry = MCPRegistry(config_path, **options)
 
     async def start(self, gateway: FastMCP) -> None:
-        existing_names = {tool.name for tool in await gateway.list_tools()}
-        prefixes: set[str] = set()
-        for server in load_proxy_config(
-            self.config_path,
-            project_root=self.project_root,
-            environ=self.environ,
-        ):
-            if not server.prefix or server.prefix in prefixes:
-                logger.error(
-                    "MCP server %r omitted: namespace collision for %r",
-                    server.name,
-                    server.prefix,
-                )
-                continue
+        await self.registry.start(gateway)
 
-            config = dict(server.config)
-            raw_transforms = config.pop("tools", {})
-            guard_mappings = {
-                "run_command": {"commandArgument": "command", "cwdArgument": "cwd"},
-                "filesystem_execute_tool": {"commandArgument": "command", "cwdArgument": "cwd"},
-                **config.pop("commandGuards", {}),
-            }
-            client: Client | None = None
-            try:
-                parsed = MCPConfig.from_dict({"mcpServers": {server.name: config}})
-                transport = parsed.mcpServers[server.name].to_transport()
-                client = StatefulProxyClient(
-                    transport,
-                    timeout=server.call_timeout,
-                    init_timeout=server.init_timeout,
-                )
-                await client.__aenter__()
-                tools = await client.list_tools()
+    async def refresh(self):
+        return await self.registry.refresh()
 
-                transforms = {
-                    name: ToolTransformConfig.model_validate(value)
-                    for name, value in raw_transforms.items()
-                }
-                public_names = {
-                    f"{server.prefix}_{transforms[tool.name].name or tool.name}"
-                    if tool.name in transforms
-                    else f"{server.prefix}_{tool.name}"
-                    for tool in tools
-                    if tool.name not in transforms or transforms[tool.name].enabled
-                }
-                collisions = public_names & existing_names
-                if collisions:
-                    with suppress(Exception, asyncio.CancelledError):
-                        await client.close()
-                    logger.error(
-                        "MCP server %r omitted: tool name collision: %s",
-                        server.name,
-                        ", ".join(sorted(collisions)),
-                    )
-                    continue
+    async def reload_server(self, server_name: str):
+        return await self.registry.reload_server(server_name)
 
-                proxy = create_proxy(client, name=server.name)
-                if hasattr(transport, "forward_incoming_headers"):
-                    transport.forward_incoming_headers = False
-                if transforms:
-                    proxy.add_transform(ToolTransform(transforms))
-                if guard_mappings and self.command_guard is not None:
-                    proxy.add_middleware(
-                        ProxyCommandGuardMiddleware(server.name, guard_mappings, self.command_guard)
-                    )
-                if self.event_logger is not None:
-                    proxy.add_middleware(
-                        ProxyCallLoggingMiddleware(server.name, self.event_logger)
-                    )
-                gateway.mount(proxy, namespace=server.prefix)
-            except Exception as exc:
-                if client is not None:
-                    with suppress(Exception, asyncio.CancelledError):
-                        await client.close()
-                logger.error("MCP server %r omitted: %s", server.name, type(exc).__name__)
-                continue
+    async def remove_server(self, server_name: str) -> None:
+        await self.registry.remove_server(server_name)
 
-            prefixes.add(server.prefix)
-            existing_names.update(public_names)
-            assert client is not None
-            self._clients.append(client)
-            logger.info("MCP server %r mounted as %r", server.name, server.prefix)
+    def list_servers(self) -> list[dict[str, Any]]:
+        return self.registry.list_servers()
+
+    def server_status(self, server_name: str) -> dict[str, Any] | None:
+        return self.registry.server_status(server_name)
 
     async def close(self) -> None:
-        while self._clients:
-            client = self._clients.pop()
-            try:
-                await client.close()
-            except Exception:
-                logger.exception("Failed to close MCP proxy client")
+        await self.registry.close()

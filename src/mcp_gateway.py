@@ -316,6 +316,27 @@ def skills_read(skill_id: str, path: str = 'SKILL.md') -> dict:
     return read_skill(skill_id=skill_id, path=path)
 
 
+@configurable_tool(mcp, title='List MCP servers', description='List configured MCP subservers and their health state.')
+def mcp_servers_list() -> dict:
+    return {'servers': proxy_manager.list_servers()}
+
+
+@configurable_tool(mcp, title='Get MCP server status', description='Get health and catalog state for one MCP subserver.')
+def mcp_server_status(server_name: str) -> dict:
+    state = proxy_manager.server_status(server_name)
+    return state or {'error': 'not_found', 'server': server_name}
+
+
+@configurable_tool(mcp, title='Reload MCP server', description='Reconnect and reconcile one configured MCP subserver.')
+async def mcp_server_reload(server_name: str) -> dict:
+    return (await proxy_manager.reload_server(server_name)).as_dict()
+
+
+@configurable_tool(mcp, title='Refresh MCP registry', description='Re-read MCP configuration and reconcile changed subservers.')
+async def mcp_registry_refresh() -> dict:
+    return (await proxy_manager.refresh()).as_dict()
+
+
 @oauth_app.get('/public-files/{share_id}')
 def serve_public_file(share_id: str):
     shares = load_public_shares()

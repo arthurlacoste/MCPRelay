@@ -202,11 +202,11 @@ def test_proxied_calls_emit_technical_log_without_arguments(tmp_path):
 
     asyncio.run(scenario())
 
-    assert events[0][0] == "mcp_proxy_call"
-    assert events[0][1]["server"] == "fixture"
-    assert events[0][1]["tool"] == "echo"
-    assert events[0][1]["status"] == "success"
-    assert "duration_ms" in events[0][1]
+    proxy_event = next(payload for action, payload in events if action == "mcp_proxy_call")
+    assert proxy_event["server"] == "fixture"
+    assert proxy_event["tool"] == "echo"
+    assert proxy_event["status"] == "success"
+    assert "duration_ms" in proxy_event
     assert "do-not-log" not in repr(events)
 
 
@@ -284,7 +284,8 @@ def test_proxied_failures_emit_error_log(tmp_path):
 
     asyncio.run(scenario())
 
-    assert events[-1][1]["status"] == "error"
+    proxy_event = next(payload for action, payload in events if action == "mcp_proxy_call")
+    assert proxy_event["status"] == "error"
     assert "boom" not in repr(events)
 
 
