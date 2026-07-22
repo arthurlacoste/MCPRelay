@@ -88,6 +88,29 @@ def test_unknown_id_and_safe_cwd_validation(tmp_path):
     queue.close()
 
 
+def test_terminal_state_waits_for_all_output_to_be_persisted(tmp_path, monkeypatch):
+    queue = CommandQueue(
+        tmp_path / 'queue.sqlite3', tmp_path / 'logs', worker_limit=1,
+        max_lines_per_execution=100,
+    )
+    original_append = queue._append_line
+
+    def slow_append(*args, **kwargs):
+        time.sleep(.025)
+        original_append(*args, **kwargs)
+
+    monkeypatch.setattr(queue, '_append_line', slow_append)
+    job = queue.enqueue(python_command("[print(i) for i in range(110)]"))
+    final = wait_for(queue, job['execution_id'], {'success'}, timeout=10)
+    output = queue.get_output(job['execution_id'], limit=200)
+
+    assert final['line_count'] == 110
+    assert len(output['lines']) == 100
+    assert output['lines'][0]['text'] == '10'
+    assert output['lines'][-1]['text'] == '109'
+    queue.close()
+
+
 def test_retention_removes_old_output_and_history(tmp_path):
     queue = CommandQueue(
         tmp_path / 'queue.sqlite3', tmp_path / 'logs', worker_limit=1,

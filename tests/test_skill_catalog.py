@@ -31,6 +31,7 @@ def test_config_env_overrides_default_root(monkeypatch, tmp_path):
     config_dir = tmp_path / 'config'
     config_dir.mkdir()
     (config_dir / '.env').write_text(f'MCP_SKILLS_ROOT={skills_root}\n', encoding='utf-8')
+    monkeypatch.delenv('MCP_CONFIG_ROOT', raising=False)
     monkeypatch.delenv('MCP_SKILLS_ROOT', raising=False)
     assert load_gateway_environment(tmp_path) is True
     assert get_skills_root() == skills_root
