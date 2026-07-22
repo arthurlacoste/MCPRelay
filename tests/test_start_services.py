@@ -38,7 +38,8 @@ def test_ensure_deps_falls_back_to_python_pip_without_uv(monkeypatch):
     ])
 
 
-def test_parse_runtime_flags_defaults_to_no_overrides():
+def test_parse_runtime_flags_defaults_to_no_overrides(monkeypatch):
+    monkeypatch.delenv("MCP_REALTIME_STATUS_ENABLED", raising=False)
     options = start_services.parse_args([])
 
     assert options.widget is False
@@ -46,6 +47,15 @@ def test_parse_runtime_flags_defaults_to_no_overrides():
 
     child_env = start_services.service_environment(options)
     assert child_env["MCP_REALTIME_STATUS_ENABLED"] == "false"
+
+
+def test_runtime_environment_is_preserved_without_cli_flags(monkeypatch):
+    monkeypatch.setenv("MCP_REALTIME_STATUS_ENABLED", "true")
+    options = start_services.parse_args([])
+
+    child_env = start_services.service_environment(options)
+
+    assert child_env["MCP_REALTIME_STATUS_ENABLED"] == "true"
 
 
 def test_runtime_flags_override_child_environment_only(monkeypatch):

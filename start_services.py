@@ -64,7 +64,10 @@ def parse_args(argv=None):
 
 def service_environment(options) -> dict[str, str]:
     env = os.environ.copy()
-    env["MCP_REALTIME_STATUS_ENABLED"] = "true" if options.realtime or options.widget else "false"
+    if options.realtime or options.widget:
+        env["MCP_REALTIME_STATUS_ENABLED"] = "true"
+    else:
+        env.setdefault("MCP_REALTIME_STATUS_ENABLED", "false")
     if options.widget:
         env["MCP_WIDGET_ENABLED"] = "true"
     return env

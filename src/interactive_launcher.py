@@ -182,7 +182,8 @@ def clear_terminal() -> None:
 
 
 def _single_line(value: str | None) -> str:
-    return " ".join((value or "").split())
+    collapsed = " ".join((value or "").split())
+    return "".join(character for character in collapsed if character.isprintable())
 
 
 def shorten(value: str, width: int) -> str:

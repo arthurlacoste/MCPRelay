@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import codecs
 import json
+import logging
 import os
 import secrets
 import signal
@@ -19,6 +20,7 @@ from cryptography.fernet import Fernet, InvalidToken
 
 TERMINAL_STATUSES = {'success', 'failed', 'cancelled', 'timeout', 'interrupted'}
 ACTIVE_STATUSES = {'starting', 'running'}
+LOGGER = logging.getLogger(__name__)
 
 
 def utc_now() -> str:
@@ -473,7 +475,7 @@ class CommandQueue:
                 })
                 self.on_event(execution_id, event)
         except Exception:
-            pass
+            LOGGER.exception('Command completion callback failed')
         finally:
             self._dispatch()
 
@@ -483,7 +485,7 @@ class CommandQueue:
         try:
             self.realtime_store.update({**state, 'purpose': purpose, 'tool': 'run_command'})
         except Exception:
-            pass
+            LOGGER.exception('Could not publish realtime call state')
 
     def stop(self, execution_id: str) -> dict:
         notify = False
