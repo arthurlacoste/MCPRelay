@@ -80,13 +80,45 @@ def is_port_available(host: str, port: int) -> bool:
     return True
 
 
+def find_compatible_python() -> str | None:
+    import subprocess as _sp
+    for name in ("python3.13", "python3.12", "python3.11", "python3.10", "python3"):
+        path = shutil.which(name)
+        if path is None:
+            continue
+        try:
+            result = _sp.run(
+                [path, "-c", "import sys; exit(0 if sys.version_info >= (3, 10) else 1)"],
+                capture_output=True,
+            )
+            if result.returncode == 0:
+                return path
+        except OSError:
+            pass
+    return None
+
+
 def ensure_venv():
     if not PYTHON.exists():
-        print(".venv missing, creating it...")
-        subprocess.check_call([sys.executable, "-m", "venv", str(BASE_DIR / ".venv")])
+        python_bin = find_compatible_python() or sys.executable
+        print(f".venv missing, creating it with {python_bin}...")
+        subprocess.check_call([python_bin, "-m", "venv", str(BASE_DIR / ".venv")])
+
+
+def ensure_ssl():
+    try:
+        import _ssl  # noqa: F401
+    except ImportError:
+        print(
+            "Python was compiled without SSL support (missing _ssl module).\n"
+            "Install libssl-dev and recompile, or use pyenv: pyenv install 3.12",
+            file=sys.stderr,
+        )
+        sys.exit(1)
 
 
 def ensure_deps():
+    ensure_ssl()
     sentinel = BASE_DIR / ".venv" / ".deps_sentinel"
     req_mtime = REQUIREMENTS.stat().st_mtime
     if sentinel.exists():
