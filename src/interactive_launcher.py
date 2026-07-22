@@ -17,6 +17,7 @@ import tty
 import urllib.error
 import urllib.request
 from contextlib import contextmanager
+from datetime import UTC, datetime
 from pathlib import Path
 
 from dotenv import dotenv_values
@@ -28,6 +29,8 @@ PYTHON = BASE_DIR / ".venv" / "bin" / "python"
 LOG_ROOT = Path(os.environ.get("MCP_LOG_ROOT", BASE_DIR / "logs"))
 NGROK_LOG = LOG_ROOT / "ngrok.log"
 SERVICE_LOG = LOG_ROOT / "services" / "launcher.log"
+REALTIME_CALLS_FILE = LOG_ROOT / "realtime_calls.json"
+REALTIME_REFRESH_SECONDS = max(0.25, int(os.environ.get("GATE_REALTIME_REFRESH_MS", "1000")) / 1000)
 NGROK_PORT = 8761
 NGROK_INSPECT_URL = "http://127.0.0.1:4040"
 VERSION_FILE = BASE_DIR / "VERSION"
@@ -109,7 +112,7 @@ def latest_changelog(version: str | None = None) -> str:
 
 
 def control_lines(update_version: str | None = None) -> list[str]:
-    lines = ["[m]    Connection details", "[c]    Changelog"]
+    lines = ["[m]    Connection details", "[c]    Changelog", "[r]    Realtime calls"]
     if update_version:
         lines.append(f"[u]    Install update {update_version}")
     lines.append("[^C]   Stop Gate")
@@ -175,6 +178,96 @@ def show_connection_details() -> None:
 
 def clear_terminal() -> None:
     print("\033[2J\033[H", end="", flush=True)
+
+
+
+def _single_line(value: str | None) -> str:
+    return " ".join((value or "").split())
+
+
+def shorten(value: str, width: int) -> str:
+    width = max(1, int(width))
+    value = _single_line(value)
+    if len(value) <= width:
+        return value
+    if width <= 3:
+        return "." * width
+    return value[: width - 3] + "..."
+
+
+def load_snapshot(path: Path) -> dict:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, json.JSONDecodeError):
+        return {"updated_at": None, "calls": []}
+    return payload if isinstance(payload.get("calls"), list) else {"updated_at": None, "calls": []}
+
+
+def format_age(call: dict, now: datetime | None = None) -> str:
+    if call.get("finished_at"):
+        seconds = max(0, int(call.get("duration_ms", 0)) // 1000)
+    else:
+        now = now or datetime.now(UTC)
+        raw = call.get("started_at") or call.get("created_at")
+        try:
+            seconds = max(0, int((now - datetime.fromisoformat(raw)).total_seconds()))
+        except (TypeError, ValueError):
+            seconds = 0
+    if seconds < 60:
+        return f"{seconds}s"
+    minutes, seconds = divmod(seconds, 60)
+    return f"{minutes}m{seconds:02d}s"
+
+
+def _start_time(call: dict) -> str:
+    raw = call.get("started_at") or call.get("created_at") or ""
+    try:
+        return datetime.fromisoformat(raw).astimezone().strftime("%H:%M:%S")
+    except (TypeError, ValueError):
+        return "--:--:--"
+
+
+def realtime_rows(errors_only: bool = False) -> list[dict]:
+    calls = load_snapshot(REALTIME_CALLS_FILE).get("calls", [])
+    if errors_only:
+        calls = [call for call in calls if call.get("status") in {"failed", "timeout", "interrupted", "cancelled"}]
+    return calls
+
+
+def render_realtime_panel(selected: int = 0, errors_only: bool = False, paused: bool = False, details: bool = False) -> None:
+    clear_terminal()
+    width, height = shutil.get_terminal_size((120, 30))
+    calls = realtime_rows(errors_only)
+    selected = max(0, min(selected, max(0, len(calls) - 1)))
+    mode = "PAUSED" if paused else "LIVE"
+    filter_label = "errors" if errors_only else "all"
+    print(f"\033[1;34mRealtime calls\033[0m  {mode}  filter:{filter_label}\n")
+    if details and calls:
+        call = calls[selected]
+        print(f"Status:   {call.get('status', '').upper()}")
+        print(f"Tool:     {call.get('tool', 'run_command')}")
+        print(f"Purpose:  {call.get('purpose', 'No purpose')}")
+        print(f"Started:  {_start_time(call)}")
+        print(f"Age:      {format_age(call)}")
+        print(f"Exit:     {call.get('exit_code')}")
+        print(f"Preview:  {shorten(call.get('preview', ''), max(10, width - 10))}")
+        print("\n[Enter] Back  [q/Esc] Exit")
+        return
+    print("STATUS    START     AGE      TOOL                  PURPOSE")
+    print("=" * min(width, 100))
+    visible = max(1, (height - 9) // 2)
+    for index, call in enumerate(calls[:visible]):
+        marker = ">" if index == selected else " "
+        status = call.get("status", "").upper()[:8]
+        tool = shorten(call.get("tool", "run_command"), 20)
+        purpose = shorten(call.get("purpose", "No purpose"), max(8, width - 55))
+        print(f"{marker}{status:<9} {_start_time(call):<9} {format_age(call):<8} {tool:<21} {purpose}")
+        preview = call.get("preview", "")
+        if preview and index < visible:
+            print(f"  {shorten(preview, max(8, width - 2))}")
+    if not calls:
+        print("No calls yet.")
+    print("\n[q/Esc] Exit  [p] Pause  [r] Refresh  [e] Errors  [a] All  [↑/↓] Navigate  [Enter] Details", flush=True)
 
 
 def render_screen(services, ngrok, keep_awake: str, update_version: str | None, panel: str | None) -> None:
@@ -349,6 +442,11 @@ def start_ngrok() -> tuple[subprocess.Popen | ExistingProcess, str]:
 def monitor(services, ngrok, keep_awake: str, update_result: list[str | None] | None = None) -> int:
     global UPDATE_REQUESTED
     panel: str | None = None
+    realtime_selected = 0
+    realtime_paused = False
+    realtime_errors = False
+    realtime_details = False
+    last_realtime_render = 0.0
     with terminal_input() as input_fd:
         render_screen(services, ngrok, keep_awake, update_result[0] if update_result else None, panel)
         while not STOP_REQUESTED:
@@ -358,6 +456,9 @@ def monitor(services, ngrok, keep_awake: str, update_result: list[str | None] | 
             if ngrok.poll() is not None:
                 print(f"Error: ngrok stopped. Check {NGROK_LOG}.", file=sys.stderr)
                 return 1
+            if panel == "realtime" and not realtime_paused and time.monotonic() - last_realtime_render >= REALTIME_REFRESH_SECONDS:
+                render_realtime_panel(realtime_selected, realtime_errors, realtime_paused, realtime_details)
+                last_realtime_render = time.monotonic()
             if input_fd is None:
                 time.sleep(0.2)
                 continue
@@ -365,12 +466,53 @@ def monitor(services, ngrok, keep_awake: str, update_result: list[str | None] | 
             if not readable:
                 continue
             key = os.read(input_fd, 1).lower()
+            if panel == "realtime":
+                if key == b"\x1b":
+                    more, _, _ = select.select([input_fd], [], [], 0.02)
+                    if more:
+                        sequence = os.read(input_fd, 2)
+                        key = b"up" if sequence == b"[A" else b"down" if sequence == b"[B" else b"\x1b"
+                if key in {b"q", b"\x1b"}:
+                    panel = None
+                    realtime_details = False
+                    render_screen(services, ngrok, keep_awake, update_result[0] if update_result else None, panel)
+                elif key == b"p":
+                    realtime_paused = not realtime_paused
+                    render_realtime_panel(realtime_selected, realtime_errors, realtime_paused, realtime_details)
+                elif key == b"r":
+                    render_realtime_panel(realtime_selected, realtime_errors, realtime_paused, realtime_details)
+                elif key == b"e":
+                    realtime_errors = True
+                    realtime_selected = 0
+                    render_realtime_panel(realtime_selected, realtime_errors, realtime_paused, realtime_details)
+                elif key == b"a":
+                    realtime_errors = False
+                    realtime_selected = 0
+                    render_realtime_panel(realtime_selected, realtime_errors, realtime_paused, realtime_details)
+                elif key in {b"j", b"down"}:
+                    realtime_selected += 1
+                    render_realtime_panel(realtime_selected, realtime_errors, realtime_paused, realtime_details)
+                elif key in {b"k", b"up"}:
+                    realtime_selected = max(0, realtime_selected - 1)
+                    render_realtime_panel(realtime_selected, realtime_errors, realtime_paused, realtime_details)
+                elif key in {b"\r", b"\n"}:
+                    realtime_details = not realtime_details
+                    render_realtime_panel(realtime_selected, realtime_errors, realtime_paused, realtime_details)
+                continue
             if key == b"m":
                 panel = None if panel == "connections" else "connections"
                 render_screen(services, ngrok, keep_awake, update_result[0] if update_result else None, panel)
             elif key == b"c":
                 panel = None if panel == "changelog" else "changelog"
                 render_screen(services, ngrok, keep_awake, update_result[0] if update_result else None, panel)
+            elif key == b"r":
+                panel = "realtime"
+                realtime_selected = 0
+                realtime_paused = False
+                realtime_errors = False
+                realtime_details = False
+                render_realtime_panel()
+                last_realtime_render = time.monotonic()
             elif key == b"\x1b" and panel is not None:
                 panel = None
                 render_screen(services, ngrok, keep_awake, update_result[0] if update_result else None, panel)

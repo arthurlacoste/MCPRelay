@@ -29,6 +29,7 @@ from terminal_app import TERMINAL_APP_HTML, TERMINAL_APP_URI
 from tool_registry import configurable_tool
 from mcp_proxy import MCPProxyManager
 from runtime_features import RuntimeFeatures, runtime_mode_summary
+from realtime_calls import RealtimeCallStore
 from skill_catalog import skills_read as read_skill, skills_search as search_skills
 from tool_metadata import tool_metadata
 from pydantic import AnyHttpUrl
@@ -44,6 +45,7 @@ logging.basicConfig(level=logging.INFO)
 
 LOG_FILE = GATEWAY_PATHS.logs / 'mcp_gateway.log'
 STREAM_DIR = GATEWAY_PATHS.logs / 'commands'
+REALTIME_CALLS_FILE = GATEWAY_PATHS.logs / 'realtime_calls.json'
 CONVERSATION_DIR = GATEWAY_PATHS.logs / 'conversations'
 PUBLIC_SHARES_FILE = GATEWAY_PATHS.data / 'public_file_shares.json'
 STREAM_DIR.mkdir(parents=True, exist_ok=True)
@@ -649,6 +651,11 @@ def command_finished(execution_id: str, state: dict) -> None:
 command_queue = None
 blocking_runner = None
 if RUNTIME_FEATURES.realtime_enabled:
+    realtime_store = RealtimeCallStore(
+        max_entries=max(1, int(os.getenv('GATE_REALTIME_MAX_ENTRIES', '200'))),
+        snapshot_path=REALTIME_CALLS_FILE,
+        redact_text=SECRET_REDACTOR.redact_text,
+    )
     command_queue = CommandQueue(
         COMMAND_DATABASE,
         STREAM_DIR,
@@ -660,6 +667,7 @@ if RUNTIME_FEATURES.realtime_enabled:
         inspect_command=lambda command, cwd: COMMAND_GUARD.inspect(
             current_guard_request("run_command", {}, command, cwd)
         ),
+        realtime_store=realtime_store,
     )
     atexit.register(command_queue.close)
 else:
