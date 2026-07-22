@@ -9,6 +9,7 @@ import secrets
 import subprocess
 import atexit
 import re
+import time
 from contextlib import asynccontextmanager
 from threading import Lock
 from time import monotonic
@@ -501,6 +502,10 @@ MAX_COMMAND_LINES = max(100, int(os.getenv('MCP_COMMAND_MAX_LINES', '20000')))
 COMMAND_HISTORY_LIMIT = max(10, int(os.getenv('MCP_COMMAND_HISTORY_LIMIT', '2000')))
 COMMAND_DATABASE = Path(os.getenv('MCP_COMMAND_DATABASE', GATEWAY_PATHS.data / 'commands.sqlite3'))
 TERMINAL_SESSION_TTL_SECONDS = max(1.0, float(os.getenv('MCP_TERMINAL_SESSION_TTL_SECONDS', '60')))
+REALTIME_INLINE_WAIT_SECONDS = max(
+    0.0,
+    min(float(os.getenv('MCP_REALTIME_INLINE_WAIT_MS', '100')) / 1000, 0.2),
+)
 TERMINAL_APP = {'resourceUri': TERMINAL_APP_URI, 'prefersBorder': True}
 TERMINAL_HELPER_APP = {'visibility': ['app', 'model']}
 TERMINAL_TOOL_META = {
@@ -768,8 +773,36 @@ def _run_command_realtime(
         'purpose': purpose,
         'timeout_seconds': timeout_seconds,
     })
-    if state['status'] in {'waiting', 'starting'}:
-        state['status'] = 'queued' if state['status'] == 'waiting' else 'running'
+    deadline = time.perf_counter() + REALTIME_INLINE_WAIT_SECONDS
+    while state['status'] in TERMINAL_ACTIVE_STATUSES and time.perf_counter() < deadline:
+        time.sleep(0.01)
+        state = command_queue.get_state(state['execution_id'], limit=50)
+    return command_response(state)
+
+
+def command_response(state: dict, after_cursor: int = 0) -> dict:
+    if state['status'] == 'waiting':
+        state['status'] = 'queued'
+    elif state['status'] == 'starting':
+        state['status'] = 'running'
+    active = state['status'] in TERMINAL_ACTIVE_STATUSES
+    state['polling'] = active
+    state['closed'] = False
+    if active:
+        state['next_action'] = {
+            'tool': 'get_command_state',
+            'arguments': {
+                'execution_id': state['execution_id'],
+                'after_cursor': after_cursor,
+            },
+        }
+        state['message'] = (
+            'Command still running. Poll get_command_state until status is terminal. '
+            'Do not start another command to read log_ref.'
+        )
+    else:
+        state['next_action'] = None
+        state['message'] = 'Command finished. Read output from lines.'
     return state
 
 
@@ -783,6 +816,7 @@ def run_command(
     chatgpt_url: str | None = None,
     ctx: Context = None,
 ):
+    """Run a command. If queued/running, follow next_action until a terminal status is returned."""
     guard_result = COMMAND_GUARD.inspect(current_guard_request(
         "run_command",
         {"purpose": purpose, "timeout_seconds": timeout_seconds},
@@ -837,6 +871,7 @@ def get_command_state(
     limit: int = 200,
     ctx: Context = None,
 ) -> dict:
+    """Poll a run_command execution. Reuse next_action; never run cat on log_ref."""
     session = terminal_session_state(ctx)
     if session['closed']:
         return {
@@ -849,7 +884,7 @@ def get_command_state(
             'has_more': False,
             'session': session,
         }
-    return command_queue.get_state(execution_id, after_cursor, limit)
+    return command_response(command_queue.get_state(execution_id, after_cursor, limit), after_cursor)
 
 
 @realtime_tool(

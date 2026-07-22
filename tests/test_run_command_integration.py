@@ -48,6 +48,26 @@ def test_fastmcp_run_command_returns_immediately(tmp_path):
     assert result['cwd'] == str(tmp_path.resolve())
     assert result['execution_id'].startswith('exec_')
     assert result['status'] in {'queued', 'starting', 'running'}
+    assert result['polling'] is True
+    assert result['next_action']['tool'] == 'get_command_state'
+    assert 'Do not start another command' in result['message']
+
+
+def test_fast_command_returns_inline_output(tmp_path, monkeypatch):
+    install_queue(tmp_path)
+    monkeypatch.setattr(mod, 'REALTIME_INLINE_WAIT_SECONDS', .5)
+
+    async def scenario():
+        async with Client(mod.mcp) as client:
+            return await tool(client, 'run_command', {
+                'command': f'"{sys.executable}" -c "print(\'inline-ok\')"',
+            })
+
+    result = asyncio.run(scenario())
+    assert result['status'] == 'success'
+    assert result['polling'] is False
+    assert result['next_action'] is None
+    assert [line['text'] for line in result['lines']] == ['inline-ok']
 
 
 def test_terminal_polling_session_expires_and_logs_network_event(tmp_path, monkeypatch):
