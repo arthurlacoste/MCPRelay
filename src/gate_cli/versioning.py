@@ -2,18 +2,41 @@ from __future__ import annotations
 
 import re
 
-_STABLE = re.compile(r"^v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$")
+_SEMVER = re.compile(
+    r"^v?(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)"
+    r"(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?"
+    r"(?:\+([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?$"
+)
+
+
+def normalize_tag(value: str) -> str:
+    candidate = value.strip()
+    match = _SEMVER.fullmatch(candidate)
+    if match is None:
+        raise ValueError(f"Invalid Gate version: {value!r}")
+    return candidate if candidate.startswith("v") else f"v{candidate}"
+
+
+def is_semver_tag(tag: str) -> bool:
+    return tag.startswith("v") and _SEMVER.fullmatch(tag) is not None
 
 
 def is_stable_tag(tag: str) -> bool:
-    return _STABLE.fullmatch(tag) is not None
+    match = _SEMVER.fullmatch(tag)
+    return tag.startswith("v") and match is not None and match.group(4) is None
+
+
+def is_prerelease_tag(tag: str) -> bool:
+    match = _SEMVER.fullmatch(tag)
+    return tag.startswith("v") and match is not None and match.group(4) is not None
 
 
 def _key(tag: str) -> tuple[int, int, int]:
-    match = _STABLE.fullmatch(tag)
-    if match is None:
+    if not is_stable_tag(tag):
         raise ValueError(f"Not a stable SemVer tag: {tag}")
-    return tuple(int(part) for part in match.groups())
+    match = _SEMVER.fullmatch(tag)
+    assert match is not None
+    return tuple(int(part) for part in match.groups()[:3])
 
 
 def select_latest_stable_tag(tags: list[str]) -> str | None:

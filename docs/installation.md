@@ -24,6 +24,7 @@ gate secret
 gate update
 gate update --edge
 gate update --stable
+gate update --version 0.1.14-beta.1
 gate rollback
 gate uninstall
 gate uninstall --purge
@@ -726,4 +727,4 @@ git push origin vX.Y.Z
 5. Confirm the GitHub Release contains both assets.
 6. Test the public one-line installer from a clean user environment.
 
-The installer and `gate update` use the GitHub Releases API, download the custom archive and `SHA256SUMS`, then verify the archive before extraction. Draft and prerelease releases are not returned by GitHub's `releases/latest` endpoint. Edge updates remain based on an immutable commit SHA and do not use stable release assets.
+The installer and default `gate update` use the latest stable GitHub Release, download the custom archive and `SHA256SUMS`, then verify the archive before extraction. Draft and prerelease releases are not returned by GitHub's `releases/latest` endpoint. Use `gate update --version VERSION` to install an exact stable or prerelease tag, including an older release. Explicit releases use the same checksum verification. Edge updates remain based on an immutable commit SHA from `main` and do not use release assets.

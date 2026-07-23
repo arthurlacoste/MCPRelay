@@ -1,16 +1,18 @@
 from __future__ import annotations
 
 import json
+import urllib.error
+import urllib.parse
 import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
-from .versioning import select_latest_stable_tag
+from .versioning import normalize_tag, select_latest_stable_tag
 
 
 @dataclass(frozen=True)
-class StableRelease:
+class ReleaseAssets:
     tag: str
     archive_url: str
     checksums_url: str
@@ -34,7 +36,7 @@ class GitHubRepository:
             raise RuntimeError("No stable Gate tag found.")
         return tag
 
-    def latest_stable_release(self) -> StableRelease:
+    def latest_stable_release(self) -> ReleaseAssets:
         release = self._json(f"{self.api}/releases/latest")
         tag = str(release.get("tag_name", ""))
         archive_name = f"gate-{tag}.tar.gz"
@@ -43,7 +45,27 @@ class GitHubRepository:
         checksums_url = assets.get("SHA256SUMS")
         if not tag or not archive_url or not checksums_url:
             raise RuntimeError(f"GitHub Release {tag or '<unknown>'} is missing required assets: {archive_name}, SHA256SUMS.")
-        return StableRelease(tag=tag, archive_url=str(archive_url), checksums_url=str(checksums_url))
+        return ReleaseAssets(tag=tag, archive_url=str(archive_url), checksums_url=str(checksums_url))
+
+    def release_by_tag(self, version: str) -> ReleaseAssets:
+        tag = normalize_tag(version)
+        encoded = urllib.parse.quote(tag, safe="")
+        try:
+            release = self._json(f"{self.api}/releases/tags/{encoded}")
+        except urllib.error.HTTPError as exc:
+            if exc.code == 404:
+                raise RuntimeError(f"Gate release {tag} was not found.") from exc
+            raise
+        actual_tag = str(release.get("tag_name", ""))
+        if actual_tag != tag:
+            raise RuntimeError(f"GitHub returned release {actual_tag or '<unknown>'} instead of {tag}.")
+        archive_name = f"gate-{tag}.tar.gz"
+        assets = {asset.get("name"): asset.get("browser_download_url") for asset in release.get("assets", [])}
+        archive_url = assets.get(archive_name)
+        checksums_url = assets.get("SHA256SUMS")
+        if not archive_url or not checksums_url:
+            raise RuntimeError(f"GitHub Release {tag} is missing required assets: {archive_name}, SHA256SUMS.")
+        return ReleaseAssets(tag=tag, archive_url=str(archive_url), checksums_url=str(checksums_url))
 
     def latest_edge_sha(self) -> str:
         return str(self._json(f"{self.api}/commits/main")["sha"])

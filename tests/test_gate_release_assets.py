@@ -41,3 +41,47 @@ def test_release_requires_archive_and_checksums_assets():
         assert "required assets" in str(error)
     else:
         raise AssertionError("release without assets accepted")
+
+
+def test_release_by_tag_accepts_unprefixed_prerelease():
+    import io
+    import json
+    from gate_cli.remote import GitHubRepository
+
+    payload = {
+        "tag_name": "v0.1.14-beta.1",
+        "assets": [
+            {"name": "gate-v0.1.14-beta.1.tar.gz", "browser_download_url": "https://example/archive"},
+            {"name": "SHA256SUMS", "browser_download_url": "https://example/sums"},
+        ],
+    }
+    seen = []
+
+    class Response(io.BytesIO):
+        def __enter__(self): return self
+        def __exit__(self, *args): return False
+
+    def opener(request):
+        seen.append(request.full_url)
+        return Response(json.dumps(payload).encode())
+
+    release = GitHubRepository(opener=opener).release_by_tag("0.1.14-beta.1")
+
+    assert release.tag == "v0.1.14-beta.1"
+    assert seen[0].endswith("/releases/tags/v0.1.14-beta.1")
+
+
+def test_release_by_tag_rejects_missing_assets():
+    import io
+    import json
+    import pytest
+    from gate_cli.remote import GitHubRepository
+
+    class Response(io.BytesIO):
+        def __enter__(self): return self
+        def __exit__(self, *args): return False
+
+    repository = GitHubRepository(opener=lambda request: Response(json.dumps({"tag_name": "v0.1.14-beta.1", "assets": []}).encode()))
+
+    with pytest.raises(RuntimeError, match="missing required assets"):
+        repository.release_by_tag("v0.1.14-beta.1")
