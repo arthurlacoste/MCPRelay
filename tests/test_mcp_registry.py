@@ -125,3 +125,38 @@ def test_registry_management_methods_report_current_state(tmp_path):
     assert "prompt_count" not in status
     assert reloaded["status"] == "healthy"
     assert missing is None
+
+
+def test_repeated_failed_reloads_keep_last_healthy_provider(tmp_path):
+    from mcp_proxy import MCPProxyManager
+
+    script = _server_script(tmp_path)
+    config = tmp_path / "mcp.json"
+    _write_config(config, {"demo": {"command": sys.executable, "args": [str(script), "echo", "ok"]}})
+    gateway = FastMCP("gateway")
+    manager = MCPProxyManager(
+        config,
+        project_root=tmp_path,
+        environ={},
+        refresh_interval_seconds=0,
+        retry_initial_seconds=0,
+    )
+
+    async def scenario():
+        await manager.start(gateway)
+        original_provider = manager.registry.states["demo"].provider
+        _write_config(config, {"demo": {"command": "/missing/server"}})
+        await manager.refresh()
+        await manager.refresh()
+        state = manager.registry.states["demo"]
+        result = await gateway.call_tool("demo_echo", {})
+        providers = list(gateway.providers)
+        await manager.close()
+        return original_provider, state, result, providers
+
+    original_provider, state, result, providers = asyncio.run(scenario())
+    assert state.status == "degraded"
+    assert state.provider is original_provider
+    assert state.client is not None
+    assert original_provider in providers
+    assert result.content[0].text == "ok"

@@ -90,8 +90,6 @@ class ServerState:
             "last_error": self.last_error,
             "retry_count": self.retry_count,
             "next_retry_at": _iso(self.next_retry_at),
-            "config_fingerprint": self.config_fingerprint,
-            "catalog_fingerprint": self.catalog_fingerprint,
         }
 
 
@@ -191,7 +189,7 @@ class MCPRegistry:
         for name, server in configured.items():
             state = self.states.get(name)
             fingerprint = self._server_fingerprint(server)
-            should_retry = state is not None and state.status in {"offline", "error", "degraded"} and (
+            should_retry = state is not None and state.status in {"offline", "degraded"} and (
                 state.next_retry_at is None or state.next_retry_at <= now
             )
             if state is None:
@@ -225,6 +223,11 @@ class MCPRegistry:
         started = monotonic()
         client: Client | None = None
         try:
+            if not server.prefix or any(
+                state.prefix == server.prefix for name, state in self.states.items() if name != server.name
+            ):
+                logger.error("MCP server %r omitted: namespace collision for %r", server.name, server.prefix)
+                raise ValueError(f"namespace collision for {server.prefix!r}")
             config = dict(server.config)
             raw_transforms = config.pop("tools", {})
             guard_mappings = {
@@ -253,9 +256,6 @@ class MCPRegistry:
                 if name != server.name and state.provider is not None:
                     occupied.update(state.public_tools)
             collisions = public_tools & occupied
-            if not server.prefix or any(s.prefix == server.prefix for n, s in self.states.items() if n != server.name):
-                logger.error("MCP server %r omitted: namespace collision for %r", server.name, server.prefix)
-                raise ValueError(f"namespace collision for {server.prefix!r}")
             if collisions:
                 raise ValueError(f"tool name collision: {', '.join(sorted(collisions))}")
 
@@ -306,12 +306,14 @@ class MCPRegistry:
                     await client.close()
             retry_count = (old.retry_count if old else 0) + 1
             delay = min(self.retry_initial_seconds * (2 ** (retry_count - 1)), self.retry_max_seconds)
-            if old and old.status == "healthy":
+            if old and old.provider is not None:
                 old.last_refresh_at = _utcnow()
                 old.last_error = type(exc).__name__
                 old.retry_count = retry_count
                 old.next_retry_at = _utcnow() + timedelta(seconds=delay)
                 old.status = "degraded"
+                old.config = server
+                old.config_fingerprint = self._server_fingerprint(server)
             else:
                 self.states[server.name] = ServerState(
                     name=server.name, prefix=server.prefix, status="offline",
