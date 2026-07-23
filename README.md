@@ -60,10 +60,18 @@ Gate can expose a trusted local catalogue of [Agent Skills](https://agentskills.
 
 ## ⚠️ Security
 
-- `run_command` executes shell commands **without restrictions** — use with caution
+- `run_command` can execute local shell commands, so Gate applies a built-in destructive-command safeguard before process creation
 - OAuth tokens are signed with a local RSA key (generated in `data/oauth_private_key.pem`)
 - Files shared via `public_file_share` are accessible without authentication
 - Command logs contain all input/output — do not expose logs
+
+### 🛡️ Optional advanced safeguard
+
+Gate blocks common destructive filesystem, Git, Docker, database, Kubernetes, Terraform, disk, PowerShell, cmd and WSL operations by default.
+
+For broader protection, choose **2. Destructive Command Guard (dcg)** during Gate setup. This is a one-click install: Gate downloads the pinned [Destructive Command Guard](https://github.com/Dicklesworthstone/destructive_command_guard) release, verifies its SHA256 checksum and version, and falls back safely to the built-in guard if installation fails.
+
+[Read the command safeguard documentation.](docs/installation.md#destructive-command-guard)
 
 ## 📝 License
 

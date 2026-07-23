@@ -1,11 +1,31 @@
 # Changelog
 
+## 0.1.15
+
+### Added
+
+- Add an interactive **Realtime calls** monitor with bounded, redacted command previews and lifecycle status.
+- Add a README security overview for the built-in safeguard and one-click verified `dcg` installation.
+
+### Changed
+
+- Keep realtime monitoring active in both blocking and queued command modes.
+- Rename the asynchronous queue opt-in to `--queue` and `MCP_COMMAND_QUEUE_ENABLED`, while preserving the legacy realtime aliases.
+- Guide agents to poll queued commands through `get_command_state` instead of reading internal log references.
+
+### Security
+
+- Keep realtime snapshots private, bounded, and sanitized before persistence.
+- Update pinned authentication, multipart, and cryptography dependencies.
+
+### Tests
+
+- Add focused coverage for realtime rendering, state ordering, redaction, blocking-mode monitoring, and queue polling.
+
 ## 0.1.14
 
 ### Fixed
 
-- Keep the interactive **Realtime calls** monitor active in blocking mode, independently from the optional asynchronous command queue.
-- Rename the queue opt-in to `--queue` and `MCP_COMMAND_QUEUE_ENABLED`, while preserving the legacy realtime aliases.
 - Detect a compatible Python interpreter before creating the virtual environment, with clearer handling for unsupported Python versions.
 - Use the virtual environment interpreter for startup dependency and SSL checks.
 - Handle missing SSL support and ngrok `web_allow_hosts` startup edge cases more reliably.
