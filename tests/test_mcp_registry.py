@@ -97,3 +97,31 @@ def test_concurrent_refresh_is_serialized_and_unchanged_is_noop(tmp_path):
         return diffs
 
     assert all(not diff.changed for diff in asyncio.run(scenario()))
+
+
+def test_registry_management_methods_report_current_state(tmp_path):
+    from mcp_proxy import MCPProxyManager
+
+    script = _server_script(tmp_path)
+    config = tmp_path / "mcp.json"
+    _write_config(config, {"demo": {"command": sys.executable, "args": [str(script), "echo", "ok"]}})
+    gateway = FastMCP("gateway")
+    manager = MCPProxyManager(config, project_root=tmp_path, environ={}, refresh_interval_seconds=0)
+
+    async def scenario():
+        await manager.start(gateway)
+        listed = manager.list_servers()
+        status = manager.server_status("demo")
+        reloaded = await manager.reload_server("demo")
+        await manager.remove_server("demo")
+        missing = manager.server_status("demo")
+        await manager.close()
+        return listed, status, reloaded.as_dict(), missing
+
+    listed, status, reloaded, missing = asyncio.run(scenario())
+    assert [item["name"] for item in listed] == ["demo"]
+    assert status["tool_count"] == 1
+    assert "resource_count" not in status
+    assert "prompt_count" not in status
+    assert reloaded["status"] == "healthy"
+    assert missing is None

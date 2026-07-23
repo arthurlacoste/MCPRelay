@@ -50,7 +50,6 @@ class RegistryDiff:
     changed_servers: set[str] = field(default_factory=set)
     added_tools: set[str] = field(default_factory=set)
     removed_tools: set[str] = field(default_factory=set)
-    changed_tools: set[str] = field(default_factory=set)
 
     @property
     def changed(self) -> bool:
@@ -67,8 +66,6 @@ class ServerState:
     status: str
     transport: str
     tool_count: int = 0
-    resource_count: int = 0
-    prompt_count: int = 0
     last_refresh_at: datetime | None = None
     last_success_at: datetime | None = None
     last_error: str | None = None
@@ -88,8 +85,6 @@ class ServerState:
             "status": self.status,
             "transport": self.transport,
             "tool_count": self.tool_count,
-            "resource_count": self.resource_count,
-            "prompt_count": self.prompt_count,
             "last_refresh_at": _iso(self.last_refresh_at),
             "last_success_at": _iso(self.last_success_at),
             "last_error": self.last_error,
@@ -169,16 +164,21 @@ class MCPRegistry:
             "call_timeout": server.call_timeout,
         })
 
-    async def refresh(self) -> RegistryDiff:
-        async with self._lock:
-            return await self._refresh_locked()
+    async def _load_configured(self) -> dict[str, ProxyServerConfig]:
+        servers = await asyncio.to_thread(
+            load_proxy_config,
+            self.config_path,
+            project_root=self.project_root,
+            environ=self.environ,
+        )
+        return {server.name: server for server in servers}
 
-    async def _refresh_locked(self) -> RegistryDiff:
-        configured = {
-            server.name: server for server in load_proxy_config(
-                self.config_path, project_root=self.project_root, environ=self.environ
-            )
-        }
+    async def refresh(self) -> RegistryDiff:
+        configured = await self._load_configured()
+        async with self._lock:
+            return await self._refresh_locked(configured)
+
+    async def _refresh_locked(self, configured: dict[str, ProxyServerConfig]) -> RegistryDiff:
         diff = RegistryDiff()
         for name in list(self.states):
             if name not in configured:
@@ -196,30 +196,28 @@ class MCPRegistry:
             )
             if state is None:
                 diff.added_servers.add(name)
-                await self._reload_locked(server, diff, is_new=True)
+                await self._reload_locked(server, diff)
             elif state.config_fingerprint != fingerprint:
                 diff.changed_servers.add(name)
-                await self._reload_locked(server, diff, is_new=False)
+                await self._reload_locked(server, diff)
             elif should_retry:
-                await self._reload_locked(server, diff, is_new=False)
+                await self._reload_locked(server, diff)
         if diff.changed:
             self._event("mcp_catalog_changed", diff.as_dict())
         return diff
 
     async def reload_server(self, server_name: str) -> ServerState:
+        configured = await self._load_configured()
         async with self._lock:
-            configured = {s.name: s for s in load_proxy_config(
-                self.config_path, project_root=self.project_root, environ=self.environ
-            )}
             if server_name not in configured:
                 raise KeyError(f"unknown or disabled MCP server: {server_name}")
             diff = RegistryDiff(changed_servers={server_name})
-            await self._reload_locked(configured[server_name], diff, is_new=server_name not in self.states)
+            await self._reload_locked(configured[server_name], diff)
             if diff.changed:
                 self._event("mcp_catalog_changed", diff.as_dict())
             return self.states[server_name]
 
-    async def _reload_locked(self, server: ProxyServerConfig, diff: RegistryDiff, *, is_new: bool) -> None:
+    async def _reload_locked(self, server: ProxyServerConfig, diff: RegistryDiff) -> None:
         if self.gateway is None:
             raise RuntimeError("registry has not started")
         old = self.states.get(server.name)
@@ -245,8 +243,6 @@ class MCPRegistry:
             # FastMCP providers resolve resources and prompts dynamically. Avoid
             # probing optional capabilities here because older servers may not
             # answer unsupported list methods.
-            resources: list[Any] = []
-            prompts: list[Any] = []
             transforms = {name: ToolTransformConfig.model_validate(value) for name, value in raw_transforms.items()}
             public_tools = {
                 f"{server.prefix}_{transforms[t.name].name or t.name}" if t.name in transforms else f"{server.prefix}_{t.name}"
@@ -254,7 +250,7 @@ class MCPRegistry:
             }
             occupied = set(self._native_tools)
             for name, state in self.states.items():
-                if name != server.name and state.status == "healthy":
+                if name != server.name and state.provider is not None:
                     occupied.update(state.public_tools)
             collisions = public_tools & occupied
             if not server.prefix or any(s.prefix == server.prefix for n, s in self.states.items() if n != server.name):
@@ -280,8 +276,6 @@ class MCPRegistry:
                 status="healthy",
                 transport="stdio" if "command" in config else "http",
                 tool_count=len(public_tools),
-                resource_count=len(resources),
-                prompt_count=len(prompts),
                 last_refresh_at=_utcnow(),
                 last_success_at=_utcnow(),
                 config_fingerprint=self._server_fingerprint(server),
