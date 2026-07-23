@@ -28,3 +28,15 @@ def test_normalize_rejects_invalid_version():
         assert "Invalid Gate version" in str(error)
     else:
         raise AssertionError("invalid version accepted")
+
+
+def test_build_metadata_is_rejected():
+    from gate_cli.versioning import is_semver_tag, normalize_tag
+
+    assert not is_semver_tag("v1.2.3+build.1")
+    try:
+        normalize_tag("1.2.3+build.1")
+    except ValueError as error:
+        assert "Invalid Gate version" in str(error)
+    else:
+        raise AssertionError("build metadata accepted")

@@ -55,7 +55,7 @@ class GitHubRepository:
         except urllib.error.HTTPError as exc:
             if exc.code == 404:
                 raise RuntimeError(f"Gate release {tag} was not found.") from exc
-            raise
+            raise RuntimeError(f"GitHub could not fetch Gate release {tag} (HTTP {exc.code}).") from exc
         actual_tag = str(release.get("tag_name", ""))
         if actual_tag != tag:
             raise RuntimeError(f"GitHub returned release {actual_tag or '<unknown>'} instead of {tag}.")

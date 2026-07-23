@@ -119,7 +119,8 @@ def perform_update(
     paths.ensure_persistent()
     archive = paths.cache / "gate-update.tar.gz"
     release_assets = None
-    if target_version is not None:
+    explicit_version = target_version is not None
+    if explicit_version:
         from .versioning import is_prerelease_tag
         release_assets = repository.release_by_tag(target_version)
         target_version = release_assets.tag[1:]
@@ -139,7 +140,7 @@ def perform_update(
         channel = "stable"
         commit = None
     state = load_state(paths.state)
-    if state.active_version == target_version and (channel != "stable" or state.channel == "stable"):
+    if not explicit_version and state.active_version == target_version and (channel != "stable" or state.channel == "stable"):
         return state, False
     repository.download(archive_url, archive)
     if channel != "edge":

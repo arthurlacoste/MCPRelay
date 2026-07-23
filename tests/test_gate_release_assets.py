@@ -85,3 +85,15 @@ def test_release_by_tag_rejects_missing_assets():
 
     with pytest.raises(RuntimeError, match="missing required assets"):
         repository.release_by_tag("v0.1.14-beta.1")
+
+
+def test_release_by_tag_wraps_non_404_http_errors():
+    import urllib.error
+    import pytest
+    from gate_cli.remote import GitHubRepository
+
+    def opener(request):
+        raise urllib.error.HTTPError(request.full_url, 429, "rate limited", {}, None)
+
+    with pytest.raises(RuntimeError, match=r"HTTP 429"):
+        GitHubRepository(opener=opener).release_by_tag("v0.1.14-beta.1")
