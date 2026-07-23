@@ -106,31 +106,45 @@ def prune_releases(paths: GatePaths, keep: int = 2) -> None:
         shutil.rmtree(release, ignore_errors=True)
 
 
-def perform_update(paths: GatePaths, current_version: str, *, edge: bool = False, stable: bool = False):
+def perform_update(
+    paths: GatePaths,
+    current_version: str,
+    *,
+    edge: bool = False,
+    target_version: str | None = None,
+):
     from .remote import GitHubRepository
     repository = GitHubRepository()
     paths.ensure_persistent()
     archive = paths.cache / "gate-update.tar.gz"
-    stable_release = None
-    if edge:
+    release_assets = None
+    explicit_version = target_version is not None
+    if explicit_version:
+        from .versioning import is_prerelease_tag
+        release_assets = repository.release_by_tag(target_version)
+        target_version = release_assets.tag[1:]
+        archive_url = release_assets.archive_url
+        channel = "prerelease" if is_prerelease_tag(release_assets.tag) else "explicit"
+        commit = None
+    elif edge:
         sha = repository.latest_edge_sha()
         target_version = repository.edge_version(current_version.split("-edge+", 1)[0], sha)
         archive_url = repository.archive_url(sha)
         channel = "edge"
         commit = sha
     else:
-        stable_release = repository.latest_stable_release()
-        target_version = stable_release.tag[1:]
-        archive_url = stable_release.archive_url
+        release_assets = repository.latest_stable_release()
+        target_version = release_assets.tag[1:]
+        archive_url = release_assets.archive_url
         channel = "stable"
         commit = None
     state = load_state(paths.state)
-    if state.active_version == target_version and (not stable or state.channel == "stable"):
+    if not explicit_version and state.active_version == target_version and (channel != "stable" or state.channel == "stable"):
         return state, False
     repository.download(archive_url, archive)
-    if channel == "stable":
+    if channel != "edge":
         from .integrity import checksum_for_tag, verify_sha256
-        expected = checksum_for_tag(repository.text(stable_release.checksums_url), f"v{target_version}")
+        expected = checksum_for_tag(repository.text(release_assets.checksums_url), f"v{target_version}")
         verify_sha256(archive, expected)
     from .migrations import run_migrations
     updated = install_archive_release(

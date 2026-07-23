@@ -101,3 +101,113 @@ def test_install_archive_runs_migrations_before_activation(tmp_path):
 
     assert events == ["validate", "migrate:0.1.0:0.2.0"]
     assert load_state(paths.state).active_version == "0.2.0"
+
+
+def test_explicit_prerelease_uses_exact_release_and_checksum(monkeypatch, tmp_path):
+    from gate_cli.paths import GatePaths
+    from gate_cli.remote import ReleaseAssets
+    from gate_cli.state import GateState, save_state
+    import gate_cli.integrity as integrity
+    import gate_cli.migrations as migrations
+    import gate_cli.remote as remote
+    import gate_cli.updater as updater
+
+    paths = GatePaths.from_home(tmp_path)
+    paths.ensure_persistent()
+    save_state(paths.state, GateState(active_version="0.2.0", active_release="/old", channel="stable"))
+    events = []
+
+    class Repository:
+        def release_by_tag(self, version):
+            events.append(("release", version))
+            return ReleaseAssets("v0.1.14-beta.1", "https://archive", "https://sums")
+        def download(self, url, destination):
+            destination.write_bytes(b"archive")
+            events.append(("download", url))
+        def text(self, url):
+            events.append(("checksums", url))
+            return "abc  gate-v0.1.14-beta.1.tar.gz\n"
+
+    monkeypatch.setattr(remote, "GitHubRepository", Repository)
+    monkeypatch.setattr(integrity, "checksum_for_tag", lambda text, tag: events.append(("checksum", tag)) or "abc")
+    monkeypatch.setattr(integrity, "verify_sha256", lambda archive, expected: events.append(("verify", expected)))
+    monkeypatch.setattr(migrations, "run_migrations", lambda *args: None)
+    monkeypatch.setattr(updater, "install_archive_release", lambda paths, archive, tag, **kwargs: GateState(active_version=tag, active_release="/new", channel=kwargs["channel"]))
+    monkeypatch.setattr(updater, "prune_releases", lambda paths: None)
+
+    state, changed = updater.perform_update(paths, "0.2.0", target_version="0.1.14-beta.1")
+
+    assert changed
+    assert state.active_version == "0.1.14-beta.1"
+    assert state.channel == "prerelease"
+    assert ("release", "0.1.14-beta.1") in events
+    assert ("checksum", "v0.1.14-beta.1") in events
+    assert ("verify", "abc") in events
+
+
+def test_explicit_stable_downgrade_uses_explicit_channel(monkeypatch, tmp_path):
+    from gate_cli.paths import GatePaths
+    from gate_cli.remote import ReleaseAssets
+    from gate_cli.state import GateState, save_state
+    import gate_cli.integrity as integrity
+    import gate_cli.migrations as migrations
+    import gate_cli.remote as remote
+    import gate_cli.updater as updater
+
+    paths = GatePaths.from_home(tmp_path)
+    paths.ensure_persistent()
+    save_state(paths.state, GateState(active_version="0.2.0", active_release="/old", channel="stable"))
+
+    class Repository:
+        def release_by_tag(self, version): return ReleaseAssets("v0.1.13", "https://archive", "https://sums")
+        def download(self, url, destination): destination.write_bytes(b"archive")
+        def text(self, url): return "abc  gate-v0.1.13.tar.gz\n"
+
+    monkeypatch.setattr(remote, "GitHubRepository", Repository)
+    monkeypatch.setattr(integrity, "checksum_for_tag", lambda text, tag: "abc")
+    monkeypatch.setattr(integrity, "verify_sha256", lambda archive, expected: None)
+    monkeypatch.setattr(migrations, "run_migrations", lambda *args: None)
+    monkeypatch.setattr(updater, "install_archive_release", lambda paths, archive, tag, **kwargs: GateState(active_version=tag, active_release="/new", channel=kwargs["channel"]))
+    monkeypatch.setattr(updater, "prune_releases", lambda paths: None)
+
+    state, changed = updater.perform_update(paths, "0.2.0", target_version="v0.1.13")
+
+    assert changed
+    assert state.active_version == "0.1.13"
+    assert state.channel == "explicit"
+
+
+def test_explicit_same_version_forces_reinstall(monkeypatch, tmp_path):
+    from gate_cli.paths import GatePaths
+    from gate_cli.remote import ReleaseAssets
+    from gate_cli.state import GateState, save_state
+    import gate_cli.integrity as integrity
+    import gate_cli.migrations as migrations
+    import gate_cli.remote as remote
+    import gate_cli.updater as updater
+
+    paths = GatePaths.from_home(tmp_path)
+    paths.ensure_persistent()
+    save_state(paths.state, GateState(active_version="0.1.14", active_release="/old", channel="stable"))
+    events = []
+
+    class Repository:
+        def release_by_tag(self, version):
+            return ReleaseAssets("v0.1.14", "https://archive", "https://sums")
+        def download(self, url, destination):
+            events.append("download")
+            destination.write_bytes(b"archive")
+        def text(self, url): return "abc  gate-v0.1.14.tar.gz\n"
+
+    monkeypatch.setattr(remote, "GitHubRepository", Repository)
+    monkeypatch.setattr(integrity, "checksum_for_tag", lambda text, tag: "abc")
+    monkeypatch.setattr(integrity, "verify_sha256", lambda archive, expected: None)
+    monkeypatch.setattr(migrations, "run_migrations", lambda *args: None)
+    monkeypatch.setattr(updater, "install_archive_release", lambda paths, archive, tag, **kwargs: GateState(active_version=tag, active_release="/new", channel=kwargs["channel"]))
+    monkeypatch.setattr(updater, "prune_releases", lambda paths: None)
+
+    state, changed = updater.perform_update(paths, "0.1.14", target_version="0.1.14")
+
+    assert changed
+    assert state.active_release == "/new"
+    assert events == ["download"]

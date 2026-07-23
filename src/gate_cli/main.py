@@ -66,11 +66,11 @@ def confirm_default_yes(prompt: str) -> bool:
     return input(prompt).strip().lower() in {"", "y", "yes"}
 
 
-def perform_gate_update(edge: bool, stable: bool) -> tuple[str, bool, str]:
+def perform_gate_update(edge: bool, target_version: str | None = None) -> tuple[str, bool, str]:
     gate_paths = paths()
     state = load_state(gate_paths.state)
     current = state.active_version or version()
-    updated, changed = perform_update(gate_paths, current, edge=edge, stable=stable)
+    updated, changed = perform_update(gate_paths, current, edge=edge, target_version=target_version)
     notes = version_notes(Path(updated.active_release) / "CHANGELOG.md", updated.active_version) if changed else ""
     return updated.active_version, changed, notes
 
@@ -152,6 +152,7 @@ def build_parser() -> argparse.ArgumentParser:
     mode = update.add_mutually_exclusive_group()
     mode.add_argument("--edge", action="store_true")
     mode.add_argument("--stable", action="store_true")
+    mode.add_argument("--version", dest="target_version", metavar="VERSION")
     uninstall_parser = sub.add_parser("uninstall")
     uninstall_parser.add_argument("--purge", action="store_true")
     return parser
@@ -191,7 +192,7 @@ def main(argv: list[str] | None = None) -> int:
                 is_running=gate_is_running,
                 confirm=confirm_default_yes,
                 stop=lambda: delegate_run_script("stop"),
-                update=lambda: perform_gate_update(args.edge, args.stable),
+                update=lambda: perform_gate_update(args.edge, args.target_version),
                 start=lambda: delegate_run_script("start"),
             )
         except Exception as exc:

@@ -3,7 +3,7 @@ name: Release Gate
 on:
   push:
     tags:
-      - "v[0-9]+.[0-9]+.[0-9]+"
+      - "v[0-9]*.*"
 
 permissions:
   contents: write
@@ -69,6 +69,10 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          if [[ ! "$GITHUB_REF_NAME" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$ ]]; then
+            echo "Unsupported Gate release tag: $GITHUB_REF_NAME" >&2
+            exit 1
+          fi
           test "v$(tr -d '\n' < VERSION)" = "${GITHUB_REF_NAME}"
 
       - name: Build release archive
@@ -95,9 +99,15 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          set -euo pipefail
+          prerelease=()
+          if [[ "$GITHUB_REF_NAME" == *-* ]]; then
+            prerelease=(--prerelease)
+          fi
           gh release create "$GITHUB_REF_NAME" \
             "gate-${GITHUB_REF_NAME}.tar.gz" \
             SHA256SUMS \
             --verify-tag \
             --notes-file release-notes.md \
-            --title "Gate $GITHUB_REF_NAME"
+            --title "Gate $GITHUB_REF_NAME" \
+            "${prerelease[@]}"
