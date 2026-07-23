@@ -236,3 +236,8 @@ def test_monitor_ignores_update_key_while_panel_is_open(monkeypatch):
     assert interactive_launcher.monitor(Process(), Process(), "active", ["0.1.8"]) == 0
     assert rendered_panels == [None, "connections", None]
     assert interactive_launcher.UPDATE_REQUESTED is True
+
+
+def test_tailscale_failure_uses_tailscale_log():
+    message = interactive_launcher.startup_failure_message("tailscale", 1)
+    assert str(interactive_launcher.TAILSCALE_LOG) in message

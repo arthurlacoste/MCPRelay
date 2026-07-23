@@ -26,13 +26,15 @@ try:
         TunnelConfigurationError,
         build_tunnel_spec,
         normalize_provider,
-    )
+            tailscale_public_url,
+)
 except ModuleNotFoundError:
     from tunnel_provider import (
         TunnelConfigurationError,
         build_tunnel_spec,
         normalize_provider,
-    )
+            tailscale_public_url,
+)
 
 
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -247,8 +249,8 @@ def log_tail(path: Path, max_lines: int = 8) -> str:
 
 def startup_failure_message(name: str, code: int, log_path: Path | None = None) -> str:
     if name != "Gateway":
-        if log_path is None and name.lower() == "ngrok":
-            log_path = NGROK_LOG
+        if log_path is None:
+            log_path = {"ngrok": NGROK_LOG, "tailscale": TAILSCALE_LOG}.get(name.lower())
         suffix = f" Check {log_path}." if log_path else ""
         return f"{name} failed to start (exit {code}).{suffix}"
 
@@ -336,6 +338,22 @@ def terminate_group(process: subprocess.Popen | ExistingProcess | None) -> None:
         except subprocess.TimeoutExpired:
             pass
 
+
+
+
+def wait_for_tailscale_ready(process: subprocess.Popen | ExistingProcess, timeout: float = 10.0) -> None:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        code = process.poll()
+        if code is not None:
+            raise StartupError(startup_failure_message("tailscale", code))
+        try:
+            if tailscale_public_url():
+                return
+        except TunnelConfigurationError:
+            pass
+        time.sleep(0.2)
+    raise StartupError(f"Tailscale Funnel did not become ready. Check {TAILSCALE_LOG}.")
 
 def start_services() -> subprocess.Popen:
     SERVICE_LOG.parent.mkdir(parents=True, exist_ok=True)
@@ -430,8 +448,11 @@ def main() -> int:
         services = start_services()
         wait_for_gateway_health(services)
         tunnel, keep_awake = start_tunnel()
-        if configured_tunnel_provider() == "ngrok" and tunnel is not None:
+        provider = configured_tunnel_provider()
+        if provider == "ngrok" and tunnel is not None:
             wait_for_ngrok_ready(tunnel)
+        elif provider == "tailscale" and tunnel is not None:
+            wait_for_tailscale_ready(tunnel)
 
         update_result: list[str | None] = [None]
         def _fetch_update() -> None:

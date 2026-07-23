@@ -22,7 +22,7 @@ function Get-EnvValue([string]$Name) {
 function Set-EnvValue([string]$Name, [string]$Value) {
     New-Item -ItemType Directory -Path $ConfigRoot -Force | Out-Null
     $Lines = if (Test-Path $ConfigFile) { Get-Content $ConfigFile } else { @() }
-    $Lines = @($Lines | Where-Object { $_ -notmatch "^$([regex]::Escape($Name))=" })
+    $Lines = @($Lines | Where-Object { $_ -notmatch "^\s*$([regex]::Escape($Name))=" })
     $Lines += "$Name=$Value"
     Set-Content -Path $ConfigFile -Value $Lines -Encoding utf8
 }
@@ -127,8 +127,8 @@ try {
 
     if ($TunnelProvider -eq "ngrok") {
         Write-Host "Starting ngrok. Press Ctrl+C to stop."
-        $Tunnel = Start-Process -FilePath $TunnelCommand -ArgumentList $TunnelArgs -WorkingDirectory $ProjectDir -NoNewWindow -PassThru
-        Wait-Process -Id $Tunnel.Id
+        & $TunnelCommand @TunnelArgs
+        if ($LASTEXITCODE -ne 0) { throw "ngrok exited with code $LASTEXITCODE." }
     } elseif ($TunnelProvider -eq "tailscale") {
         Write-Host "Tailscale Funnel ready. Press Ctrl+C to stop."
         Wait-Process -Id $Tunnel.Id

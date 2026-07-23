@@ -490,7 +490,7 @@ run_interactive() {
         echo "  Status:     ./run.sh status"
         return 0
     fi
-    [ "$(configured_tunnel_provider)" != ngrok ] || cleanup_stale_ngrok
+    cleanup_stale_ngrok
     ensure_python_environment
     ensure_onboarding
     source .venv/bin/activate
@@ -504,7 +504,7 @@ start_daemon() {
         exit 1
     fi
 
-    [ "$(configured_tunnel_provider)" != ngrok ] || cleanup_stale_ngrok
+    cleanup_stale_ngrok
     ensure_python_environment
     ensure_onboarding
 

@@ -10,6 +10,7 @@ from src.tunnel_provider import (
     normalize_provider,
     parse_tailscale_https_url,
     require_cli,
+    tailscale_public_url,
     validate_tailscale_session,
 )
 
@@ -57,3 +58,14 @@ def test_process_arguments_for_each_provider(monkeypatch, tmp_path: Path):
     assert ngrok.command == ["ngrok", "http", "8761", "--log=stdout"]
     assert tailscale.command == ["tailscale", "funnel", "--bg=false", "8761"]
     assert external.command is None
+
+
+def test_tailscale_public_url_reads_stdout_and_stderr():
+    assert tailscale_public_url(
+        run=lambda *args, **kwargs: completed(stdout="", stderr="https://gate.example.ts.net/\n")
+    ) == "https://gate.example.ts.net"
+
+
+def test_tailscale_public_url_rejects_missing_url():
+    with pytest.raises(TunnelConfigurationError, match="Could not detect"):
+        tailscale_public_url(run=lambda *args, **kwargs: completed(stdout="no funnel"))
