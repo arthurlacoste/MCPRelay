@@ -35,9 +35,9 @@ asyncio.run(snapshot())
     return json.loads(result.stdout.splitlines()[-1])
 
 
-def test_no_realtime_uses_blocking_contract_and_hides_queue_tools():
+def test_no_queue_uses_blocking_contract_and_updates_realtime_monitor():
     snapshot = gateway_snapshot(
-        {"MCP_REALTIME_STATUS_ENABLED": "false"},
+        {"MCP_COMMAND_QUEUE_ENABLED": "false"},
         """
         started = time.monotonic()
         output = mod.run_command(
@@ -48,6 +48,7 @@ def test_no_realtime_uses_blocking_contract_and_hides_queue_tools():
             'output': output,
             'elapsed': time.monotonic() - started,
             'queue_is_none': mod.command_queue is None,
+            'calls': mod.realtime_store.snapshot()['calls'],
         }))
         """,
     )
@@ -55,15 +56,17 @@ def test_no_realtime_uses_blocking_contract_and_hides_queue_tools():
     assert snapshot["elapsed"] >= 0.1
     assert "STDOUT:\ndone" in snapshot["output"]
     assert snapshot["queue_is_none"] is True
+    assert snapshot["calls"][0]["status"] == "success"
+    assert snapshot["calls"][0]["preview"].endswith("print('done')\"")
     assert "get_queue_state" not in snapshot["tools"]
     assert "get_command_state" not in snapshot["tools"]
     assert "stop_command" not in snapshot["tools"]
 
 
-def test_widget_enables_realtime_mode():
+def test_widget_enables_queue_mode():
     snapshot = gateway_snapshot(
         {
-            "MCP_REALTIME_STATUS_ENABLED": "false",
+            "MCP_COMMAND_QUEUE_ENABLED": "false",
             "MCP_WIDGET_ENABLED": "true",
         },
         """
@@ -73,11 +76,11 @@ def test_widget_enables_realtime_mode():
         print(json.dumps({
             'resources': resources,
             'widget': mod.RUNTIME_FEATURES.widget_enabled,
-            'realtime': mod.RUNTIME_FEATURES.realtime_enabled,
+            'queue': mod.RUNTIME_FEATURES.command_queue_enabled,
         }))
         """,
     )
 
     assert snapshot["widget"] is True
-    assert snapshot["realtime"] is True
+    assert snapshot["queue"] is True
     assert "ui://gate/terminal.html" in snapshot["resources"]

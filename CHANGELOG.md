@@ -4,6 +4,8 @@
 
 ### Fixed
 
+- Keep the interactive **Realtime calls** monitor active in blocking mode, independently from the optional asynchronous command queue.
+- Rename the queue opt-in to `--queue` and `MCP_COMMAND_QUEUE_ENABLED`, while preserving the legacy realtime aliases.
 - Detect a compatible Python interpreter before creating the virtual environment, with clearer handling for unsupported Python versions.
 - Use the virtual environment interpreter for startup dependency and SSL checks.
 - Handle missing SSL support and ngrok `web_allow_hosts` startup edge cases more reliably.

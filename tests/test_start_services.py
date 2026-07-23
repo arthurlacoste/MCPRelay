@@ -39,36 +39,48 @@ def test_ensure_deps_falls_back_to_python_pip_without_uv(monkeypatch):
 
 
 def test_parse_runtime_flags_defaults_to_no_overrides(monkeypatch):
+    monkeypatch.delenv("MCP_COMMAND_QUEUE_ENABLED", raising=False)
     monkeypatch.delenv("MCP_REALTIME_STATUS_ENABLED", raising=False)
     options = start_services.parse_args([])
 
     assert options.widget is False
-    assert options.realtime is False
+    assert options.queue is False
 
     child_env = start_services.service_environment(options)
-    assert child_env["MCP_REALTIME_STATUS_ENABLED"] == "false"
+    assert child_env["MCP_COMMAND_QUEUE_ENABLED"] == "false"
 
 
-def test_runtime_environment_is_preserved_without_cli_flags(monkeypatch):
+def test_queue_environment_is_preserved_without_cli_flags(monkeypatch):
+    monkeypatch.setenv("MCP_COMMAND_QUEUE_ENABLED", "true")
+    options = start_services.parse_args([])
+
+    child_env = start_services.service_environment(options)
+
+    assert child_env["MCP_COMMAND_QUEUE_ENABLED"] == "true"
+
+
+def test_legacy_realtime_environment_is_preserved_without_cli_flags(monkeypatch):
+    monkeypatch.delenv("MCP_COMMAND_QUEUE_ENABLED", raising=False)
     monkeypatch.setenv("MCP_REALTIME_STATUS_ENABLED", "true")
     options = start_services.parse_args([])
 
     child_env = start_services.service_environment(options)
 
+    assert "MCP_COMMAND_QUEUE_ENABLED" not in child_env
     assert child_env["MCP_REALTIME_STATUS_ENABLED"] == "true"
 
 
 def test_runtime_flags_override_child_environment_only(monkeypatch):
     monkeypatch.setenv("MCP_WIDGET_ENABLED", "false")
-    monkeypatch.setenv("MCP_REALTIME_STATUS_ENABLED", "true")
+    monkeypatch.setenv("MCP_COMMAND_QUEUE_ENABLED", "true")
     options = start_services.parse_args(["--widget"])
 
     child_env = start_services.service_environment(options)
 
     assert child_env["MCP_WIDGET_ENABLED"] == "true"
-    assert child_env["MCP_REALTIME_STATUS_ENABLED"] == "true"
+    assert child_env["MCP_COMMAND_QUEUE_ENABLED"] == "true"
     assert os.environ["MCP_WIDGET_ENABLED"] == "false"
-    assert os.environ["MCP_REALTIME_STATUS_ENABLED"] == "true"
+    assert os.environ["MCP_COMMAND_QUEUE_ENABLED"] == "true"
 
 def test_ensure_deps_uses_uv_for_uv_managed_venv(monkeypatch):
     import start_services

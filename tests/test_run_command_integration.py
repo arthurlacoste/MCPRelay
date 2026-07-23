@@ -55,7 +55,7 @@ def test_fastmcp_run_command_returns_immediately(tmp_path):
 
 def test_fast_command_returns_inline_output(tmp_path, monkeypatch):
     install_queue(tmp_path)
-    monkeypatch.setattr(mod, 'REALTIME_INLINE_WAIT_SECONDS', .5)
+    monkeypatch.setattr(mod, 'QUEUE_INLINE_WAIT_SECONDS', .5)
 
     async def scenario():
         async with Client(mod.mcp) as client:
