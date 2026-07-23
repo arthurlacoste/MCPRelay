@@ -764,6 +764,7 @@ def _run_command_blocking(
             'purpose': purpose,
             'timeout_seconds': result.timeout_seconds,
         },
+        'status': 'timeout' if result.timed_out else ('success' if result.exit_code == 0 else 'failed'),
         'exit_code': result.exit_code,
         'timed_out': result.timed_out,
         'duration_ms': result.duration_ms,

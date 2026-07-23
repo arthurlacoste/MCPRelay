@@ -213,3 +213,59 @@ def test_update_parser_accepts_explicit_version_and_rejects_conflicts():
     assert args.target_version == "v0.1.14-beta.1"
     with pytest.raises(SystemExit):
         build_parser().parse_args(["update", "--edge", "--version", "0.1.14"])
+
+
+def test_log_command_fails_when_gate_is_stopped(monkeypatch, tmp_path, capsys):
+    import gate_cli.main as main_module
+
+    monkeypatch.setattr(main_module, "gate_is_running", lambda: False)
+
+    assert main_module.main(["log"]) == 1
+    assert "Gate is not running" in capsys.readouterr().out
+
+
+def test_log_command_fails_without_realtime_data(monkeypatch, tmp_path, capsys):
+    import gate_cli.main as main_module
+
+    gate_paths = GatePaths.from_home(tmp_path)
+    gate_paths.ensure_persistent()
+    monkeypatch.setattr(main_module, "gate_is_running", lambda: True)
+    monkeypatch.setattr(main_module, "paths", lambda: gate_paths)
+
+    assert main_module.main(["log"]) == 1
+    assert "No realtime log data" in capsys.readouterr().out
+
+
+def test_log_command_renders_sanitized_realtime_snapshot(monkeypatch, tmp_path, capsys):
+    import json
+    import gate_cli.main as main_module
+
+    gate_paths = GatePaths.from_home(tmp_path)
+    gate_paths.ensure_persistent()
+    (gate_paths.logs / "realtime_calls.json").write_text(
+        json.dumps({
+            "updated_at": "2026-07-23T12:00:00+00:00",
+            "calls": [{
+                "execution_id": "exec-1",
+                "status": "running",
+                "created_at": "2026-07-23T12:00:00+00:00",
+                "started_at": "2026-07-23T12:00:00+00:00",
+                "finished_at": None,
+                "duration_ms": 0,
+                "tool": "run_command",
+                "purpose": "Run project tests",
+                "preview": "pytest -q [REDACTED]",
+                "exit_code": None,
+            }],
+        }),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(main_module, "gate_is_running", lambda: True)
+    monkeypatch.setattr(main_module, "paths", lambda: gate_paths)
+
+    assert main_module.main(["log"]) == 0
+    output = capsys.readouterr().out
+    assert "Realtime calls" in output
+    assert "RUNNING" in output
+    assert "Run project tests" in output
+    assert "[REDACTED]" in output

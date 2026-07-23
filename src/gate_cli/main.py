@@ -10,6 +10,7 @@ from .config import read_env
 from .changelog import version_notes
 from .doctor import run_checks
 from .logs import selected_logs
+from .log_viewer import follow_snapshot
 from .paths import GatePaths
 from .state import load_state
 from .uninstall import uninstall
@@ -112,6 +113,17 @@ def command_doctor() -> int:
     return 0 if all(check.ok for check in checks) else 1
 
 
+def command_log() -> int:
+    if not gate_is_running():
+        print("Gate is not running.")
+        return 1
+    snapshot = paths().logs / "realtime_calls.json"
+    if not snapshot.exists():
+        print("No realtime log data found.")
+        return 1
+    return follow_snapshot(snapshot)
+
+
 def command_logs(*, gateway: bool, ngrok: bool, follow: bool) -> int:
     files = selected_logs(paths(), gateway=gateway, ngrok=ngrok)
     if not files:
@@ -144,6 +156,7 @@ def build_parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="command")
     for name in ("start", "stop", "restart", "status", "secret", "setup", "renew-secret", "rollback", "doctor"):
         sub.add_parser(name)
+    sub.add_parser("log", help="attach to realtime daemon logs")
     logs = sub.add_parser("logs")
     logs.add_argument("--gateway", action="store_true")
     logs.add_argument("--ngrok", action="store_true")
@@ -183,6 +196,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "status": return command_status()
     if args.command == "secret": return command_secret()
     if args.command == "doctor": return command_doctor()
+    if args.command == "log": return command_log()
     if args.command == "logs": return command_logs(gateway=args.gateway, ngrok=args.ngrok, follow=args.follow)
     if args.command == "uninstall": return command_uninstall(purge=args.purge)
     if args.command == "update":
