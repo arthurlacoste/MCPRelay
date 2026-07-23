@@ -8,9 +8,10 @@ def test_windows_launcher_forwards_runtime_switches():
     content = RUN_PS1.read_text()
 
     assert "[switch]$Widget" in content
+    assert "[switch]$Queue" in content
     assert "[switch]$Realtime" in content
     assert '"--widget"' in content
-    assert '"--realtime"' in content
+    assert '"--queue"' in content
 
 
 def test_windows_launcher_creates_skills_directory():

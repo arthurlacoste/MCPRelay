@@ -55,16 +55,20 @@ def parse_args(argv=None):
     parser = argparse.ArgumentParser(description="Start the Gate gateway")
     parser.add_argument("--widget", action="store_true", help="enable the ChatGPT command widget")
     parser.add_argument(
-        "--realtime",
+        "--queue", "--realtime",
+        dest="queue",
         action="store_true",
-        help="enable queued commands and realtime status tools",
+        help="enable the asynchronous command queue (--realtime is a legacy alias)",
     )
     return parser.parse_args(argv)
 
 
 def service_environment(options) -> dict[str, str]:
     env = os.environ.copy()
-    env["MCP_REALTIME_STATUS_ENABLED"] = "true" if options.realtime or options.widget else "false"
+    if options.queue or options.widget:
+        env["MCP_COMMAND_QUEUE_ENABLED"] = "true"
+    elif "MCP_COMMAND_QUEUE_ENABLED" not in env and "MCP_REALTIME_STATUS_ENABLED" not in env:
+        env["MCP_COMMAND_QUEUE_ENABLED"] = "false"
     if options.widget:
         env["MCP_WIDGET_ENABLED"] = "true"
     return env

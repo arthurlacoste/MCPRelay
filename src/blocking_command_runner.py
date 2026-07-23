@@ -1,13 +1,17 @@
 from __future__ import annotations
 
+import logging
 import subprocess
 import threading
 import time
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Callable
 
 from command_queue import process_group_options, terminate_process_tree
+
+LOGGER = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -52,11 +56,13 @@ class BlockingCommandRunner:
         worker_limit: int = 4,
         max_output_chars: int = 50_000,
         redact_text=None,
+        state_observer: Callable[[dict], None] | None = None,
     ):
         self.log_dir = Path(log_dir)
         self.log_dir.mkdir(parents=True, exist_ok=True)
         self.max_output_chars = max_output_chars
         self.redact_text = redact_text or (lambda value: value)
+        self.state_observer = state_observer
         self._capacity = threading.BoundedSemaphore(max(1, int(worker_limit)))
 
     def run(
@@ -64,27 +70,57 @@ class BlockingCommandRunner:
         command: str,
         cwd: str | Path | None = None,
         timeout_seconds: float = 300,
+        purpose: str | None = None,
     ) -> BlockingCommandResult:
         if not isinstance(command, str) or not command.strip():
             raise ValueError("command must be a non-empty string")
         safe_timeout = max(0.1, min(float(timeout_seconds), 86_400.0))
         resolved_cwd = self._resolve_cwd(cwd)
         started = time.monotonic()
+        created_at = datetime.now(UTC).isoformat()
+        log_path = self._new_log_path()
+        execution_id = log_path.stem
+        display_command = self.redact_text(command)
+        state = {
+            "execution_id": execution_id,
+            "status": "waiting",
+            "command": display_command,
+            "purpose": purpose,
+            "created_at": created_at,
+            "started_at": None,
+            "finished_at": None,
+            "duration_ms": 0,
+            "exit_code": None,
+            "tool": "run_command",
+        }
+        self._publish_state(state)
         with self._capacity:
-            log_path = self._new_log_path()
-            display_command = self.redact_text(command)
             log_path.write_text(f"COMMAND:\n{display_command}\n\n", encoding="utf-8")
-            process = subprocess.Popen(
-                command,
-                shell=True,
-                cwd=resolved_cwd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-                bufsize=1,
-                universal_newlines=True,
-                **process_group_options(),
-            )
+            try:
+                process = subprocess.Popen(
+                    command,
+                    shell=True,
+                    cwd=resolved_cwd,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    bufsize=1,
+                    universal_newlines=True,
+                    **process_group_options(),
+                )
+            except Exception:
+                self._publish_state({
+                    **state,
+                    "status": "failed",
+                    "finished_at": datetime.now(UTC).isoformat(),
+                    "duration_ms": int((time.monotonic() - started) * 1000),
+                })
+                raise
+            state.update({
+                "status": "running",
+                "started_at": datetime.now(UTC).isoformat(),
+            })
+            self._publish_state(state)
             stdout_lines: list[str] = []
             stderr_lines: list[str] = []
             stdout_thread = threading.Thread(
@@ -113,6 +149,14 @@ class BlockingCommandRunner:
                     handle.write(f"\nTIMED OUT AFTER: {safe_timeout:g}s\n")
                 handle.write(f"\nEXIT CODE: {process.returncode}\n")
 
+        duration_ms = int((time.monotonic() - started) * 1000)
+        self._publish_state({
+            **state,
+            "status": "timeout" if timed_out else ("success" if process.returncode == 0 else "failed"),
+            "finished_at": datetime.now(UTC).isoformat(),
+            "duration_ms": duration_ms,
+            "exit_code": process.returncode,
+        })
         return BlockingCommandResult(
             command=display_command,
             exit_code=process.returncode,
@@ -121,9 +165,17 @@ class BlockingCommandRunner:
             stdout="".join(stdout_lines),
             stderr="".join(stderr_lines),
             log_path=log_path,
-            duration_ms=int((time.monotonic() - started) * 1000),
+            duration_ms=duration_ms,
             max_output_chars=self.max_output_chars,
         )
+
+    def _publish_state(self, state: dict) -> None:
+        if not self.state_observer:
+            return
+        try:
+            self.state_observer(state)
+        except Exception:
+            LOGGER.exception("Could not publish command state")
 
     def _new_log_path(self) -> Path:
         command_id = datetime.now(UTC).strftime("%Y%m%d_%H%M%S_%f")

@@ -328,9 +328,9 @@ def test_runtime_flags_are_ephemeral_and_forwarded_to_children():
     content = RUN_SCRIPT.read_text()
 
     assert '--widget' in content
-    assert '--realtime' in content
+    assert '--queue' in content
     assert 'export MCP_WIDGET_ENABLED=true' in content
-    assert 'export MCP_REALTIME_STATUS_ENABLED=true' in content
+    assert 'export MCP_COMMAND_QUEUE_ENABLED=true' in content
     assert 'set_env_values MCP_WIDGET_ENABLED' not in content
 
 

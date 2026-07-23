@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import codecs
 import json
+import logging
 import os
 import secrets
 import signal
@@ -19,6 +20,7 @@ from cryptography.fernet import Fernet, InvalidToken
 
 TERMINAL_STATUSES = {'success', 'failed', 'cancelled', 'timeout', 'interrupted'}
 ACTIVE_STATUSES = {'starting', 'running'}
+LOGGER = logging.getLogger(__name__)
 
 
 def utc_now() -> str:
@@ -102,6 +104,7 @@ class CommandQueue:
         on_event: Callable[[str, dict], None] | None = None,
         redact_text=None,
         inspect_command=None,
+        state_observer: Callable[[dict], None] | None = None,
     ):
         self.database_path = Path(database_path)
         self.log_dir = Path(log_dir)
@@ -112,6 +115,7 @@ class CommandQueue:
         self.persist_raw_commands = redact_text is None
         self.redact_text = redact_text or (lambda value: value)
         self.inspect_command = inspect_command
+        self.state_observer = state_observer
         self._pending_commands: dict[str, str] = {}
         self._payload_cipher = self._load_payload_cipher() if not self.persist_raw_commands else None
         self.database_path.parent.mkdir(parents=True, exist_ok=True)
@@ -296,6 +300,7 @@ class CommandQueue:
                 self._pending_commands[execution_id] = command
             self._audit(connection, 'command_enqueued', {'execution_id': execution_id, 'status': status})
         result = self.get_state(execution_id, include_lines=False)
+        self._publish_state(result, purpose)
         self._dispatch()
         return result
 
@@ -361,6 +366,8 @@ class CommandQueue:
         if not changed:
             terminate_process_tree(process)
             return
+        running_state = self.get_state(execution_id, include_lines=False)
+        self._publish_state(running_state, job['purpose'])
         readers = [
             threading.Thread(target=self._read_pipe, args=(execution_id, 'stdout', process.stdout), daemon=True),
             threading.Thread(target=self._read_pipe, args=(execution_id, 'stderr', process.stderr), daemon=True),
@@ -457,6 +464,7 @@ class CommandQueue:
                 })
             with open(job['log_path'], 'a', encoding='utf-8') as handle:
                 handle.write(f'\nSTATUS: {status.upper()}\nEXIT CODE: {exit_code}\n')
+        self._publish_state(self.get_state(execution_id, include_lines=False), job['purpose'])
         try:
             if self.on_event:
                 event = self.get_state(execution_id, include_lines=False)
@@ -467,9 +475,17 @@ class CommandQueue:
                 })
                 self.on_event(execution_id, event)
         except Exception:
-            pass
+            LOGGER.exception('Command completion callback failed')
         finally:
             self._dispatch()
+
+    def _publish_state(self, state: dict, purpose: str | None = None) -> None:
+        if not self.state_observer:
+            return
+        try:
+            self.state_observer({**state, 'purpose': purpose, 'tool': 'run_command'})
+        except Exception:
+            LOGGER.exception('Could not publish command state')
 
     def stop(self, execution_id: str) -> dict:
         notify = False
@@ -504,6 +520,7 @@ class CommandQueue:
                 self.on_event(execution_id, event)
             except Exception:
                 pass
+        self._publish_state(state, row['purpose'])
         self._dispatch()
         return state
 

@@ -1,5 +1,6 @@
 param(
     [switch]$Widget,
+    [switch]$Queue,
     [switch]$Realtime
 )
 
@@ -52,7 +53,7 @@ if (-not (Get-Command ngrok -ErrorAction SilentlyContinue)) {
 
 $ServiceArgs = @("start_services.py")
 if ($Widget) { $ServiceArgs += "--widget" }
-if ($Realtime) { $ServiceArgs += "--realtime" }
+if ($Queue -or $Realtime) { $ServiceArgs += "--queue" }
 
 $Gateway = Start-Process `
     -FilePath $Python `

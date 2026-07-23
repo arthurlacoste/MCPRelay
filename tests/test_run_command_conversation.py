@@ -38,7 +38,7 @@ def test_run_command_writes_conversation_event(tmp_path, monkeypatch):
         command=f'"{sys.executable}" -c "import sys; print(\'hello\'); print(\'error\', file=sys.stderr)"',
         conversation_id='conv-test', purpose='test command',
     )
-    assert result['status'] in {'queued', 'starting', 'running'}
+    assert result['status'] in {'queued', 'running', 'success'}
     final = wait_final(queue, result['execution_id'])
     payload = json.loads((tmp_path / 'conv-test.jsonl').read_text().splitlines()[-1])
     stream_log = (tmp_path / f"{result['execution_id']}.log").read_text()

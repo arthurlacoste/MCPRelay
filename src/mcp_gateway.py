@@ -9,6 +9,7 @@ import secrets
 import subprocess
 import atexit
 import re
+import time
 from contextlib import asynccontextmanager
 from threading import Lock
 from time import monotonic
@@ -29,6 +30,7 @@ from terminal_app import TERMINAL_APP_HTML, TERMINAL_APP_URI
 from tool_registry import configurable_tool
 from mcp_proxy import MCPProxyManager
 from runtime_features import RuntimeFeatures, runtime_mode_summary
+from realtime_calls import RealtimeCallStore
 from skill_catalog import skills_read as read_skill, skills_search as search_skills
 from tool_metadata import tool_metadata
 from pydantic import AnyHttpUrl
@@ -44,6 +46,7 @@ logging.basicConfig(level=logging.INFO)
 
 LOG_FILE = GATEWAY_PATHS.logs / 'mcp_gateway.log'
 STREAM_DIR = GATEWAY_PATHS.logs / 'commands'
+REALTIME_CALLS_FILE = GATEWAY_PATHS.logs / 'realtime_calls.json'
 CONVERSATION_DIR = GATEWAY_PATHS.logs / 'conversations'
 PUBLIC_SHARES_FILE = GATEWAY_PATHS.data / 'public_file_shares.json'
 STREAM_DIR.mkdir(parents=True, exist_ok=True)
@@ -499,6 +502,13 @@ MAX_COMMAND_LINES = max(100, int(os.getenv('MCP_COMMAND_MAX_LINES', '20000')))
 COMMAND_HISTORY_LIMIT = max(10, int(os.getenv('MCP_COMMAND_HISTORY_LIMIT', '2000')))
 COMMAND_DATABASE = Path(os.getenv('MCP_COMMAND_DATABASE', GATEWAY_PATHS.data / 'commands.sqlite3'))
 TERMINAL_SESSION_TTL_SECONDS = max(1.0, float(os.getenv('MCP_TERMINAL_SESSION_TTL_SECONDS', '60')))
+QUEUE_INLINE_WAIT_SECONDS = max(
+    0.0,
+    min(float(os.getenv(
+        'MCP_COMMAND_QUEUE_INLINE_WAIT_MS',
+        os.getenv('MCP_REALTIME_INLINE_WAIT_MS', '100'),
+    )) / 1000, 0.2),
+)
 TERMINAL_APP = {'resourceUri': TERMINAL_APP_URI, 'prefersBorder': True}
 TERMINAL_HELPER_APP = {'visibility': ['app', 'model']}
 TERMINAL_TOOL_META = {
@@ -648,7 +658,12 @@ def command_finished(execution_id: str, state: dict) -> None:
 
 command_queue = None
 blocking_runner = None
-if RUNTIME_FEATURES.realtime_enabled:
+realtime_store = RealtimeCallStore(
+    max_entries=max(1, int(os.getenv('GATE_REALTIME_MAX_ENTRIES', '200'))),
+    snapshot_path=REALTIME_CALLS_FILE,
+    redact_text=SECRET_REDACTOR.redact_text,
+)
+if RUNTIME_FEATURES.command_queue_enabled:
     command_queue = CommandQueue(
         COMMAND_DATABASE,
         STREAM_DIR,
@@ -660,6 +675,7 @@ if RUNTIME_FEATURES.realtime_enabled:
         inspect_command=lambda command, cwd: COMMAND_GUARD.inspect(
             current_guard_request("run_command", {}, command, cwd)
         ),
+        state_observer=realtime_store.update,
     )
     atexit.register(command_queue.close)
 else:
@@ -667,11 +683,12 @@ else:
         STREAM_DIR,
         worker_limit=MAX_CONCURRENT_COMMANDS,
         redact_text=SECRET_REDACTOR.redact_text,
+        state_observer=realtime_store.update,
     )
 
 
-def realtime_tool(**options):
-    if not RUNTIME_FEATURES.realtime_enabled:
+def queue_tool(**options):
+    if not RUNTIME_FEATURES.command_queue_enabled:
         return lambda func: func
     return configurable_tool(mcp, **options)
 
@@ -706,7 +723,12 @@ def _run_command_blocking(
         'timeout_seconds': timeout_seconds,
         'mode': 'blocking',
     })
-    result = blocking_runner.run(command, cwd=cwd, timeout_seconds=timeout_seconds)
+    result = blocking_runner.run(
+        command,
+        cwd=cwd,
+        timeout_seconds=timeout_seconds,
+        purpose=purpose,
+    )
     log_action('run_command_end', {
         'command': command,
         'exit_code': result.exit_code,
@@ -734,7 +756,7 @@ def _run_command_blocking(
     return result.render()
 
 
-def _run_command_realtime(
+def _run_command_queued(
     command: str,
     cwd: str | None = None,
     conversation_id: str | None = None,
@@ -760,8 +782,36 @@ def _run_command_realtime(
         'purpose': purpose,
         'timeout_seconds': timeout_seconds,
     })
-    if state['status'] in {'waiting', 'starting'}:
-        state['status'] = 'queued' if state['status'] == 'waiting' else 'running'
+    deadline = time.perf_counter() + QUEUE_INLINE_WAIT_SECONDS
+    while state['status'] in TERMINAL_ACTIVE_STATUSES and time.perf_counter() < deadline:
+        time.sleep(0.01)
+        state = command_queue.get_state(state['execution_id'], limit=50)
+    return command_response(state)
+
+
+def command_response(state: dict, after_cursor: int = 0) -> dict:
+    if state['status'] == 'waiting':
+        state['status'] = 'queued'
+    elif state['status'] == 'starting':
+        state['status'] = 'running'
+    active = state['status'] in TERMINAL_ACTIVE_STATUSES
+    state['polling'] = active
+    state['closed'] = False
+    if active:
+        state['next_action'] = {
+            'tool': 'get_command_state',
+            'arguments': {
+                'execution_id': state['execution_id'],
+                'after_cursor': after_cursor,
+            },
+        }
+        state['message'] = (
+            'Command still running. Poll get_command_state until status is terminal. '
+            'Do not start another command to read log_ref.'
+        )
+    else:
+        state['next_action'] = None
+        state['message'] = 'Command finished. Read output from lines.'
     return state
 
 
@@ -775,6 +825,7 @@ def run_command(
     chatgpt_url: str | None = None,
     ctx: Context = None,
 ):
+    """Run a command. If queued/running, follow next_action until a terminal status is returned."""
     guard_result = COMMAND_GUARD.inspect(current_guard_request(
         "run_command",
         {"purpose": purpose, "timeout_seconds": timeout_seconds},
@@ -783,7 +834,7 @@ def run_command(
     ))
     if guard_result.decision == "deny":
         return {"status": "denied", **guard_result.as_dict()}
-    runner = _run_command_realtime if RUNTIME_FEATURES.realtime_enabled else _run_command_blocking
+    runner = _run_command_queued if RUNTIME_FEATURES.command_queue_enabled else _run_command_blocking
     result = runner(
         command, cwd, conversation_id, purpose,
         include_output_in_conversation_log, timeout_seconds, chatgpt_url,
@@ -792,7 +843,7 @@ def run_command(
     return result
 
 
-run_command.__annotations__['return'] = dict if RUNTIME_FEATURES.realtime_enabled else str
+run_command.__annotations__['return'] = dict if RUNTIME_FEATURES.command_queue_enabled else str
 run_command = configurable_tool(
     mcp,
     title='Run command',
@@ -801,7 +852,7 @@ run_command = configurable_tool(
 )(run_command)
 
 
-@realtime_tool(
+@queue_tool(
     title='Get command queue',
     annotations={'readOnlyHint': True, 'idempotentHint': True},
     **TERMINAL_HELPER_OPTIONS,
@@ -818,7 +869,7 @@ def get_queue_state(visible_limit: int = 8, ctx: Context = None) -> dict:
     return state
 
 
-@realtime_tool(
+@queue_tool(
     title='Get command state',
     annotations={'readOnlyHint': True, 'idempotentHint': True},
     **TERMINAL_HELPER_OPTIONS,
@@ -829,6 +880,7 @@ def get_command_state(
     limit: int = 200,
     ctx: Context = None,
 ) -> dict:
+    """Poll a run_command execution. Reuse next_action; never run cat on log_ref."""
     session = terminal_session_state(ctx)
     if session['closed']:
         return {
@@ -841,10 +893,10 @@ def get_command_state(
             'has_more': False,
             'session': session,
         }
-    return command_queue.get_state(execution_id, after_cursor, limit)
+    return command_response(command_queue.get_state(execution_id, after_cursor, limit), after_cursor)
 
 
-@realtime_tool(
+@queue_tool(
     title='Stop command',
     annotations={'destructiveHint': True, 'idempotentHint': True},
     **TERMINAL_HELPER_OPTIONS,
@@ -853,7 +905,7 @@ def stop_command(execution_id: str) -> dict:
     return command_queue.stop(execution_id)
 
 
-@realtime_tool(
+@queue_tool(
     title='Get command output',
     annotations={'readOnlyHint': True, 'idempotentHint': True},
     **TERMINAL_HELPER_OPTIONS,
@@ -881,7 +933,7 @@ def get_command_output(
     return command_queue.get_output(execution_id, effective_cursor, limit)
 
 
-@realtime_tool(
+@queue_tool(
     title='Download command log',
     annotations={'readOnlyHint': True, 'idempotentHint': True},
     **TERMINAL_HELPER_OPTIONS,
@@ -890,7 +942,7 @@ def get_command_log(execution_id: str, offset: int = 0, limit_bytes: int = 262_1
     return command_queue.get_log(execution_id, offset, limit_bytes)
 
 
-@realtime_tool(
+@queue_tool(
     title='Resolve command recovery',
     annotations={'destructiveHint': True, 'idempotentHint': True},
     **TERMINAL_HELPER_OPTIONS,
@@ -907,7 +959,8 @@ if __name__ == '__main__':
         'host': '0.0.0.0',
         'port': 8761,
         'oauth_enabled': ENABLE_OAUTH,
-        'realtime_status_enabled': RUNTIME_FEATURES.realtime_enabled,
+        'command_queue_enabled': RUNTIME_FEATURES.command_queue_enabled,
+        'realtime_monitor_enabled': True,
         'widget_enabled': RUNTIME_FEATURES.widget_enabled,
     })
 

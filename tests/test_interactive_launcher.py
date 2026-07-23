@@ -132,6 +132,7 @@ def test_controls_are_aligned_in_one_key_column():
     assert lines == [
         "[m]    Connection details",
         "[c]    Changelog",
+        "[r]    Realtime calls",
         "[u]    Install update 0.1.8",
         "[^C]   Stop Gate",
     ]

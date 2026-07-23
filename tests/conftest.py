@@ -28,7 +28,7 @@ os.environ["OAUTH_TOKEN_TTL_SECONDS"] = "3600"
 os.environ["OAUTH_AUTO_REGISTER_AUTH_CLIENTS"] = "true"
 os.environ["OAUTH_ACCESS_SECRET_HASH"] = PasswordHasher().hash("correct horse battery staple")
 os.environ["OAUTH_LOGIN_MAX_ATTEMPTS"] = "5"
-os.environ["MCP_REALTIME_STATUS_ENABLED"] = "true"
+os.environ["MCP_COMMAND_QUEUE_ENABLED"] = "true"
 os.environ["MCP_WIDGET_ENABLED"] = "false"
 
 # -------------------------------------------------------------------

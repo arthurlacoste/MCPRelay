@@ -583,11 +583,11 @@ status() {
 
 parse_runtime_args() {
     RUNTIME_COMMAND=""
-    local widget=false realtime=false arg
+    local widget=false queue=false arg
     for arg in "$@"; do
         case "$arg" in
             --widget) widget=true ;;
-            --realtime) realtime=true ;;
+            --queue|--realtime) queue=true ;;
             start|stop|status|setup|renew-secret)
                 [ -z "$RUNTIME_COMMAND" ] || die "Only one command may be specified."
                 RUNTIME_COMMAND="$arg"
@@ -598,18 +598,18 @@ parse_runtime_args() {
 
     case "$RUNTIME_COMMAND" in
         stop|status|setup|renew-secret)
-            if [ "$widget" = true ] || [ "$realtime" = true ]; then
+            if [ "$widget" = true ] || [ "$queue" = true ]; then
                 die "Runtime flags are only valid when starting Gate."
             fi
             ;;
     esac
 
-    export MCP_REALTIME_STATUS_ENABLED=false
+    export MCP_COMMAND_QUEUE_ENABLED=false
     if [ "$widget" = true ]; then
         export MCP_WIDGET_ENABLED=true
     fi
-    if [ "$realtime" = true ] || [ "$widget" = true ]; then
-        export MCP_REALTIME_STATUS_ENABLED=true
+    if [ "$queue" = true ] || [ "$widget" = true ]; then
+        export MCP_COMMAND_QUEUE_ENABLED=true
     fi
 }
 
@@ -631,7 +631,7 @@ case "${1:-}" in
     renew-secret) ensure_python_environment; ensure_onboarding true ;;
     *)
         if [ $# -gt 0 ]; then
-            echo "Usage: $0 [start] [--realtime] [--widget]"
+            echo "Usage: $0 [start] [--queue] [--widget]"
             echo "       $0 {stop|status|setup|renew-secret}"
             echo ""
             echo "  (no arg)  Interactive mode – Ctrl+C stops everything"

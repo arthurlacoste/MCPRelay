@@ -578,7 +578,7 @@ Stop the public tunnel whenever it is not in use.
 
 ## Asynchronous command terminal
 
-By default, `./run.sh` uses the historical blocking `run_command` contract. It waits for completion and returns command output directly. Realtime queue tools and the ChatGPT widget are disabled.
+By default, `./run.sh` uses the historical blocking `run_command` contract. It waits for completion and returns command output directly. The **Realtime calls** monitor remains available in the interactive launcher; command queue tools and the ChatGPT widget are disabled.
 
 Use additive startup flags without changing `config/.env`:
 
@@ -586,28 +586,28 @@ Use additive startup flags without changing `config/.env`:
 # Blocking mode, no widget
 ./run.sh
 
-# Realtime queue and status tools, no widget
-./run.sh --realtime
+# Asynchronous command queue and polling tools, no widget
+./run.sh --queue
 
-# Realtime queue, status tools, and ChatGPT widget
+# Asynchronous command queue, polling tools, and ChatGPT widget
 ./run.sh --widget
 
 # Daemon mode
-./run.sh start --realtime
+./run.sh start --queue
 ./run.sh start --widget
 
 # Direct supervisor usage
-python start_services.py --realtime
+python start_services.py --queue
 python start_services.py --widget
 
 # Windows
-.\run.ps1 -Realtime
+.\run.ps1 -Queue
 .\run.ps1 -Widget
 ```
 
-`--realtime` enables queued commands and the realtime status tools. `--widget` adds the MCP App resource and output template, and automatically enables realtime because the widget depends on the command queue.
+`--queue` enables queued commands and their polling tools. `--widget` adds the MCP App resource and output template, and automatically enables the queue because the widget depends on it. The legacy `--realtime` / `-Realtime` aliases remain accepted.
 
-For persistent defaults, configure `MCP_WIDGET_ENABLED` (default `false`) and `MCP_REALTIME_STATUS_ENABLED` (default `false`). Enabling the widget also enables realtime. Command-line flags affect only the launched process tree.
+For persistent defaults, configure `MCP_WIDGET_ENABLED` (default `false`) and `MCP_COMMAND_QUEUE_ENABLED` (default `false`). `MCP_REALTIME_STATUS_ENABLED` remains a legacy fallback. Enabling the widget also enables the queue. Command-line flags affect only the launched process tree.
 
 After a gateway restart, formerly active commands become `interrupted` and pending commands remain suspended. The widget asks whether to **Relancer** (resume) or **Vider** (cancel) them before any recovered command starts.
 
