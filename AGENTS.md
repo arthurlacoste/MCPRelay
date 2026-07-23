@@ -108,3 +108,7 @@ After code changes:
 - Run `git diff --check`.
 - Validate `run.sh` with `bash -n run.sh` after shell changes.
 - Note when Windows PowerShell validation was static because `pwsh` was unavailable.
+
+## Pull requests
+
+Every pull request must follow `.github/PULL_REQUEST_TEMPLATE.md`. Keep all required headings. Fill `Summary`, `Changes`, and `Testing` with concrete information. Under `AI assistance`, always state the application and exact model used. Use `none` for both fields when no AI assisted the change. The `Pull request structure` CI check enforces this contract.
