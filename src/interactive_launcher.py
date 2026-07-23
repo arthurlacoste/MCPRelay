@@ -21,6 +21,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from dotenv import dotenv_values
+from ngrok_target import resolve_ngrok_target
 
 
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -416,11 +417,12 @@ def start_ngrok() -> tuple[subprocess.Popen | ExistingProcess, str]:
         process = ExistingProcess(int(existing))
         if process.poll() is None:
             return process, "onboarding tunnel reused"
+    target = resolve_ngrok_target(NGROK_PORT)
     if shutil.which("caffeinate"):
-        command = ["caffeinate", "-i", "ngrok", "http", str(NGROK_PORT), "--log=stdout"]
+        command = ["caffeinate", "-i", "ngrok", "http", target, "--log=stdout"]
         label = "caffeinate active"
     else:
-        command = ["ngrok", "http", str(NGROK_PORT), "--log=stdout"]
+        command = ["ngrok", "http", target, "--log=stdout"]
         label = "sleep inhibition inactive"
 
     with NGROK_LOG.open("w", encoding="utf-8") as log_file:

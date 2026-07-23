@@ -54,6 +54,7 @@ if (-not (Get-Command ngrok -ErrorAction SilentlyContinue)) {
 $ServiceArgs = @("start_services.py")
 if ($Widget) { $ServiceArgs += "--widget" }
 if ($Queue -or $Realtime) { $ServiceArgs += "--queue" }
+$NgrokTarget = if ($env:GATE_NGROK_TARGET) { $env:GATE_NGROK_TARGET } else { "8761" }
 
 $Gateway = Start-Process `
     -FilePath $Python `
@@ -66,7 +67,7 @@ try {
     Start-Sleep -Seconds 2
     Write-Host "Gate ready on http://localhost:8761/mcp"
     Write-Host "Starting ngrok. Press Ctrl+C to stop."
-    & ngrok http 8761
+    & ngrok http $NgrokTarget
 } finally {
     if (-not $Gateway.HasExited) {
         & taskkill /PID $Gateway.Id /T /F | Out-Null

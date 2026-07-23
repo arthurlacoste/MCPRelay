@@ -35,6 +35,24 @@ def test_ngrok_startup_failure_points_to_ngrok_log():
     )
 
 
+def test_start_ngrok_uses_resolved_target(monkeypatch, tmp_path):
+    process = Mock()
+    popen = Mock(return_value=process)
+    monkeypatch.delenv("GATE_EXISTING_NGROK_PID", raising=False)
+    monkeypatch.setattr(interactive_launcher, "NGROK_LOG", tmp_path / "ngrok.log")
+    monkeypatch.setattr(interactive_launcher, "resolve_ngrok_target", lambda port: "172.20.10.2:8761")
+    monkeypatch.setattr(interactive_launcher.shutil, "which", lambda name: None)
+    monkeypatch.setattr(interactive_launcher.subprocess, "Popen", popen)
+
+    returned, _ = interactive_launcher.start_ngrok()
+
+    assert returned is process
+    assert popen.call_args.args[0][:4] == [
+        "ngrok", "http", "172.20.10.2:8761", "--log=stdout",
+    ]
+    popen.call_args.kwargs["stdout"].close()
+
+
 def test_start_services_captures_output(monkeypatch, tmp_path):
     log = tmp_path / "launcher.log"
     popen = Mock(return_value=Mock())

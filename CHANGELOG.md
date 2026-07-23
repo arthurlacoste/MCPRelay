@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.1.16
+
+### Fixed
+
+- Route ngrok to the active macOS LAN address so a loopback-only listener on port `8761` cannot expose the wrong OAuth/JWKS instance.
+- Add `GATE_NGROK_TARGET` as an explicit cross-platform upstream override.
+
+### Tests
+
+- Add focused coverage for macOS address discovery, fallback behavior, overrides, and launcher integration.
+
 ## 0.1.15
 
 ### Added
