@@ -15,8 +15,9 @@ from typing import Any, Callable, Mapping
 from fastmcp import Client, FastMCP
 from fastmcp.mcp_config import MCPConfig
 from fastmcp.server import create_proxy
+from fastmcp.server.providers.fastmcp_provider import FastMCPProvider
 from fastmcp.server.providers.proxy import StatefulProxyClient
-from fastmcp.server.transforms import ToolTransform
+from fastmcp.server.transforms import Namespace, ToolTransform
 from fastmcp.tools.tool_transform import ToolTransformConfig
 
 from command_guard import GuardService
@@ -112,10 +113,10 @@ class MCPRegistry:
         self.environ = os.environ if environ is None else environ
         self.event_logger = event_logger
         self.command_guard = command_guard
-        self.refresh_interval_seconds = float(
+        self.refresh_interval_seconds = max(0.0, float(
             refresh_interval_seconds if refresh_interval_seconds is not None
             else self.environ.get("MCP_DISCOVERY_REFRESH_INTERVAL_SECONDS", 60)
-        )
+        ))
         self.retry_initial_seconds = float(
             retry_initial_seconds if retry_initial_seconds is not None
             else self.environ.get("MCP_DISCOVERY_RETRY_INITIAL_SECONDS", 2)
@@ -126,7 +127,6 @@ class MCPRegistry:
         )
         self.gateway: FastMCP | None = None
         self.states: dict[str, ServerState] = {}
-        self._native_tools: set[str] = set()
         self._lock = asyncio.Lock()
         self._watch_task: asyncio.Task | None = None
         self._closed = False
@@ -138,7 +138,6 @@ class MCPRegistry:
 
     async def start(self, gateway: FastMCP) -> None:
         self.gateway = gateway
-        self._native_tools = {tool.name for tool in await gateway.list_tools()}
         await self.refresh()
         if self.refresh_interval_seconds > 0:
             self._watch_task = asyncio.create_task(self._watch(), name="mcp-registry-watch")
@@ -193,11 +192,11 @@ class MCPRegistry:
                 state.next_retry_at is None or state.next_retry_at <= now
             )
             if state is None:
-                diff.added_servers.add(name)
-                await self._reload_locked(server, diff)
+                if await self._reload_locked(server, diff):
+                    diff.added_servers.add(name)
             elif state.config_fingerprint != fingerprint:
-                diff.changed_servers.add(name)
-                await self._reload_locked(server, diff)
+                if await self._reload_locked(server, diff):
+                    diff.changed_servers.add(name)
             elif should_retry:
                 await self._reload_locked(server, diff)
         if diff.changed:
@@ -209,13 +208,14 @@ class MCPRegistry:
         async with self._lock:
             if server_name not in configured:
                 raise KeyError(f"unknown or disabled MCP server: {server_name}")
-            diff = RegistryDiff(changed_servers={server_name})
-            await self._reload_locked(configured[server_name], diff)
+            diff = RegistryDiff()
+            if await self._reload_locked(configured[server_name], diff):
+                diff.changed_servers.add(server_name)
             if diff.changed:
                 self._event("mcp_catalog_changed", diff.as_dict())
             return self.states[server_name]
 
-    async def _reload_locked(self, server: ProxyServerConfig, diff: RegistryDiff) -> None:
+    async def _reload_locked(self, server: ProxyServerConfig, diff: RegistryDiff) -> bool:
         if self.gateway is None:
             raise RuntimeError("registry has not started")
         old = self.states.get(server.name)
@@ -251,10 +251,9 @@ class MCPRegistry:
                 f"{server.prefix}_{transforms[t.name].name or t.name}" if t.name in transforms else f"{server.prefix}_{t.name}"
                 for t in tools if t.name not in transforms or transforms[t.name].enabled
             }
-            occupied = set(self._native_tools)
-            for name, state in self.states.items():
-                if name != server.name and state.provider is not None:
-                    occupied.update(state.public_tools)
+            occupied = {tool.name for tool in await self.gateway.list_tools()}
+            if old:
+                occupied.difference_update(old.public_tools)
             collisions = public_tools & occupied
             if collisions:
                 raise ValueError(f"tool name collision: {', '.join(sorted(collisions))}")
@@ -267,9 +266,8 @@ class MCPRegistry:
             if self.event_logger:
                 proxy.add_middleware(ProxyCallLoggingMiddleware(server.name, self.event_logger))
 
-            before = len(self.gateway.providers)
-            self.gateway.add_provider(proxy, namespace=server.prefix)
-            provider = self.gateway.providers[before]
+            provider = FastMCPProvider(proxy).wrap_transform(Namespace(server.prefix))
+            self.gateway.add_provider(provider)
             state = ServerState(
                 name=server.name,
                 prefix=server.prefix,
@@ -300,6 +298,7 @@ class MCPRegistry:
                 "server": server.name, "prefix": server.prefix, "status": "healthy",
                 "tool_count": len(public_tools), "duration_ms": round((monotonic()-started)*1000, 2),
             })
+            return True
         except Exception as exc:
             if client:
                 with suppress(Exception, asyncio.CancelledError):
@@ -327,6 +326,7 @@ class MCPRegistry:
                 "server": server.name, "prefix": server.prefix, "status": self.states[server.name].status,
                 "error_type": type(exc).__name__, "duration_ms": round((monotonic()-started)*1000, 2),
             })
+            return False
 
     async def remove_server(self, server_name: str) -> None:
         async with self._lock:

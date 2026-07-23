@@ -160,3 +160,64 @@ def test_repeated_failed_reloads_keep_last_healthy_provider(tmp_path):
     assert state.client is not None
     assert original_provider in providers
     assert result.content[0].text == "ok"
+
+
+def test_native_tool_registered_after_start_blocks_proxy_collision(tmp_path):
+    from mcp_proxy import MCPProxyManager
+
+    script = _server_script(tmp_path)
+    config = tmp_path / "mcp.json"
+    _write_config(config, {})
+    gateway = FastMCP("gateway")
+    manager = MCPProxyManager(config, project_root=tmp_path, environ={}, refresh_interval_seconds=0)
+
+    async def scenario():
+        await manager.start(gateway)
+
+        @gateway.tool(name="demo_echo")
+        def native_echo() -> str:
+            return "native"
+
+        _write_config(config, {"demo": {"command": sys.executable, "args": [str(script), "echo", "proxy"]}})
+        diff = await manager.refresh()
+        result = await gateway.call_tool("demo_echo", {})
+        status = manager.server_status("demo")
+        await manager.close()
+        return diff, result, status
+
+    diff, result, status = asyncio.run(scenario())
+    assert not diff.changed
+    assert result.content[0].text == "native"
+    assert status["status"] == "offline"
+    assert status["last_error"] == "ValueError"
+
+
+def test_failed_reload_is_not_reported_as_catalog_change(tmp_path):
+    from mcp_proxy import MCPProxyManager
+
+    config = tmp_path / "mcp.json"
+    _write_config(config, {})
+    gateway = FastMCP("gateway")
+    manager = MCPProxyManager(config, project_root=tmp_path, environ={}, refresh_interval_seconds=0)
+
+    async def scenario():
+        await manager.start(gateway)
+        _write_config(config, {"broken": {"command": "/missing/server"}})
+        diff = await manager.refresh()
+        await manager.close()
+        return diff
+
+    diff = asyncio.run(scenario())
+    assert not diff.changed
+    assert diff.added_servers == set()
+    assert diff.changed_servers == set()
+
+
+def test_negative_refresh_interval_is_clamped_to_zero(tmp_path):
+    from mcp_proxy import MCPProxyManager
+
+    config = tmp_path / "mcp.json"
+    _write_config(config, {})
+    manager = MCPProxyManager(config, project_root=tmp_path, environ={}, refresh_interval_seconds=-5)
+
+    assert manager.registry.refresh_interval_seconds == 0
