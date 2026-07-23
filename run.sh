@@ -13,6 +13,11 @@ ONBOARDING_NGROK_PID=""
 ONBOARDING_PUBLIC_URL=""
 CHATGPT_CONNECTOR_URL="https://chatgpt.com/plugins#settings/Connectors?create-connector=true&redirectAfter=%2Fplugins"
 
+resolve_ngrok_target() {
+    PYTHONPATH="$PROJECT_DIR/src" "$PROJECT_DIR/.venv/bin/python" -c \
+        'from ngrok_target import resolve_ngrok_target; print(resolve_ngrok_target(8761))'
+}
+
 info() { printf '\n\033[1;34m%s\033[0m\n' "$*"; }
 ok() { printf '\033[1;32m✓ %s\033[0m\n' "$*"; }
 warn() { printf '\033[1;33m! %s\033[0m\n' "$*"; }
@@ -126,7 +131,7 @@ show_ngrok_inspector() {
 }
 
 ngrok_pids() {
-    pgrep -f "(^|[ /])ngrok[[:space:]]+http[[:space:]]+${NGROK_PORT}([[:space:]]|$)" 2>/dev/null || true
+    pgrep -f "(^|[ /])ngrok[[:space:]]+http[[:space:]]+([^[:space:]]*:)?${NGROK_PORT}([[:space:]]|$)" 2>/dev/null || true
 }
 
 signal_ngrok_pids() {
@@ -252,7 +257,7 @@ open_temporary_ngrok() {
     local public_url="" raw_response
     mkdir -p "$(dirname "$NGROK_LOG")"
     : > "$NGROK_LOG"
-    ngrok http "$NGROK_PORT" --log=stdout > "$NGROK_LOG" 2>&1 &
+    ngrok http "${GATE_NGROK_TARGET:-$NGROK_PORT}" --log=stdout > "$NGROK_LOG" 2>&1 &
     ONBOARDING_NGROK_PID=$!
 
     for _ in $(seq 1 20); do
@@ -425,6 +430,7 @@ run_interactive() {
     fi
     cleanup_stale_ngrok
     ensure_python_environment
+    export GATE_NGROK_TARGET="${GATE_NGROK_TARGET:-$(resolve_ngrok_target)}"
     ensure_onboarding
     source .venv/bin/activate
     "$PROJECT_DIR/.venv/bin/python" "$PROJECT_DIR/src/interactive_launcher.py"
@@ -439,6 +445,7 @@ start_daemon() {
 
     cleanup_stale_ngrok
     ensure_python_environment
+    export GATE_NGROK_TARGET="${GATE_NGROK_TARGET:-$(resolve_ngrok_target)}"
     ensure_onboarding
 
     source .venv/bin/activate
@@ -451,11 +458,11 @@ start_daemon() {
         NGROK_PID="$GATE_EXISTING_NGROK_PID"
         KEEP_AWAKE_LABEL="onboarding tunnel reused"
     elif command -v caffeinate >/dev/null 2>&1; then
-        nohup caffeinate -i ngrok http "$NGROK_PORT" > /dev/null 2>&1 &
+        nohup caffeinate -i ngrok http "$GATE_NGROK_TARGET" > /dev/null 2>&1 &
         NGROK_PID=$!
         KEEP_AWAKE_LABEL="caffeinate active"
     else
-        nohup ngrok http "$NGROK_PORT" > /dev/null 2>&1 &
+        nohup ngrok http "$GATE_NGROK_TARGET" > /dev/null 2>&1 &
         NGROK_PID=$!
         KEEP_AWAKE_LABEL="sleep inhibition inactive"
     fi

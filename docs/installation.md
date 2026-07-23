@@ -36,6 +36,8 @@ gate uninstall --purge
 
 Cross-platform guide for macOS, Linux, and Windows. The local gateway listens on port `8761`. ngrok exposes this port over HTTPS. ChatGPT connects to `/mcp` and handles the OAuth flow automatically.
 
+On macOS, Gate targets ngrok at the active LAN address instead of `localhost`. This prevents another loopback-only process on port `8761` from shadowing Gate. Set `GATE_NGROK_TARGET` to override the detected upstream.
+
 ## 1. Requirements
 
 - GitHub account with repository access.
