@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.1.17
+
+### Fixed
+
+- Probe gateway readiness through the same resolved LAN target used by ngrok on macOS.
+- Avoid false startup timeouts when another process owns loopback port `8761`.
+
+### Tests
+
+- Add coverage ensuring gateway health checks follow the resolved ngrok target and retain the loopback fallback elsewhere.
+
 ## 0.1.16
 
 ### Fixed
