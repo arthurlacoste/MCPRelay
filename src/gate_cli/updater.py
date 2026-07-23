@@ -111,7 +111,6 @@ def perform_update(
     current_version: str,
     *,
     edge: bool = False,
-    stable: bool = False,
     target_version: str | None = None,
 ):
     from .remote import GitHubRepository

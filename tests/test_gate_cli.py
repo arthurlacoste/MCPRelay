@@ -135,7 +135,7 @@ def test_update_command_uses_lifecycle_helpers(monkeypatch, tmp_path, capsys):
     monkeypatch.setattr(main_module, "gate_is_running", lambda: True)
     monkeypatch.setattr(main_module, "confirm_default_yes", lambda prompt: events.append("confirm") or True)
     monkeypatch.setattr(main_module, "delegate_run_script", lambda command=None: events.append(command or "interactive") or 0)
-    monkeypatch.setattr(main_module, "perform_gate_update", lambda edge, stable, target_version=None: ("0.2.0", True, "- New CLI"))
+    monkeypatch.setattr(main_module, "perform_gate_update", lambda edge, target_version=None: ("0.2.0", True, "- New CLI"))
 
     assert main_module.main(["update"]) == 0
     assert events == ["confirm", "stop", "start"]
@@ -157,7 +157,7 @@ def test_update_migration_error_prints_report_and_issue(monkeypatch, capsys, tmp
     report.write_text("traceback")
     error = MigrationError("boom", report, "https://github.com/spelcc/gate/issues/new?x=1")
     monkeypatch.setattr(main_module, "gate_is_running", lambda: False)
-    monkeypatch.setattr(main_module, "perform_gate_update", lambda edge, stable, target_version=None: (_ for _ in ()).throw(error))
+    monkeypatch.setattr(main_module, "perform_gate_update", lambda edge, target_version=None: (_ for _ in ()).throw(error))
 
     assert main_module.main(["update"]) == 1
     output = capsys.readouterr().out

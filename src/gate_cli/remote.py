@@ -48,7 +48,10 @@ class GitHubRepository:
         return ReleaseAssets(tag=tag, archive_url=str(archive_url), checksums_url=str(checksums_url))
 
     def release_by_tag(self, version: str) -> ReleaseAssets:
-        tag = normalize_tag(version)
+        try:
+            tag = normalize_tag(version)
+        except ValueError as exc:
+            raise RuntimeError(str(exc)) from exc
         encoded = urllib.parse.quote(tag, safe="")
         try:
             release = self._json(f"{self.api}/releases/tags/{encoded}")

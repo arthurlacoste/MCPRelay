@@ -97,3 +97,11 @@ def test_release_by_tag_wraps_non_404_http_errors():
 
     with pytest.raises(RuntimeError, match=r"HTTP 429"):
         GitHubRepository(opener=opener).release_by_tag("v0.1.14-beta.1")
+
+
+def test_release_by_tag_wraps_invalid_version_as_runtime_error():
+    import pytest
+    from gate_cli.remote import GitHubRepository
+
+    with pytest.raises(RuntimeError, match="Invalid Gate version"):
+        GitHubRepository(opener=lambda request: None).release_by_tag("latest")
