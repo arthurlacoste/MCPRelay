@@ -34,3 +34,21 @@ def test_macos_falls_back_to_local_port(monkeypatch):
     )
 
     assert ngrok_target.resolve_ngrok_target(8761, {}, "darwin") == "8761"
+
+
+def test_health_url_uses_same_macos_lan_target(monkeypatch):
+    monkeypatch.setattr(
+        ngrok_target.subprocess,
+        "run",
+        lambda *args, **kwargs: CompletedProcess(args[0], 0, "172.20.10.2\n", ""),
+    )
+
+    assert ngrok_target.gateway_health_url(8761, {}, "darwin") == (
+        "http://172.20.10.2:8761/oauth/health"
+    )
+
+
+def test_health_url_keeps_loopback_fallback():
+    assert ngrok_target.gateway_health_url(8761, {}, "linux") == (
+        "http://127.0.0.1:8761/oauth/health"
+    )

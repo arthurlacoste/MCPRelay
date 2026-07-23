@@ -35,3 +35,16 @@ def resolve_ngrok_target(
         return f"{address}:{port}"
 
     return str(port)
+
+
+def gateway_health_url(
+    port: int,
+    environ: Mapping[str, str] | None = None,
+    platform_name: str | None = None,
+) -> str:
+    target = resolve_ngrok_target(port, environ, platform_name)
+    if target.isdigit():
+        return f"http://127.0.0.1:{target}/oauth/health"
+    if "://" not in target:
+        target = f"http://{target}"
+    return f"{target.rstrip('/')}/oauth/health"

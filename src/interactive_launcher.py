@@ -21,7 +21,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from dotenv import dotenv_values
-from ngrok_target import resolve_ngrok_target
+from ngrok_target import gateway_health_url, resolve_ngrok_target
 
 
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -322,7 +322,7 @@ def startup_failure_message(name: str, code: int) -> str:
     return message
 
 
-GATEWAY_HEALTH_URL = f"http://127.0.0.1:{NGROK_PORT}/oauth/health"
+GATEWAY_HEALTH_URL = gateway_health_url(NGROK_PORT)
 NGROK_TUNNELS_URL = f"{NGROK_INSPECT_URL}/api/tunnels"
 
 
