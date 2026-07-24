@@ -11,6 +11,7 @@ from pathlib import Path
 
 SUPPORTED_PROVIDERS = {"ngrok", "tailscale", "external"}
 HTTPS_URL_RE = re.compile(r"https://[^\s\"']+")
+TAILSCALE_COMMAND_TIMEOUT_SECONDS = 10
 
 
 class TunnelConfigurationError(RuntimeError):
@@ -51,12 +52,16 @@ def require_cli(provider: str, which=shutil.which) -> str:
 
 
 def validate_tailscale_session(run=subprocess.run) -> None:
-    result = run(
-        ["tailscale", "status", "--json"],
-        check=False,
-        capture_output=True,
-        text=True,
-    )
+    try:
+        result = run(
+            ["tailscale", "status", "--json"],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=TAILSCALE_COMMAND_TIMEOUT_SECONDS,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise TunnelConfigurationError("Tailscale status timed out. Check that the Tailscale daemon is running.") from exc
     if result.returncode != 0:
         raise TunnelConfigurationError(
             "Tailscale is not authenticated. Run 'tailscale up' and retry."
@@ -80,12 +85,16 @@ def parse_tailscale_https_url(output: str) -> str:
 
 
 def tailscale_public_url(run=subprocess.run) -> str:
-    result = run(
-        ["tailscale", "funnel", "status", "--json"],
-        check=False,
-        capture_output=True,
-        text=True,
-    )
+    try:
+        result = run(
+            ["tailscale", "funnel", "status", "--json"],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=TAILSCALE_COMMAND_TIMEOUT_SECONDS,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise TunnelConfigurationError("Tailscale Funnel status timed out.") from exc
     combined = f"{result.stdout}\n{result.stderr}"
     url = parse_tailscale_https_url(combined)
     if result.returncode == 0 and url:

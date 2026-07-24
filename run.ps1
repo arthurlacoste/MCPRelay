@@ -1,5 +1,6 @@
 param(
     [switch]$Widget,
+    [switch]$Queue,
     [switch]$Realtime
 )
 
@@ -93,7 +94,8 @@ Set-EnvValue "TUNNEL_PROVIDER" $TunnelProvider
 
 $ServiceArgs = @("start_services.py")
 if ($Widget) { $ServiceArgs += "--widget" }
-if ($Realtime) { $ServiceArgs += "--realtime" }
+if ($Queue -or $Realtime) { $ServiceArgs += "--queue" }
+$NgrokTarget = if ($env:GATE_NGROK_TARGET) { $env:GATE_NGROK_TARGET } else { "$TunnelPort" }
 $Gateway = $null
 $Tunnel = $null
 
@@ -127,7 +129,7 @@ try {
 
     if ($TunnelProvider -eq "ngrok") {
         Write-Host "Starting ngrok. Press Ctrl+C to stop."
-        & $TunnelCommand @TunnelArgs
+        & $TunnelCommand "http" $NgrokTarget
         if ($LASTEXITCODE -ne 0) { throw "ngrok exited with code $LASTEXITCODE." }
     } elseif ($TunnelProvider -eq "tailscale") {
         Write-Host "Tailscale Funnel ready. Press Ctrl+C to stop."

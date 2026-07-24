@@ -69,3 +69,12 @@ def test_tailscale_public_url_reads_stdout_and_stderr():
 def test_tailscale_public_url_rejects_missing_url():
     with pytest.raises(TunnelConfigurationError, match="Could not detect"):
         tailscale_public_url(run=lambda *args, **kwargs: completed(stdout="no funnel"))
+
+
+def test_tailscale_status_timeout_is_actionable():
+    def timed_out(*args, **kwargs):
+        raise subprocess.TimeoutExpired(args[0], kwargs.get("timeout", 10))
+    with pytest.raises(TunnelConfigurationError, match="timed out"):
+        validate_tailscale_session(run=timed_out)
+    with pytest.raises(TunnelConfigurationError, match="timed out"):
+        tailscale_public_url(run=timed_out)

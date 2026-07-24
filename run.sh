@@ -14,6 +14,11 @@ ONBOARDING_PUBLIC_URL=""
 ONBOARDING_TAILSCALE_PID=""
 CHATGPT_CONNECTOR_URL="https://chatgpt.com/plugins#settings/Connectors?create-connector=true&redirectAfter=%2Fplugins"
 
+resolve_ngrok_target() {
+    PYTHONPATH="$PROJECT_DIR/src" "$PROJECT_DIR/.venv/bin/python" -c \
+        'from ngrok_target import resolve_ngrok_target; print(resolve_ngrok_target(8761))'
+}
+
 info() { printf '\n\033[1;34m%s\033[0m\n' "$*"; }
 ok() { printf '\033[1;32m✓ %s\033[0m\n' "$*"; }
 warn() { printf '\033[1;33m! %s\033[0m\n' "$*"; }
@@ -153,7 +158,7 @@ show_ngrok_inspector() {
 }
 
 ngrok_pids() {
-    pgrep -f "(^|[ /])ngrok[[:space:]]+http[[:space:]]+${NGROK_PORT}([[:space:]]|$)" 2>/dev/null || true
+    pgrep -f "(^|[ /])ngrok[[:space:]]+http[[:space:]]+([^[:space:]]*:)?${NGROK_PORT}([[:space:]]|$)" 2>/dev/null || true
 }
 
 signal_ngrok_pids() {
@@ -279,7 +284,7 @@ open_temporary_ngrok() {
     local public_url="" raw_response
     mkdir -p "$(dirname "$NGROK_LOG")"
     : > "$NGROK_LOG"
-    ngrok http "$NGROK_PORT" --log=stdout > "$NGROK_LOG" 2>&1 &
+    ngrok http "${GATE_NGROK_TARGET:-$NGROK_PORT}" --log=stdout > "$NGROK_LOG" 2>&1 &
     ONBOARDING_NGROK_PID=$!
 
     for _ in $(seq 1 20); do
@@ -492,6 +497,7 @@ run_interactive() {
     fi
     cleanup_stale_ngrok
     ensure_python_environment
+    export GATE_NGROK_TARGET="${GATE_NGROK_TARGET:-$(resolve_ngrok_target)}"
     ensure_onboarding
     source .venv/bin/activate
     "$PROJECT_DIR/.venv/bin/python" "$PROJECT_DIR/src/interactive_launcher.py"
@@ -506,6 +512,7 @@ start_daemon() {
 
     cleanup_stale_ngrok
     ensure_python_environment
+    export GATE_NGROK_TARGET="${GATE_NGROK_TARGET:-$(resolve_ngrok_target)}"
     ensure_onboarding
 
     source .venv/bin/activate
@@ -524,8 +531,17 @@ start_daemon() {
         TUNNEL_PID="$GATE_EXISTING_TAILSCALE_PID"
         KEEP_AWAKE_LABEL="onboarding tunnel reused"
     elif [ "$provider" != external ]; then
-        if [ "$provider" = ngrok ]; then tunnel_cmd=(ngrok http "$NGROK_PORT"); else tunnel_cmd=(tailscale funnel --bg=false "$NGROK_PORT"); fi
-        if command -v caffeinate >/dev/null 2>&1; then tunnel_cmd=(caffeinate -i "${tunnel_cmd[@]}"); KEEP_AWAKE_LABEL="caffeinate active"; else KEEP_AWAKE_LABEL="sleep inhibition inactive"; fi
+        if [ "$provider" = ngrok ]; then
+            tunnel_cmd=(ngrok http "$GATE_NGROK_TARGET")
+        else
+            tunnel_cmd=(tailscale funnel --bg=false "$NGROK_PORT")
+        fi
+        if command -v caffeinate >/dev/null 2>&1; then
+            tunnel_cmd=(caffeinate -i "${tunnel_cmd[@]}")
+            KEEP_AWAKE_LABEL="caffeinate active"
+        else
+            KEEP_AWAKE_LABEL="sleep inhibition inactive"
+        fi
         nohup "${tunnel_cmd[@]}" > /dev/null 2>&1 &
         TUNNEL_PID=$!
     fi
@@ -655,11 +671,11 @@ status() {
 
 parse_runtime_args() {
     RUNTIME_COMMAND=""
-    local widget=false realtime=false arg
+    local widget=false queue=false arg
     for arg in "$@"; do
         case "$arg" in
             --widget) widget=true ;;
-            --realtime) realtime=true ;;
+            --queue|--realtime) queue=true ;;
             start|stop|status|setup|renew-secret)
                 [ -z "$RUNTIME_COMMAND" ] || die "Only one command may be specified."
                 RUNTIME_COMMAND="$arg"
@@ -670,18 +686,18 @@ parse_runtime_args() {
 
     case "$RUNTIME_COMMAND" in
         stop|status|setup|renew-secret)
-            if [ "$widget" = true ] || [ "$realtime" = true ]; then
+            if [ "$widget" = true ] || [ "$queue" = true ]; then
                 die "Runtime flags are only valid when starting Gate."
             fi
             ;;
     esac
 
-    export MCP_REALTIME_STATUS_ENABLED=false
+    export MCP_COMMAND_QUEUE_ENABLED=false
     if [ "$widget" = true ]; then
         export MCP_WIDGET_ENABLED=true
     fi
-    if [ "$realtime" = true ] || [ "$widget" = true ]; then
-        export MCP_REALTIME_STATUS_ENABLED=true
+    if [ "$queue" = true ] || [ "$widget" = true ]; then
+        export MCP_COMMAND_QUEUE_ENABLED=true
     fi
 }
 
@@ -703,7 +719,7 @@ case "${1:-}" in
     renew-secret) ensure_python_environment; ensure_onboarding true ;;
     *)
         if [ $# -gt 0 ]; then
-            echo "Usage: $0 [start] [--realtime] [--widget]"
+            echo "Usage: $0 [start] [--queue] [--widget]"
             echo "       $0 {stop|status|setup|renew-secret}"
             echo ""
             echo "  (no arg)  Interactive mode – Ctrl+C stops everything"
