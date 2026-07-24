@@ -466,12 +466,15 @@ def start_tunnel() -> tuple[subprocess.Popen | ExistingProcess | None, str]:
         process = ExistingProcess(int(existing))
         if process.poll() is None:
             return process, "onboarding tunnel reused"
-    spec = build_tunnel_spec(provider, NGROK_PORT, LOG_ROOT)
+    spec = build_tunnel_spec(
+        provider,
+        NGROK_PORT,
+        LOG_ROOT,
+        ngrok_target=resolve_ngrok_target(NGROK_PORT) if provider == "ngrok" else None,
+    )
     if spec.command is None or spec.log_path is None:
         raise StartupError(f"{spec.display_name} has no launch command or log path.")
     command = spec.command
-    if provider == "ngrok":
-        command = ["ngrok", "http", resolve_ngrok_target(NGROK_PORT), "--log=stdout"]
     label = "sleep inhibition inactive"
     if shutil.which("caffeinate"):
         command = ["caffeinate", "-i", *command]
@@ -488,29 +491,6 @@ def start_tunnel() -> tuple[subprocess.Popen | ExistingProcess | None, str]:
         )
     return process, label
 
-
-def start_ngrok() -> tuple[subprocess.Popen | ExistingProcess, str]:
-    """Backward-compatible direct ngrok launcher."""
-    existing = os.environ.get("GATE_EXISTING_NGROK_PID", "")
-    if existing.isdigit():
-        process = ExistingProcess(int(existing))
-        if process.poll() is None:
-            return process, "onboarding tunnel reused"
-    command = ["ngrok", "http", resolve_ngrok_target(NGROK_PORT), "--log=stdout"]
-    label = "sleep inhibition inactive"
-    if shutil.which("caffeinate"):
-        command = ["caffeinate", "-i", *command]
-        label = "caffeinate active"
-    NGROK_LOG.parent.mkdir(parents=True, exist_ok=True)
-    with NGROK_LOG.open("w", encoding="utf-8") as log_file:
-        process = subprocess.Popen(
-            command,
-            cwd=BASE_DIR,
-            stdout=log_file,
-            stderr=subprocess.STDOUT,
-            start_new_session=True,
-        )
-    return process, label
 
 
 def monitor(services, tunnel, keep_awake: str, update_result: list[str | None] | None = None) -> int:

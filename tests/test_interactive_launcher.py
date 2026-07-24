@@ -44,7 +44,7 @@ def test_start_ngrok_uses_resolved_target(monkeypatch, tmp_path):
     monkeypatch.setattr(interactive_launcher.shutil, "which", lambda name: None)
     monkeypatch.setattr(interactive_launcher.subprocess, "Popen", popen)
 
-    returned, _ = interactive_launcher.start_ngrok()
+    returned, _ = interactive_launcher.start_tunnel()
 
     assert returned is process
     assert popen.call_args.args[0][:4] == [

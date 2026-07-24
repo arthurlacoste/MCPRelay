@@ -105,7 +105,13 @@ def tailscale_public_url(run=subprocess.run) -> str:
     )
 
 
-def build_tunnel_spec(provider: str, port: int, log_root: Path) -> TunnelSpec:
+def build_tunnel_spec(
+    provider: str,
+    port: int,
+    log_root: Path,
+    *,
+    ngrok_target: str | None = None,
+) -> TunnelSpec:
     provider = normalize_provider(provider)
     if provider == "external":
         return TunnelSpec(provider, None, None, "external tunnel")
@@ -120,7 +126,7 @@ def build_tunnel_spec(provider: str, port: int, log_root: Path) -> TunnelSpec:
         )
     return TunnelSpec(
         provider,
-        ["ngrok", "http", str(port), "--log=stdout"],
+        ["ngrok", "http", ngrok_target or str(port), "--log=stdout"],
         log_root / "ngrok.log",
         "ngrok",
     )
