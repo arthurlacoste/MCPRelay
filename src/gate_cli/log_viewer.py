@@ -51,19 +51,19 @@ def follow_snapshot(
 ) -> int:
     stream = stream or sys.stdout
     interactive = stream.isatty() if interactive is None else interactive
-    while True:
-        width, height = shutil.get_terminal_size((120, 30))
-        output = render_snapshot(snapshot_path, width=width, height=height)
-        if not output:
-            print("No realtime log data found.", file=stream)
-            return 1
-        if interactive:
-            print("\033[2J\033[H", end="", file=stream)
-        print(output, file=stream, flush=True)
-        if not interactive:
-            return 0
-        try:
+    try:
+        while True:
+            width, height = shutil.get_terminal_size((120, 30))
+            output = render_snapshot(snapshot_path, width=width, height=height)
+            if not output:
+                print("No realtime log data found.", file=stream)
+                return 1
+            if interactive:
+                print("\033[2J\033[H", end="", file=stream)
+            print(output, file=stream, flush=True)
+            if not interactive:
+                return 0
             time.sleep(refresh_seconds)
-        except KeyboardInterrupt:
-            print("\nDetached from Gate logs.", file=stream)
-            return 130
+    except KeyboardInterrupt:
+        print("\nDetached from Gate logs.", file=stream)
+        return 130

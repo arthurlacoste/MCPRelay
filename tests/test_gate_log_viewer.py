@@ -60,3 +60,16 @@ def test_follow_snapshot_rejects_empty_data(tmp_path):
 
     assert follow_snapshot(snapshot, stream=stream, interactive=False) == 1
     assert "No realtime log data" in stream.getvalue()
+
+
+def test_follow_snapshot_handles_interrupt_during_render(tmp_path, monkeypatch):
+    snapshot = tmp_path / "realtime_calls.json"
+    write_snapshot(snapshot, [{"status": "running"}])
+    stream = StringIO()
+    monkeypatch.setattr(
+        "gate_cli.log_viewer.render_snapshot",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(KeyboardInterrupt()),
+    )
+
+    assert follow_snapshot(snapshot, stream=stream, interactive=True) == 130
+    assert "Detached from Gate logs." in stream.getvalue()
