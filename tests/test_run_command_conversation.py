@@ -31,6 +31,18 @@ def wait_final(queue, execution_id, timeout=5):
     pytest.fail('command did not finish')
 
 
+def wait_conversation_tool_event(path, tool="run_command", timeout=2):
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if path.exists():
+            events = [json.loads(line) for line in path.read_text().splitlines()]
+            payload = next((event for event in reversed(events) if event.get("tool") == tool), None)
+            if payload is not None:
+                return payload
+        time.sleep(.02)
+    pytest.fail(f"conversation event for {tool} was not written")
+
+
 def test_run_command_writes_conversation_event(tmp_path, monkeypatch):
     monkeypatch.setattr(mod, 'CONVERSATION_DIR', tmp_path)
     queue = install_queue(tmp_path, monkeypatch)
@@ -40,7 +52,7 @@ def test_run_command_writes_conversation_event(tmp_path, monkeypatch):
     )
     assert result['status'] in {'queued', 'running', 'success'}
     final = wait_final(queue, result['execution_id'])
-    payload = json.loads((tmp_path / 'conv-test.jsonl').read_text().splitlines()[-1])
+    payload = wait_conversation_tool_event(tmp_path / 'conv-test.jsonl')
     stream_log = (tmp_path / f"{result['execution_id']}.log").read_text()
     assert payload['tool'] == 'run_command'
     assert payload['arguments']['purpose'] == 'test command'
@@ -105,7 +117,7 @@ def test_run_command_timeout_is_logged_and_kills_child(tmp_path, monkeypatch):
         conversation_id='timeout-test', timeout_seconds=.4,
     )
     final = wait_final(queue, result['execution_id'])
-    payload = json.loads((tmp_path / 'timeout-test.jsonl').read_text().splitlines()[-1])
+    payload = wait_conversation_tool_event(tmp_path / 'timeout-test.jsonl')
     assert final['status'] == 'timeout'
     assert payload['status'] == 'timeout'
     child_pid = int(pid_file.read_text())
