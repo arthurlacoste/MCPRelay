@@ -490,13 +490,26 @@ def start_tunnel() -> tuple[subprocess.Popen | ExistingProcess | None, str]:
 
 
 def start_ngrok() -> tuple[subprocess.Popen | ExistingProcess, str]:
-    """Backward-compatible ngrok launcher used by existing callers and tests."""
-    provider = configured_tunnel_provider()
-    if provider != "ngrok":
-        raise StartupError(f"start_ngrok requires TUNNEL_PROVIDER=ngrok, got {provider}.")
-    process, label = start_tunnel()
-    if process is None:
-        raise StartupError("ngrok launcher returned no managed process.")
+    """Backward-compatible direct ngrok launcher."""
+    existing = os.environ.get("GATE_EXISTING_NGROK_PID", "")
+    if existing.isdigit():
+        process = ExistingProcess(int(existing))
+        if process.poll() is None:
+            return process, "onboarding tunnel reused"
+    command = ["ngrok", "http", resolve_ngrok_target(NGROK_PORT), "--log=stdout"]
+    label = "sleep inhibition inactive"
+    if shutil.which("caffeinate"):
+        command = ["caffeinate", "-i", *command]
+        label = "caffeinate active"
+    NGROK_LOG.parent.mkdir(parents=True, exist_ok=True)
+    with NGROK_LOG.open("w", encoding="utf-8") as log_file:
+        process = subprocess.Popen(
+            command,
+            cwd=BASE_DIR,
+            stdout=log_file,
+            stderr=subprocess.STDOUT,
+            start_new_session=True,
+        )
     return process, label
 
 
