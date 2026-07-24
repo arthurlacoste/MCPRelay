@@ -1,7 +1,7 @@
 from pathlib import Path
 from unittest.mock import Mock
 
-from src import interactive_launcher
+from src import interactive_launcher, tunnel_provider
 
 
 def test_log_tail_returns_only_last_lines(tmp_path):
@@ -41,7 +41,11 @@ def test_start_ngrok_uses_resolved_target(monkeypatch, tmp_path):
     monkeypatch.delenv("GATE_EXISTING_NGROK_PID", raising=False)
     monkeypatch.setattr(interactive_launcher, "NGROK_LOG", tmp_path / "ngrok.log")
     monkeypatch.setattr(interactive_launcher, "resolve_ngrok_target", lambda port: "172.20.10.2:8761")
-    monkeypatch.setattr(interactive_launcher.shutil, "which", lambda name: None)
+    monkeypatch.setattr(
+        tunnel_provider.shutil,
+        "which",
+        lambda name: "/usr/bin/ngrok" if name == "ngrok" else None,
+    )
     monkeypatch.setattr(interactive_launcher.subprocess, "Popen", popen)
 
     returned, _ = interactive_launcher.start_tunnel()
