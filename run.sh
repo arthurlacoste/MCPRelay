@@ -324,7 +324,7 @@ open_temporary_tailscale() {
     tailscale funnel --bg=false "$NGROK_PORT" > "${MCP_LOG_ROOT:-$PROJECT_DIR/logs}/tailscale.log" 2>&1 &
     ONBOARDING_TAILSCALE_PID=$!
     for _ in $(seq 1 20); do
-        output="$(tailscale funnel status --json 2>&1 || true)"
+        output="$(timeout 10s tailscale funnel status --json 2>&1 || true)"
         public_url="$(printf '%s' "$output" | grep -Eo 'https://[^[:space:]"'"'"']+' | head -n1 | sed 's#[/.,;)]$##')"
         if [ -n "$public_url" ]; then
             ONBOARDING_PUBLIC_URL="$public_url"

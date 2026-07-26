@@ -101,17 +101,24 @@ $Tunnel = $null
 
 try {
     if ($TunnelProvider -eq "tailscale") {
-        Write-Host "Starting Tailscale Funnel."
-        $Tunnel = Start-Process -FilePath $TunnelCommand -ArgumentList $TunnelArgs -WorkingDirectory $ProjectDir -NoNewWindow -PassThru
         $PublicUrl = $null
-        for ($Attempt = 0; $Attempt -lt 20; $Attempt++) {
-            if ($Tunnel.HasExited) { break }
-            Start-Sleep -Seconds 1
-            $FunnelStatus = (& tailscale funnel status --json 2>&1 | Out-String)
-            $UrlMatch = [regex]::Match($FunnelStatus, 'https://[^\s"'']+')
-            if ($UrlMatch.Success) {
-                $PublicUrl = $UrlMatch.Value.TrimEnd('/', '.', ',', ';', ')')
-                break
+        $ExistingStatus = (& tailscale funnel status --json 2>&1 | Out-String)
+        $ExistingUrlMatch = [regex]::Match($ExistingStatus, 'https://[^\s"'']+')
+        if ($LASTEXITCODE -eq 0 -and $ExistingUrlMatch.Success) {
+            $PublicUrl = $ExistingUrlMatch.Value.TrimEnd('/', '.', ',', ';', ')')
+            Write-Host "Reusing active Tailscale Funnel."
+        } else {
+            Write-Host "Starting Tailscale Funnel."
+            $Tunnel = Start-Process -FilePath $TunnelCommand -ArgumentList $TunnelArgs -WorkingDirectory $ProjectDir -NoNewWindow -PassThru
+            for ($Attempt = 0; $Attempt -lt 20; $Attempt++) {
+                if ($Tunnel.HasExited) { break }
+                Start-Sleep -Seconds 1
+                $FunnelStatus = (& tailscale funnel status --json 2>&1 | Out-String)
+                $UrlMatch = [regex]::Match($FunnelStatus, 'https://[^\s"'']+')
+                if ($UrlMatch.Success) {
+                    $PublicUrl = $UrlMatch.Value.TrimEnd('/', '.', ',', ';', ')')
+                    break
+                }
             }
         }
         if (-not $PublicUrl) {

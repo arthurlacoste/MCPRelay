@@ -36,10 +36,11 @@ def normalize_provider(value: str | None) -> str:
     return provider
 
 
-def require_cli(provider: str, which=shutil.which) -> str:
+def require_cli(provider: str, which=None) -> str:
     if provider == "external":
         return ""
-    executable = which(provider)
+    resolver = which or shutil.which
+    executable = resolver(provider)
     if executable:
         return executable
     if provider == "tailscale":

@@ -30,6 +30,11 @@ def test_unknown_provider_is_actionable():
         normalize_provider("cloud-magic")
 
 
+def test_require_cli_uses_runtime_shutil_lookup(monkeypatch):
+    monkeypatch.setattr("src.tunnel_provider.shutil.which", lambda name: f"/usr/bin/{name}")
+    assert require_cli("ngrok") == "/usr/bin/ngrok"
+
+
 def test_missing_tailscale_cli_mentions_login_step():
     with pytest.raises(TunnelConfigurationError, match="tailscale up"):
         require_cli("tailscale", which=lambda _: None)

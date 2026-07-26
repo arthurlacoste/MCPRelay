@@ -19,3 +19,12 @@ def test_windows_tailscale_persists_detected_public_url_before_gateway():
     assert detect < persist < gateway
     assert 'Set-EnvValue "OAUTH_ISSUER" "$PublicUrl/oauth"' in content
     assert 'Set-EnvValue "LOCAL_OAUTH_ISSUER" "$PublicUrl/oauth"' in content
+
+
+def test_windows_reuses_existing_tailscale_funnel():
+    content = RUN_PS1.read_text()
+    status = content.index('$ExistingStatus = (& tailscale funnel status --json')
+    reuse = content.index('Write-Host "Reusing active Tailscale Funnel."')
+    start = content.index('$Tunnel = Start-Process -FilePath $TunnelCommand')
+    assert status < reuse < start
+    assert '$LASTEXITCODE -eq 0 -and $ExistingUrlMatch.Success' in content

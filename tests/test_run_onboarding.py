@@ -502,3 +502,8 @@ def test_stop_cleans_gateway_port_without_pid_file():
     assert "signal_gateway_processes KILL" in stop
     assert 'if [ ! -f "$PID_FILE" ]' not in stop
     assert 'sudo fuser -k -9 $NGROK_PORT/tcp' in stop
+
+
+def test_tailscale_status_has_timeout():
+    content = RUN_SCRIPT.read_text()
+    assert 'timeout 10s tailscale funnel status --json' in content
