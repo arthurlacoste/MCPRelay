@@ -189,6 +189,14 @@ def test_fastmcp_exposes_instructions_skill_tools_and_metadata(monkeypatch, tmp_
         assert tool.annotations.readOnlyHint is True
         assert tool.annotations.idempotentHint is True
         assert tool.annotations.openWorldHint is False
+    create_tool = tools['skills_create']
+    assert create_tool.title
+    assert create_tool.description
+    assert create_tool.annotations.readOnlyHint is False
+    assert create_tool.annotations.destructiveHint is False
+    assert create_tool.annotations.idempotentHint is False
+    assert create_tool.annotations.openWorldHint is False
+
     assert set(TOOL_METADATA) <= set(tools)
     for name in TOOL_METADATA:
         tool = tools[name]
@@ -203,7 +211,7 @@ def test_fastmcp_exposes_instructions_skill_tools_and_metadata(monkeypatch, tmp_
 
 def test_skill_tools_can_be_disabled_through_registry(tmp_path):
     config = tmp_path / 'tools.toml'
-    config.write_text('[tools]\nskills_search = false\nskills_read = false\n')
+    config.write_text('[tools]\nskills_search = false\nskills_read = false\nskills_create = false\n')
     script = '''
 import asyncio, sys
 sys.path.insert(0, 'src')
@@ -224,3 +232,27 @@ asyncio.run(main())
     names = completed.stdout.strip().split(',')
     assert 'skills_search' not in names
     assert 'skills_read' not in names
+    assert 'skills_create' not in names
+
+def test_fastmcp_skills_create_publishes_package(monkeypatch, tmp_path):
+    monkeypatch.setenv('MCP_SKILLS_ROOT', str(tmp_path))
+    skill_md = '---\nname: Created\ndescription: Created through MCP.\n---\nBody\n'
+
+    async def scenario():
+        async with Client(gateway.mcp) as client:
+            created = await client.call_tool('skills_create', {
+                'skill_id': 'generated/example',
+                'skill_md': skill_md,
+                'additional_files': {'references/note.md': 'Note\n'},
+            })
+            read = await client.call_tool('skills_read', {
+                'skill_id': 'generated/example',
+                'path': 'references/note.md',
+            })
+            return created.structured_content or created.data, read.structured_content or read.data
+
+    created, read = asyncio.run(scenario())
+    assert created['created'] is True
+    assert created['skill']['id'] == 'generated/example'
+    assert read['content'] == 'Note\n'
+    assert (tmp_path / 'gate/skill-creator/SKILL.md').is_file()

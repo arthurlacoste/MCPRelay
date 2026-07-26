@@ -32,6 +32,7 @@ from mcp_proxy import MCPProxyManager
 from runtime_features import RuntimeFeatures, runtime_mode_summary
 from realtime_calls import RealtimeCallStore
 from skill_catalog import skills_read as read_skill, skills_search as search_skills
+from skill_writer import create_skill, install_builtin_skills
 from tool_metadata import tool_metadata
 from pydantic import AnyHttpUrl
 from starlette.routing import Mount
@@ -275,6 +276,7 @@ proxy_manager = MCPProxyManager(
 
 @asynccontextmanager
 async def gateway_lifespan(server: FastMCP):
+    install_builtin_skills()
     await proxy_manager.start(server)
     try:
         yield {}
@@ -317,6 +319,25 @@ def skills_search(query: str | None = None, limit: int = 8, offset: int = 0) -> 
 )
 def skills_read(skill_id: str, path: str = 'SKILL.md') -> dict:
     return read_skill(skill_id=skill_id, path=path)
+
+
+@configurable_tool(
+    mcp,
+    title='Create skill package',
+    description='Create one validated UTF-8 Agent Skill package inside the configured skills root.',
+    annotations={
+        'readOnlyHint': False,
+        'destructiveHint': False,
+        'idempotentHint': False,
+        'openWorldHint': False,
+    },
+)
+def skills_create(
+    skill_id: str,
+    skill_md: str,
+    additional_files: dict[str, str] | None = None,
+) -> dict:
+    return create_skill(skill_id, skill_md, additional_files)
 
 
 @configurable_tool(mcp, title='List MCP servers', description='List configured MCP subservers and their health state.')

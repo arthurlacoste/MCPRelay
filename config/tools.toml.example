@@ -3,6 +3,7 @@
 [tools]
 skills_search = true
 skills_read = true
+skills_create = true
 run_command = true
 get_queue_state = true
 get_command_state = true
