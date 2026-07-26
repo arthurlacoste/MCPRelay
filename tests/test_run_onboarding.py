@@ -64,6 +64,7 @@ def _enable_interactive_fakes(tmp_path: Path) -> None:
     (tmp_path / "src").mkdir()
     shutil.copy2(INTERACTIVE_LAUNCHER, tmp_path / "src" / "interactive_launcher.py")
     shutil.copy2(NGROK_TARGET, tmp_path / "src" / "ngrok_target.py")
+    shutil.copy2(RUN_SCRIPT.parent / "src" / "tunnel_provider.py", tmp_path / "src" / "tunnel_provider.py")
     (tmp_path / "start_services.py").write_text(
         "import signal, json, threading\n"
         "from http.server import HTTPServer, BaseHTTPRequestHandler\n"
@@ -501,3 +502,8 @@ def test_stop_cleans_gateway_port_without_pid_file():
     assert "signal_gateway_processes KILL" in stop
     assert 'if [ ! -f "$PID_FILE" ]' not in stop
     assert 'sudo fuser -k -9 $NGROK_PORT/tcp' in stop
+
+
+def test_tailscale_status_has_timeout():
+    content = RUN_SCRIPT.read_text()
+    assert 'timeout 10s tailscale funnel status --json' in content

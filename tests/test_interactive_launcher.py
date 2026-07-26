@@ -1,7 +1,7 @@
 from pathlib import Path
 from unittest.mock import Mock
 
-from src import interactive_launcher
+from src import interactive_launcher, tunnel_provider
 
 
 def test_log_tail_returns_only_last_lines(tmp_path):
@@ -41,10 +41,14 @@ def test_start_ngrok_uses_resolved_target(monkeypatch, tmp_path):
     monkeypatch.delenv("GATE_EXISTING_NGROK_PID", raising=False)
     monkeypatch.setattr(interactive_launcher, "NGROK_LOG", tmp_path / "ngrok.log")
     monkeypatch.setattr(interactive_launcher, "resolve_ngrok_target", lambda port: "172.20.10.2:8761")
-    monkeypatch.setattr(interactive_launcher.shutil, "which", lambda name: None)
+    monkeypatch.setattr(
+        tunnel_provider.shutil,
+        "which",
+        lambda name: "/usr/bin/ngrok" if name == "ngrok" else None,
+    )
     monkeypatch.setattr(interactive_launcher.subprocess, "Popen", popen)
 
-    returned, _ = interactive_launcher.start_ngrok()
+    returned, _ = interactive_launcher.start_tunnel()
 
     assert returned is process
     assert popen.call_args.args[0][:4] == [
@@ -115,7 +119,7 @@ def test_main_installs_update_after_services_stop(monkeypatch):
     ngrok = Process()
     monkeypatch.setattr(interactive_launcher.signal, "signal", lambda *args: None)
     monkeypatch.setattr(interactive_launcher, "start_services", lambda: services)
-    monkeypatch.setattr(interactive_launcher, "start_ngrok", lambda: (ngrok, "test"))
+    monkeypatch.setattr(interactive_launcher, "start_tunnel", lambda: (ngrok, "test"))
     monkeypatch.setattr(interactive_launcher, "wait_for_gateway_health", lambda *args, **kwargs: None)
     monkeypatch.setattr(interactive_launcher, "wait_for_ngrok_ready", lambda *args, **kwargs: None)
     monkeypatch.setattr(interactive_launcher, "available_update", lambda: "0.1.6")
@@ -236,3 +240,8 @@ def test_monitor_ignores_update_key_while_panel_is_open(monkeypatch):
     assert interactive_launcher.monitor(Process(), Process(), "active", ["0.1.8"]) == 0
     assert rendered_panels == [None, "connections", None]
     assert interactive_launcher.UPDATE_REQUESTED is True
+
+
+def test_tailscale_failure_uses_tailscale_log():
+    message = interactive_launcher.startup_failure_message("tailscale", 1)
+    assert str(interactive_launcher.TAILSCALE_LOG) in message
