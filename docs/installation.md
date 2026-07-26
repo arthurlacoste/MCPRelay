@@ -19,6 +19,7 @@ gate stop
 gate restart
 gate status
 gate doctor
+gate log
 gate logs --follow
 gate secret
 gate update
@@ -29,6 +30,8 @@ gate rollback
 gate uninstall
 gate uninstall --purge
 ```
+
+`gate log` attaches to the redacted realtime call snapshot of a running daemon. In a terminal it refreshes continuously until `Ctrl+C`; when piped, it prints one snapshot. It does not restart Gate or require the legacy `--realtime` startup flag.
 
 `gate uninstall` preserves config, data, logs and skills. `gate uninstall --purge` requires typing `DELETE` and removes all Gate data.
 
