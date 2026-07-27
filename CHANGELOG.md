@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.1.18
+
+### Added
+
+- Add a daemon log monitor for viewing Gate runtime output without opening raw log files.
+- Add Tailscale as a tunnel provider alongside ngrok.
+- Add MCP server auto-discovery and hot reload through the local registry.
+- Add explicit version and prerelease update support to the Gate CLI.
+
+### Changed
+
+- Enforce a structured pull request template and validate pull request bodies in CI.
+- Improve release asset and updater validation for explicit and prerelease versions.
+
+### Tests
+
+- Add focused coverage for daemon logs, tunnel providers, MCP registry reloads, release assets, updater behavior, and pull request validation.
+
 ## 0.1.17
 
 ### Fixed
