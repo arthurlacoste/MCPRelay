@@ -102,10 +102,12 @@ def _exclusive_creation_lock(skills_root: Path, skill_id: str) -> Iterator[None]
     lock_path = skills_root / f".create-{lock_name}.lock"
     metadata = {"pid": os.getpid(), "created": time.time()}
     descriptor = -1
+    acquired = False
 
     for attempt in range(2):
         try:
             descriptor = os.open(lock_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+            acquired = True
             break
         except FileExistsError as exc:
             if attempt or not _remove_stale_lock(lock_path):
@@ -118,7 +120,8 @@ def _exclusive_creation_lock(skills_root: Path, skill_id: str) -> Iterator[None]
     finally:
         if descriptor >= 0:
             os.close(descriptor)
-        lock_path.unlink(missing_ok=True)
+        if acquired:
+            lock_path.unlink(missing_ok=True)
 
 
 def _remove_stale_lock(lock_path: Path) -> bool:
@@ -141,7 +144,12 @@ def _remove_stale_lock(lock_path: Path) -> bool:
             if age < 1:
                 return False
         except PermissionError:
-            return False
+            try:
+                age = max(0.0, time.time() - lock_path.stat().st_mtime)
+            except FileNotFoundError:
+                return True
+            if age < LOCK_STALE_SECONDS:
+                return False
         else:
             return False
 
@@ -152,19 +160,36 @@ def _remove_stale_lock(lock_path: Path) -> bool:
     return True
 
 
-def _parent_fd_matches_path(parent_fd: int, parent: Path) -> bool:
-    descriptor_stat = os.fstat(parent_fd)
-    path_stat = parent.stat(follow_symlinks=False)
-    return (descriptor_stat.st_dev, descriptor_stat.st_ino) == (path_stat.st_dev, path_stat.st_ino)
+def _open_directory_at(parent_fd: int, name: str) -> int:
+    flags = os.O_RDONLY
+    flags |= getattr(os, "O_DIRECTORY", 0)
+    flags |= getattr(os, "O_NOFOLLOW", 0)
+    return os.open(name, flags, dir_fd=parent_fd)
 
 
-def _open_parent_fd(parent: Path) -> int | None:
-    if os.rename not in os.supports_dir_fd:
+def _open_or_create_parent_fd(skills_root: Path, relative: PurePosixPath) -> int | None:
+    if os.open not in os.supports_dir_fd or os.mkdir not in os.supports_dir_fd:
         return None
     flags = os.O_RDONLY
     flags |= getattr(os, "O_DIRECTORY", 0)
     flags |= getattr(os, "O_NOFOLLOW", 0)
-    return os.open(parent, flags)
+    current_fd = os.open(skills_root, flags)
+    try:
+        for part in relative.parts:
+            try:
+                next_fd = _open_directory_at(current_fd, part)
+            except FileNotFoundError:
+                try:
+                    os.mkdir(part, mode=0o700, dir_fd=current_fd)
+                except FileExistsError:
+                    pass
+                next_fd = _open_directory_at(current_fd, part)
+            os.close(current_fd)
+            current_fd = next_fd
+        return current_fd
+    except Exception:
+        os.close(current_fd)
+        raise
 
 
 def atomic_write_package(
@@ -175,20 +200,17 @@ def atomic_write_package(
     skills_root: Path,
 ) -> None:
     relative_parent = PurePosixPath(target.parent.relative_to(skills_root).as_posix())
-    _reject_symlink_components(skills_root, relative_parent)
     parent = target.parent
-    parent.mkdir(parents=True, exist_ok=True)
-    _reject_symlink_components(skills_root, relative_parent)
 
     with _exclusive_creation_lock(skills_root, skill_id):
         if target.exists() or target.is_symlink():
             raise FileExistsError(f"skill already exists: {skill_id}")
 
-        parent_fd = _open_parent_fd(parent)
+        parent_fd = _open_or_create_parent_fd(skills_root, relative_parent)
+        if parent_fd is None:
+            raise RuntimeError("secure skill publication requires dir_fd support")
         temp_path = Path(tempfile.mkdtemp(prefix=f".{target.name}.tmp-", dir=parent))
         try:
-            if parent_fd is not None and not _parent_fd_matches_path(parent_fd, parent):
-                raise ValueError("skill parent changed during creation")
             _reject_symlink_components(skills_root, relative_parent)
             for relative, (_, encoded) in files.items():
                 destination = temp_path.joinpath(*PurePosixPath(relative).parts)
@@ -199,10 +221,6 @@ def atomic_write_package(
             if target.exists() or target.is_symlink():
                 raise FileExistsError(f"skill already exists: {skill_id}")
 
-            if parent_fd is None:
-                raise RuntimeError(
-                    "secure skill publication requires dir_fd support"
-                )
             os.replace(
                 temp_path.name,
                 target.name,
@@ -253,14 +271,17 @@ def install_builtin_skills(*, root: Path | None = None, source_root: Path | None
         if not skill_file.is_file():
             continue
         skill_id = f"gate/{source.name}"
-        target = skills_root / "gate" / source.name
-        if target.exists() or target.is_symlink():
+        additional = {}
+        for path in source.rglob("*"):
+            if not path.is_file() or path.name == "SKILL.md":
+                continue
+            if path.stat().st_size > MAX_FILE_BYTES:
+                logger.error("Builtin skill file exceeds size limit: %s", path)
+                additional = None
+                break
+            additional[path.relative_to(source).as_posix()] = path.read_text(encoding="utf-8")
+        if additional is None:
             continue
-        additional = {
-            path.relative_to(source).as_posix(): path.read_text(encoding="utf-8")
-            for path in source.rglob("*")
-            if path.is_file() and path.name != "SKILL.md"
-        }
         try:
             create_skill(
                 skill_id,

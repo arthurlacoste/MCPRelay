@@ -346,9 +346,82 @@ def test_stale_lock_retry_race_preserves_file_exists_error(tmp_path, monkeypatch
 def test_publish_fails_closed_without_dir_fd_support(tmp_path, monkeypatch):
     import skill_writer
 
-    monkeypatch.setattr(skill_writer, "_open_parent_fd", lambda parent: None)
+    monkeypatch.setattr(skill_writer, "_open_or_create_parent_fd", lambda root, relative: None)
 
     with pytest.raises(RuntimeError, match="dir_fd"):
         create_skill("example", VALID_SKILL, root=tmp_path)
     assert not (tmp_path / "example").exists()
     assert list(tmp_path.glob(".example.tmp-*")) == []
+
+
+
+def test_losing_lock_contender_never_deletes_winner_lock(tmp_path, monkeypatch):
+    import hashlib
+    import json
+    import os
+    import time
+    import skill_writer
+
+    skill_id = "winner/example"
+    lock_name = hashlib.sha256(skill_id.encode("utf-8")).hexdigest()
+    lock_path = tmp_path / f".create-{lock_name}.lock"
+    lock_path.write_text(json.dumps({"pid": os.getpid(), "created": time.time()}), encoding="ascii")
+
+    with pytest.raises(FileExistsError, match="in progress"):
+        with skill_writer._exclusive_creation_lock(tmp_path, skill_id):
+            pass
+
+    assert lock_path.exists()
+
+
+def test_permission_error_lock_uses_mtime_staleness(tmp_path, monkeypatch):
+    import hashlib
+    import json
+    import os
+    import skill_writer
+
+    skill_id = "permission/example"
+    lock_name = hashlib.sha256(skill_id.encode("utf-8")).hexdigest()
+    lock_path = tmp_path / f".create-{lock_name}.lock"
+    lock_path.write_text(json.dumps({"pid": 1, "created": 0}), encoding="ascii")
+    old = skill_writer.time.time() - skill_writer.LOCK_STALE_SECONDS - 1
+    os.utime(lock_path, (old, old))
+    monkeypatch.setattr(skill_writer.os, "kill", lambda pid, signal: (_ for _ in ()).throw(PermissionError()))
+
+    assert skill_writer._remove_stale_lock(lock_path) is True
+    assert not lock_path.exists()
+
+
+def test_oversized_builtin_file_is_skipped_without_reading(tmp_path, monkeypatch):
+    import skill_writer
+
+    source = tmp_path / "source"
+    builtin = source / "large"
+    builtin.mkdir(parents=True)
+    (builtin / "SKILL.md").write_text(
+        "---\nname: Large\ndescription: Oversized reference.\n---\nBody\n",
+        encoding="utf-8",
+    )
+    reference = builtin / "reference.txt"
+    reference.write_text("x", encoding="utf-8")
+
+    real_stat = Path.stat
+
+    def oversized_stat(self, *args, **kwargs):
+        result = real_stat(self, *args, **kwargs)
+        if self == reference:
+            class StatProxy:
+                def __init__(self, original):
+                    self._original = original
+                    self.st_size = skill_writer.MAX_FILE_BYTES + 1
+
+                def __getattr__(self, name):
+                    return getattr(self._original, name)
+
+            return StatProxy(result)
+        return result
+
+    monkeypatch.setattr(Path, "stat", oversized_stat)
+
+    assert install_builtin_skills(root=tmp_path / "skills", source_root=source) == []
+    assert not (tmp_path / "skills/gate/large").exists()
