@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.1.19-alpha - 2026-07-27
+
+### Added
+
+- Added deterministic `skills_create` support for creating validated local skill packages.
+- Added the builtin `skill-creator` workflow.
+
+### Fixed
+
+- Added a Windows-compatible atomic publication fallback when `dir_fd` APIs are unavailable.
+- Hardened POSIX skill publication against symlink swaps and temporary-directory races.
+
 ## 0.1.18
 
 ### Added
