@@ -11,6 +11,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / 'src'))
 from fastmcp import Client
 from environment_config import load_gateway_environment
 from skill_catalog import MAX_FILE_BYTES, get_skills_root, skills_read, skills_search
+from skill_writer import install_builtin_skills
 import mcp_gateway as gateway
 from tool_metadata import TOOL_METADATA
 
@@ -236,6 +237,7 @@ asyncio.run(main())
 
 def test_fastmcp_skills_create_publishes_package(monkeypatch, tmp_path):
     monkeypatch.setenv('MCP_SKILLS_ROOT', str(tmp_path))
+    install_builtin_skills(root=tmp_path)
     skill_md = '---\nname: Created\ndescription: Created through MCP.\n---\nBody\n'
 
     async def scenario():

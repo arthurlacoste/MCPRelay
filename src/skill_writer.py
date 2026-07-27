@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import hashlib
+import os
 import shutil
 import tempfile
+from contextlib import contextmanager
 from pathlib import Path, PurePosixPath
-from typing import Mapping
+from typing import Iterator, Mapping
 
 from skill_catalog import MAX_FILE_BYTES, _parse_skill, _validate_skill_id, get_skills_root
 
@@ -12,7 +15,7 @@ MAX_PACKAGE_BYTES = 1024 * 1024
 BUILTIN_SKILLS_ROOT = Path(__file__).resolve().parent / "builtin_skills"
 
 
-def _validate_text(content: object, label: str) -> str:
+def _validate_text(content: object, label: str) -> tuple[str, bytes]:
     if not isinstance(content, str):
         raise TypeError(f"{label} must be text")
     encoded = content.encode("utf-8")
@@ -20,7 +23,7 @@ def _validate_text(content: object, label: str) -> str:
         raise ValueError(f"file exceeds {MAX_FILE_BYTES} bytes: {label}")
     if any(ord(char) < 32 and char not in {"\t", "\n", "\r"} for char in content) or "\x7f" in content:
         raise ValueError(f"binary files are not supported: {label}")
-    return content
+    return content, encoded
 
 
 def _validate_package_path(value: object) -> PurePosixPath:
@@ -39,8 +42,11 @@ def _validate_package_path(value: object) -> PurePosixPath:
     return path
 
 
-def validate_package_files(skill_md: object, additional_files: Mapping[str, object] | None = None) -> dict[str, str]:
-    skill_text = _validate_text(skill_md, "skill_md")
+def validate_package_files(
+    skill_md: object,
+    additional_files: Mapping[str, object] | None = None,
+) -> dict[str, tuple[str, bytes]]:
+    skill_text, skill_bytes = _validate_text(skill_md, "skill_md")
     if not skill_text.strip():
         raise ValueError("skill_md must be non-empty")
     if additional_files is None:
@@ -50,17 +56,15 @@ def validate_package_files(skill_md: object, additional_files: Mapping[str, obje
     if len(additional_files) + 1 > MAX_FILE_COUNT:
         raise ValueError(f"package may contain at most {MAX_FILE_COUNT} files")
 
-    files = {"SKILL.md": skill_text}
-    total = len(skill_text.encode("utf-8"))
+    files = {"SKILL.md": (skill_text, skill_bytes)}
+    total = len(skill_bytes)
     for raw_path, raw_content in additional_files.items():
         path = _validate_package_path(raw_path).as_posix()
-        content = _validate_text(raw_content, path)
-        total += len(content.encode("utf-8"))
+        content, encoded = _validate_text(raw_content, path)
+        total += len(encoded)
         if total > MAX_PACKAGE_BYTES:
             raise ValueError(f"package exceeds {MAX_PACKAGE_BYTES} bytes")
-        files[path] = content
-    if total > MAX_PACKAGE_BYTES:
-        raise ValueError(f"package exceeds {MAX_PACKAGE_BYTES} bytes")
+        files[path] = (content, encoded)
     return files
 
 
@@ -76,9 +80,51 @@ def _reject_symlink_components(root: Path, relative: PurePosixPath) -> None:
             raise ValueError(f"path component is not a directory: {part}")
 
 
+def _resolved_within(path: Path, root: Path) -> bool:
+    try:
+        path.resolve(strict=True).relative_to(root.resolve(strict=True))
+    except (FileNotFoundError, ValueError):
+        return False
+    return True
+
+
+@contextmanager
+def _exclusive_creation_lock(skills_root: Path, skill_id: str) -> Iterator[None]:
+    lock_name = hashlib.sha256(skill_id.encode("utf-8")).hexdigest()
+    lock_path = skills_root / f".create-{lock_name}.lock"
+    try:
+        descriptor = os.open(lock_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+    except FileExistsError as exc:
+        raise FileExistsError(f"skill creation already in progress: {skill_id}") from exc
+    try:
+        os.write(descriptor, f"{os.getpid()}\n".encode("ascii"))
+        os.close(descriptor)
+        descriptor = -1
+        yield
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
+        lock_path.unlink(missing_ok=True)
+
+
+def _parent_fd_matches_path(parent_fd: int, parent: Path) -> bool:
+    descriptor_stat = os.fstat(parent_fd)
+    path_stat = parent.stat(follow_symlinks=False)
+    return (descriptor_stat.st_dev, descriptor_stat.st_ino) == (path_stat.st_dev, path_stat.st_ino)
+
+
+def _open_parent_fd(parent: Path) -> int | None:
+    if os.replace not in os.supports_dir_fd:
+        return None
+    flags = os.O_RDONLY
+    flags |= getattr(os, "O_DIRECTORY", 0)
+    flags |= getattr(os, "O_NOFOLLOW", 0)
+    return os.open(parent, flags)
+
+
 def atomic_write_package(
     target: Path,
-    files: Mapping[str, str],
+    files: Mapping[str, tuple[str, bytes]],
     skill_id: str,
     *,
     skills_root: Path,
@@ -88,24 +134,52 @@ def atomic_write_package(
     parent = target.parent
     parent.mkdir(parents=True, exist_ok=True)
     _reject_symlink_components(skills_root, relative_parent)
-    temp_path = Path(tempfile.mkdtemp(prefix=f".{target.name}.tmp-", dir=parent))
-    try:
-        _reject_symlink_components(skills_root, relative_parent)
-        for relative, content in files.items():
-            destination = temp_path.joinpath(*PurePosixPath(relative).parts)
-            destination.parent.mkdir(parents=True, exist_ok=True)
-            destination.write_text(content, encoding="utf-8", newline="")
-        _parse_skill(temp_path / "SKILL.md", skill_id, temp_path)
-        _reject_symlink_components(skills_root, relative_parent)
+
+    with _exclusive_creation_lock(skills_root, skill_id):
         if target.exists() or target.is_symlink():
             raise FileExistsError(f"skill already exists: {skill_id}")
-        temp_path.replace(target)
-    finally:
-        if temp_path.exists() or temp_path.is_symlink():
-            shutil.rmtree(temp_path, ignore_errors=True)
+
+        parent_fd = _open_parent_fd(parent)
+        temp_path = Path(tempfile.mkdtemp(prefix=f".{target.name}.tmp-", dir=parent))
+        try:
+            if parent_fd is not None and not _parent_fd_matches_path(parent_fd, parent):
+                raise ValueError("skill parent changed during creation")
+            _reject_symlink_components(skills_root, relative_parent)
+            for relative, (_, encoded) in files.items():
+                destination = temp_path.joinpath(*PurePosixPath(relative).parts)
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                destination.write_bytes(encoded)
+            _parse_skill(temp_path / "SKILL.md", skill_id, temp_path)
+            _reject_symlink_components(skills_root, relative_parent)
+            if target.exists() or target.is_symlink():
+                raise FileExistsError(f"skill already exists: {skill_id}")
+
+            if parent_fd is not None:
+                os.replace(
+                    temp_path.name,
+                    target.name,
+                    src_dir_fd=parent_fd,
+                    dst_dir_fd=parent_fd,
+                )
+            else:
+                temp_path.replace(target)
+                if not _resolved_within(target, skills_root):
+                    shutil.rmtree(target, ignore_errors=True)
+                    raise ValueError("published skill escaped skills root")
+        finally:
+            if parent_fd is not None:
+                os.close(parent_fd)
+            if temp_path.exists() or temp_path.is_symlink():
+                shutil.rmtree(temp_path, ignore_errors=True)
 
 
-def create_skill(skill_id: str, skill_md: str, additional_files: Mapping[str, str] | None = None, *, root: Path | None = None) -> dict:
+def create_skill(
+    skill_id: str,
+    skill_md: str,
+    additional_files: Mapping[str, str] | None = None,
+    *,
+    root: Path | None = None,
+) -> dict:
     validated_id = _validate_skill_id(skill_id)
     files = validate_package_files(skill_md, additional_files)
     skills_root = Path(root or get_skills_root()).expanduser()
@@ -144,6 +218,14 @@ def install_builtin_skills(*, root: Path | None = None, source_root: Path | None
             for path in source.rglob("*")
             if path.is_file() and path.name != "SKILL.md"
         }
-        create_skill(skill_id, skill_file.read_text(encoding="utf-8"), additional, root=skills_root)
+        try:
+            create_skill(
+                skill_id,
+                skill_file.read_text(encoding="utf-8"),
+                additional,
+                root=skills_root,
+            )
+        except FileExistsError:
+            continue
         installed.append(skill_id)
     return installed

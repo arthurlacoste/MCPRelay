@@ -183,7 +183,7 @@ def test_symlink_swap_before_temp_creation_is_rejected(tmp_path, monkeypatch):
     real_mkdtemp = skill_writer.tempfile.mkdtemp
 
     def swap_then_create(*args, **kwargs):
-        namespace.rmdir()
+        namespace.rename(root / "nested-original")
         namespace.symlink_to(outside, target_is_directory=True)
         return real_mkdtemp(*args, **kwargs)
 
@@ -217,3 +217,46 @@ def test_symlink_swap_before_publish_is_rejected(tmp_path, monkeypatch):
     with pytest.raises(ValueError, match="symlink"):
         create_skill("nested/example", VALID_SKILL, root=root)
     assert not (outside / "example").exists()
+
+
+
+def test_concurrent_creation_never_overwrites_first_package(tmp_path, monkeypatch):
+    import threading
+    import skill_writer
+
+    first_entered_parse = threading.Event()
+    allow_first_to_finish = threading.Event()
+    real_parse = skill_writer._parse_skill
+    parse_calls = 0
+
+    def pause_first_parse(*args, **kwargs):
+        nonlocal parse_calls
+        parse_calls += 1
+        if parse_calls == 1:
+            first_entered_parse.set()
+            assert allow_first_to_finish.wait(timeout=5)
+        return real_parse(*args, **kwargs)
+
+    monkeypatch.setattr(skill_writer, "_parse_skill", pause_first_parse)
+    errors: list[Exception] = []
+
+    def create_first():
+        create_skill("same", VALID_SKILL, {"owner.txt": "first"}, root=tmp_path)
+
+    first = threading.Thread(target=create_first)
+    first.start()
+    assert first_entered_parse.wait(timeout=5)
+
+    try:
+        create_skill("same", VALID_SKILL, {"owner.txt": "second"}, root=tmp_path)
+    except Exception as exc:
+        errors.append(exc)
+    finally:
+        allow_first_to_finish.set()
+        first.join(timeout=5)
+
+    assert not first.is_alive()
+    assert len(errors) == 1
+    assert isinstance(errors[0], FileExistsError)
+    assert (tmp_path / "same/owner.txt").read_text() == "first"
+    assert list(tmp_path.glob(".create-*.lock")) == []

@@ -278,7 +278,7 @@ proxy_manager = MCPProxyManager(
 @asynccontextmanager
 async def gateway_lifespan(server: FastMCP):
     try:
-        install_builtin_skills()
+        await asyncio.to_thread(install_builtin_skills)
     except Exception:
         logger.exception("Failed to install builtin skills; continuing gateway startup")
     await proxy_manager.start(server)
