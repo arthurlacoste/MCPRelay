@@ -44,6 +44,7 @@ RUNTIME_FEATURES = RuntimeFeatures.from_environ(os.environ)
 SECRET_REDACTOR = SecretRedactor.from_environ(os.environ)
 
 logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 LOG_FILE = GATEWAY_PATHS.logs / 'mcp_gateway.log'
 STREAM_DIR = GATEWAY_PATHS.logs / 'commands'
@@ -276,7 +277,10 @@ proxy_manager = MCPProxyManager(
 
 @asynccontextmanager
 async def gateway_lifespan(server: FastMCP):
-    install_builtin_skills()
+    try:
+        install_builtin_skills()
+    except Exception:
+        logger.exception("Failed to install builtin skills; continuing gateway startup")
     await proxy_manager.start(server)
     try:
         yield {}

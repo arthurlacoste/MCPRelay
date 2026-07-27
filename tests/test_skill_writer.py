@@ -168,3 +168,52 @@ def test_builtin_skill_is_installed_but_user_copy_is_preserved(tmp_path):
 
     assert install_builtin_skills(root=root, source_root=source) == []
     assert user_file.read_text().endswith("User edit\n")
+
+
+def test_symlink_swap_before_temp_creation_is_rejected(tmp_path, monkeypatch):
+    root = tmp_path / "skills"
+    root.mkdir()
+    namespace = root / "nested"
+    namespace.mkdir()
+    outside = tmp_path / "outside"
+    outside.mkdir()
+
+    import skill_writer
+
+    real_mkdtemp = skill_writer.tempfile.mkdtemp
+
+    def swap_then_create(*args, **kwargs):
+        namespace.rmdir()
+        namespace.symlink_to(outside, target_is_directory=True)
+        return real_mkdtemp(*args, **kwargs)
+
+    monkeypatch.setattr(skill_writer.tempfile, "mkdtemp", swap_then_create)
+
+    with pytest.raises(ValueError, match="symlink"):
+        create_skill("nested/example", VALID_SKILL, root=root)
+    assert not (outside / "example").exists()
+
+
+def test_symlink_swap_before_publish_is_rejected(tmp_path, monkeypatch):
+    root = tmp_path / "skills"
+    root.mkdir()
+    namespace = root / "nested"
+    namespace.mkdir()
+    outside = tmp_path / "outside"
+    outside.mkdir()
+
+    import skill_writer
+
+    real_parse = skill_writer._parse_skill
+
+    def swap_after_validation(*args, **kwargs):
+        result = real_parse(*args, **kwargs)
+        namespace.rename(root / "nested-original")
+        namespace.symlink_to(outside, target_is_directory=True)
+        return result
+
+    monkeypatch.setattr(skill_writer, "_parse_skill", swap_after_validation)
+
+    with pytest.raises(ValueError, match="symlink"):
+        create_skill("nested/example", VALID_SKILL, root=root)
+    assert not (outside / "example").exists()

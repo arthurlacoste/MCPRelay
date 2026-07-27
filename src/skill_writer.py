@@ -76,16 +76,27 @@ def _reject_symlink_components(root: Path, relative: PurePosixPath) -> None:
             raise ValueError(f"path component is not a directory: {part}")
 
 
-def atomic_write_package(target: Path, files: Mapping[str, str], skill_id: str) -> None:
+def atomic_write_package(
+    target: Path,
+    files: Mapping[str, str],
+    skill_id: str,
+    *,
+    skills_root: Path,
+) -> None:
+    relative_parent = PurePosixPath(target.parent.relative_to(skills_root).as_posix())
+    _reject_symlink_components(skills_root, relative_parent)
     parent = target.parent
     parent.mkdir(parents=True, exist_ok=True)
+    _reject_symlink_components(skills_root, relative_parent)
     temp_path = Path(tempfile.mkdtemp(prefix=f".{target.name}.tmp-", dir=parent))
     try:
+        _reject_symlink_components(skills_root, relative_parent)
         for relative, content in files.items():
             destination = temp_path.joinpath(*PurePosixPath(relative).parts)
             destination.parent.mkdir(parents=True, exist_ok=True)
             destination.write_text(content, encoding="utf-8", newline="")
         _parse_skill(temp_path / "SKILL.md", skill_id, temp_path)
+        _reject_symlink_components(skills_root, relative_parent)
         if target.exists() or target.is_symlink():
             raise FileExistsError(f"skill already exists: {skill_id}")
         temp_path.replace(target)
@@ -108,7 +119,7 @@ def create_skill(skill_id: str, skill_md: str, additional_files: Mapping[str, st
     if target.exists() or target.is_symlink():
         raise FileExistsError(f"skill already exists: {validated_id}")
 
-    atomic_write_package(target, files, validated_id)
+    atomic_write_package(target, files, validated_id, skills_root=skills_root)
     skill = _parse_skill(target / "SKILL.md", validated_id, target)
     return {"created": True, "skill": skill.summary(), "files": sorted(files)}
 
