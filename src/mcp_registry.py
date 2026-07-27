@@ -173,15 +173,15 @@ class MCPRegistry:
         return {server.name: server for server in servers}
 
     async def refresh(self) -> RegistryDiff:
-        try:
-            configured = await self._load_configured()
-        except ProxyConfigUnavailable as exc:
-            self._event("mcp_registry_refresh_skipped", {
-                "reason": str(exc),
-                "config_path": str(self.config_path),
-            })
-            return RegistryDiff()
         async with self._lock:
+            try:
+                configured = await self._load_configured()
+            except ProxyConfigUnavailable as exc:
+                self._event("mcp_registry_refresh_skipped", {
+                    "reason": str(exc),
+                    "config_path": str(self.config_path),
+                })
+                return RegistryDiff()
             return await self._refresh_locked(configured)
 
     async def _refresh_locked(self, configured: dict[str, ProxyServerConfig]) -> RegistryDiff:
@@ -213,11 +213,11 @@ class MCPRegistry:
         return diff
 
     async def reload_server(self, server_name: str) -> ServerState:
-        try:
-            configured = await self._load_configured()
-        except ProxyConfigUnavailable as exc:
-            raise KeyError(f"registry unavailable while reloading MCP server: {server_name}") from exc
         async with self._lock:
+            try:
+                configured = await self._load_configured()
+            except ProxyConfigUnavailable as exc:
+                raise KeyError(f"registry unavailable while reloading MCP server: {server_name}") from exc
             if server_name not in configured:
                 raise KeyError(f"unknown or disabled MCP server: {server_name}")
             diff = RegistryDiff()
