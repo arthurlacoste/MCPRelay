@@ -146,6 +146,11 @@ def test_publish_failure_cleans_temp_directory(tmp_path, monkeypatch):
         return real_replace(src, dst, **kwargs)
 
     monkeypatch.setattr(skill_writer.os, "replace", fail_replace)
+    monkeypatch.setattr(
+        skill_writer,
+        "_supports_secure_dir_fd_publication",
+        lambda: True,
+    )
 
     with pytest.raises(OSError, match="publish failed"):
         create_skill("example", VALID_SKILL, root=tmp_path)
@@ -425,3 +430,68 @@ def test_oversized_builtin_file_is_skipped_without_reading(tmp_path, monkeypatch
 
     assert install_builtin_skills(root=tmp_path / "skills", source_root=source) == []
     assert not (tmp_path / "skills/gate/large").exists()
+
+
+
+def test_non_utf8_builtin_file_skips_only_that_skill(tmp_path):
+    source = tmp_path / "source"
+    invalid = source / "a-invalid"
+    valid = source / "b-valid"
+    invalid.mkdir(parents=True)
+    valid.mkdir(parents=True)
+    (invalid / "SKILL.md").write_text(
+        "---\nname: Invalid\ndescription: Invalid reference.\n---\nBody\n",
+        encoding="utf-8",
+    )
+    (invalid / "reference.txt").write_bytes(b"\xff")
+    (valid / "SKILL.md").write_text(
+        "---\nname: Valid\ndescription: Still installed.\n---\nBody\n",
+        encoding="utf-8",
+    )
+
+    installed = install_builtin_skills(root=tmp_path / "skills", source_root=source)
+
+    assert installed == ["gate/b-valid"]
+    assert not (tmp_path / "skills/gate/a-invalid").exists()
+    assert (tmp_path / "skills/gate/b-valid/SKILL.md").is_file()
+
+
+def test_existing_builtin_is_skipped_without_error_log(tmp_path, caplog):
+    import logging
+
+    source = tmp_path / "source"
+    builtin = source / "existing"
+    builtin.mkdir(parents=True)
+    (builtin / "SKILL.md").write_text(
+        "---\nname: Existing\ndescription: Existing builtin.\n---\nBody\n",
+        encoding="utf-8",
+    )
+    root = tmp_path / "skills"
+    assert install_builtin_skills(root=root, source_root=source) == ["gate/existing"]
+
+    with caplog.at_level(logging.ERROR, logger="skill_writer"):
+        assert install_builtin_skills(root=root, source_root=source) == []
+
+    assert "Failed to install builtin skill" not in caplog.text
+
+
+def test_secure_publication_requires_replace_dir_fd_parameters(monkeypatch):
+    import inspect
+    import skill_writer
+
+    real_signature = inspect.signature
+
+    def signature_without_replace_dir_fd(callable_object):
+        signature = real_signature(callable_object)
+        if callable_object is skill_writer.os.replace:
+            parameters = {
+                name: parameter
+                for name, parameter in signature.parameters.items()
+                if name not in {"src_dir_fd", "dst_dir_fd"}
+            }
+            return signature.replace(parameters=parameters.values())
+        return signature
+
+    monkeypatch.setattr(skill_writer.inspect, "signature", signature_without_replace_dir_fd)
+
+    assert skill_writer._supports_secure_dir_fd_publication() is False

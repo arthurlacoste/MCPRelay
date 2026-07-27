@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import inspect
 import json
 import logging
 import os
@@ -88,14 +89,6 @@ def _reject_symlink_components(root: Path, relative: PurePosixPath) -> None:
             raise ValueError(f"path component is not a directory: {part}")
 
 
-def _resolved_within(path: Path, root: Path) -> bool:
-    try:
-        path.resolve(strict=True).relative_to(root.resolve(strict=True))
-    except (FileNotFoundError, ValueError):
-        return False
-    return True
-
-
 @contextmanager
 def _exclusive_creation_lock(skills_root: Path, skill_id: str) -> Iterator[None]:
     lock_name = hashlib.sha256(skill_id.encode("utf-8")).hexdigest()
@@ -114,8 +107,9 @@ def _exclusive_creation_lock(skills_root: Path, skill_id: str) -> Iterator[None]
                 raise FileExistsError(f"skill creation already in progress: {skill_id}") from exc
     try:
         os.write(descriptor, json.dumps(metadata).encode("ascii"))
-        os.close(descriptor)
+        opened_descriptor = descriptor
         descriptor = -1
+        os.close(opened_descriptor)
         yield
     finally:
         if descriptor >= 0:
@@ -167,8 +161,18 @@ def _open_directory_at(parent_fd: int, name: str) -> int:
     return os.open(name, flags, dir_fd=parent_fd)
 
 
+def _supports_secure_dir_fd_publication() -> bool:
+    replace_parameters = inspect.signature(os.replace).parameters
+    return (
+        os.open in os.supports_dir_fd
+        and os.mkdir in os.supports_dir_fd
+        and "src_dir_fd" in replace_parameters
+        and "dst_dir_fd" in replace_parameters
+    )
+
+
 def _open_or_create_parent_fd(skills_root: Path, relative: PurePosixPath) -> int | None:
-    if os.open not in os.supports_dir_fd or os.mkdir not in os.supports_dir_fd:
+    if not _supports_secure_dir_fd_publication():
         return None
     flags = os.O_RDONLY
     flags |= getattr(os, "O_DIRECTORY", 0)
@@ -208,7 +212,10 @@ def atomic_write_package(
 
         parent_fd = _open_or_create_parent_fd(skills_root, relative_parent)
         if parent_fd is None:
-            raise RuntimeError("secure skill publication requires dir_fd support")
+            raise RuntimeError(
+                "secure skill publication requires os.open, os.mkdir, and "
+                "os.replace dir_fd support"
+            )
         temp_path = Path(tempfile.mkdtemp(prefix=f".{target.name}.tmp-", dir=parent))
         try:
             _reject_symlink_components(skills_root, relative_parent)
@@ -272,23 +279,28 @@ def install_builtin_skills(*, root: Path | None = None, source_root: Path | None
             continue
         skill_id = f"gate/{source.name}"
         additional = {}
-        for path in source.rglob("*"):
-            if not path.is_file() or path.name == "SKILL.md":
-                continue
-            if path.stat().st_size > MAX_FILE_BYTES:
-                logger.error("Builtin skill file exceeds size limit: %s", path)
-                additional = None
-                break
-            additional[path.relative_to(source).as_posix()] = path.read_text(encoding="utf-8")
-        if additional is None:
+        try:
+            for path in source.rglob("*"):
+                if not path.is_file() or path.name == "SKILL.md":
+                    continue
+                if path.stat().st_size > MAX_FILE_BYTES:
+                    raise ValueError(f"builtin skill file exceeds size limit: {path}")
+                additional[path.relative_to(source).as_posix()] = path.read_text(
+                    encoding="utf-8"
+                )
+            skill_text = skill_file.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError, ValueError):
+            logger.exception("Failed to read builtin skill %s", skill_id)
             continue
         try:
             create_skill(
                 skill_id,
-                skill_file.read_text(encoding="utf-8"),
+                skill_text,
                 additional,
                 root=skills_root,
             )
+        except FileExistsError:
+            continue
         except Exception:
             logger.exception("Failed to install builtin skill %s", skill_id)
             continue
