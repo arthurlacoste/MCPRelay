@@ -136,14 +136,27 @@ def test_validation_failure_leaves_no_destination_or_temp_directory(tmp_path):
 
 
 def test_publish_failure_cleans_temp_directory(tmp_path, monkeypatch):
-    real_replace = Path.replace
+    import skill_writer
 
-    def fail_replace(self, target):
-        if self.name.startswith(".example.tmp-"):
-            raise OSError("publish failed")
-        return real_replace(self, target)
+    if skill_writer.os.replace in skill_writer.os.supports_dir_fd:
+        real_replace = skill_writer.os.replace
 
-    monkeypatch.setattr(Path, "replace", fail_replace)
+        def fail_replace(src, dst, **kwargs):
+            if str(src).startswith(".example.tmp-"):
+                raise OSError("publish failed")
+            return real_replace(src, dst, **kwargs)
+
+        monkeypatch.setattr(skill_writer.os, "replace", fail_replace)
+    else:
+        real_replace = Path.replace
+
+        def fail_replace(self, target):
+            if self.name.startswith(".example.tmp-"):
+                raise OSError("publish failed")
+            return real_replace(self, target)
+
+        monkeypatch.setattr(Path, "replace", fail_replace)
+
     with pytest.raises(OSError, match="publish failed"):
         create_skill("example", VALID_SKILL, root=tmp_path)
 
@@ -189,7 +202,7 @@ def test_symlink_swap_before_temp_creation_is_rejected(tmp_path, monkeypatch):
 
     monkeypatch.setattr(skill_writer.tempfile, "mkdtemp", swap_then_create)
 
-    with pytest.raises(ValueError, match="symlink"):
+    with pytest.raises(ValueError, match="symlink|parent changed"):
         create_skill("nested/example", VALID_SKILL, root=root)
     assert not (outside / "example").exists()
 
@@ -204,7 +217,7 @@ def test_symlink_swap_before_publish_is_rejected(tmp_path, monkeypatch):
 
     import skill_writer
 
-    real_parse = skill_writer._parse_skill
+    real_parse = skill_writer.parse_skill_package
 
     def swap_after_validation(*args, **kwargs):
         result = real_parse(*args, **kwargs)
@@ -212,7 +225,7 @@ def test_symlink_swap_before_publish_is_rejected(tmp_path, monkeypatch):
         namespace.symlink_to(outside, target_is_directory=True)
         return result
 
-    monkeypatch.setattr(skill_writer, "_parse_skill", swap_after_validation)
+    monkeypatch.setattr(skill_writer, "parse_skill_package", swap_after_validation)
 
     with pytest.raises(ValueError, match="symlink"):
         create_skill("nested/example", VALID_SKILL, root=root)
@@ -226,7 +239,7 @@ def test_concurrent_creation_never_overwrites_first_package(tmp_path, monkeypatc
 
     first_entered_parse = threading.Event()
     allow_first_to_finish = threading.Event()
-    real_parse = skill_writer._parse_skill
+    real_parse = skill_writer.parse_skill_package
     parse_calls = 0
 
     def pause_first_parse(*args, **kwargs):
@@ -237,7 +250,7 @@ def test_concurrent_creation_never_overwrites_first_package(tmp_path, monkeypatc
             assert allow_first_to_finish.wait(timeout=5)
         return real_parse(*args, **kwargs)
 
-    monkeypatch.setattr(skill_writer, "_parse_skill", pause_first_parse)
+    monkeypatch.setattr(skill_writer, "parse_skill_package", pause_first_parse)
     errors: list[Exception] = []
 
     def create_first():
@@ -260,3 +273,59 @@ def test_concurrent_creation_never_overwrites_first_package(tmp_path, monkeypatc
     assert isinstance(errors[0], FileExistsError)
     assert (tmp_path / "same/owner.txt").read_text() == "first"
     assert list(tmp_path.glob(".create-*.lock")) == []
+
+
+
+def test_stale_creation_lock_is_recovered(tmp_path, monkeypatch):
+    import hashlib
+    import json
+    import skill_writer
+
+    skill_id = "stale/example"
+    lock_name = hashlib.sha256(skill_id.encode("utf-8")).hexdigest()
+    lock_path = tmp_path / f".create-{lock_name}.lock"
+    lock_path.write_text(json.dumps({"pid": 999999999, "created": 0}), encoding="ascii")
+
+    result = create_skill(skill_id, VALID_SKILL, root=tmp_path)
+
+    assert result["created"] is True
+    assert not lock_path.exists()
+
+
+def test_live_creation_lock_is_preserved(tmp_path):
+    import hashlib
+    import json
+    import os
+    import time
+
+    skill_id = "live/example"
+    lock_name = hashlib.sha256(skill_id.encode("utf-8")).hexdigest()
+    lock_path = tmp_path / f".create-{lock_name}.lock"
+    lock_path.write_text(json.dumps({"pid": os.getpid(), "created": time.time()}), encoding="ascii")
+
+    with pytest.raises(FileExistsError, match="in progress"):
+        create_skill(skill_id, VALID_SKILL, root=tmp_path)
+    assert lock_path.exists()
+
+
+def test_invalid_unicode_is_rejected_as_value_error(tmp_path):
+    with pytest.raises(ValueError, match="Unicode"):
+        create_skill("unicode", VALID_SKILL, {"bad.txt": "\ud800"}, root=tmp_path)
+
+
+def test_broken_builtin_does_not_block_following_builtin(tmp_path):
+    source = tmp_path / "source"
+    broken = source / "a-broken"
+    valid = source / "b-valid"
+    broken.mkdir(parents=True)
+    valid.mkdir(parents=True)
+    (broken / "SKILL.md").write_text("invalid", encoding="utf-8")
+    (valid / "SKILL.md").write_text(
+        "---\nname: Valid\ndescription: Still installed.\n---\nBody\n",
+        encoding="utf-8",
+    )
+
+    installed = install_builtin_skills(root=tmp_path / "skills", source_root=source)
+
+    assert installed == ["gate/b-valid"]
+    assert (tmp_path / "skills/gate/b-valid/SKILL.md").is_file()

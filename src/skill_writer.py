@@ -1,24 +1,32 @@
 from __future__ import annotations
 
 import hashlib
+import json
+import logging
 import os
+import time
 import shutil
 import tempfile
 from contextlib import contextmanager
 from pathlib import Path, PurePosixPath
 from typing import Iterator, Mapping
 
-from skill_catalog import MAX_FILE_BYTES, _parse_skill, _validate_skill_id, get_skills_root
+from skill_catalog import MAX_FILE_BYTES, get_skills_root, parse_skill_package, validate_skill_id
 
 MAX_FILE_COUNT = 32
 MAX_PACKAGE_BYTES = 1024 * 1024
 BUILTIN_SKILLS_ROOT = Path(__file__).resolve().parent / "builtin_skills"
+LOCK_STALE_SECONDS = 300
+logger = logging.getLogger(__name__)
 
 
 def _validate_text(content: object, label: str) -> tuple[str, bytes]:
     if not isinstance(content, str):
         raise TypeError(f"{label} must be text")
-    encoded = content.encode("utf-8")
+    try:
+        encoded = content.encode("utf-8")
+    except UnicodeEncodeError as exc:
+        raise ValueError(f"invalid Unicode text: {label}") from exc
     if len(encoded) > MAX_FILE_BYTES:
         raise ValueError(f"file exceeds {MAX_FILE_BYTES} bytes: {label}")
     if any(ord(char) < 32 and char not in {"\t", "\n", "\r"} for char in content) or "\x7f" in content:
@@ -92,12 +100,17 @@ def _resolved_within(path: Path, root: Path) -> bool:
 def _exclusive_creation_lock(skills_root: Path, skill_id: str) -> Iterator[None]:
     lock_name = hashlib.sha256(skill_id.encode("utf-8")).hexdigest()
     lock_path = skills_root / f".create-{lock_name}.lock"
+    metadata = {"pid": os.getpid(), "created": time.time()}
+
+    for attempt in range(2):
+        try:
+            descriptor = os.open(lock_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+            break
+        except FileExistsError as exc:
+            if attempt or not _remove_stale_lock(lock_path):
+                raise FileExistsError(f"skill creation already in progress: {skill_id}") from exc
     try:
-        descriptor = os.open(lock_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
-    except FileExistsError as exc:
-        raise FileExistsError(f"skill creation already in progress: {skill_id}") from exc
-    try:
-        os.write(descriptor, f"{os.getpid()}\n".encode("ascii"))
+        os.write(descriptor, json.dumps(metadata).encode("ascii"))
         os.close(descriptor)
         descriptor = -1
         yield
@@ -105,6 +118,37 @@ def _exclusive_creation_lock(skills_root: Path, skill_id: str) -> Iterator[None]
         if descriptor >= 0:
             os.close(descriptor)
         lock_path.unlink(missing_ok=True)
+
+
+def _remove_stale_lock(lock_path: Path) -> bool:
+    try:
+        metadata = json.loads(lock_path.read_text(encoding="ascii"))
+        pid = int(metadata["pid"])
+        created = float(metadata["created"])
+    except (OSError, ValueError, TypeError, KeyError, json.JSONDecodeError):
+        try:
+            age = max(0.0, time.time() - lock_path.stat().st_mtime)
+        except FileNotFoundError:
+            return True
+        if age < LOCK_STALE_SECONDS:
+            return False
+    else:
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            age = max(0.0, time.time() - created)
+            if age < 1:
+                return False
+        except PermissionError:
+            return False
+        else:
+            return False
+
+    try:
+        lock_path.unlink()
+    except FileNotFoundError:
+        pass
+    return True
 
 
 def _parent_fd_matches_path(parent_fd: int, parent: Path) -> bool:
@@ -149,7 +193,7 @@ def atomic_write_package(
                 destination = temp_path.joinpath(*PurePosixPath(relative).parts)
                 destination.parent.mkdir(parents=True, exist_ok=True)
                 destination.write_bytes(encoded)
-            _parse_skill(temp_path / "SKILL.md", skill_id, temp_path)
+            parse_skill_package(temp_path / "SKILL.md", skill_id, temp_path)
             _reject_symlink_components(skills_root, relative_parent)
             if target.exists() or target.is_symlink():
                 raise FileExistsError(f"skill already exists: {skill_id}")
@@ -180,7 +224,7 @@ def create_skill(
     *,
     root: Path | None = None,
 ) -> dict:
-    validated_id = _validate_skill_id(skill_id)
+    validated_id = validate_skill_id(skill_id)
     files = validate_package_files(skill_md, additional_files)
     skills_root = Path(root or get_skills_root()).expanduser()
     relative = PurePosixPath(validated_id)
@@ -194,18 +238,18 @@ def create_skill(
         raise FileExistsError(f"skill already exists: {validated_id}")
 
     atomic_write_package(target, files, validated_id, skills_root=skills_root)
-    skill = _parse_skill(target / "SKILL.md", validated_id, target)
+    skill = parse_skill_package(target / "SKILL.md", validated_id, target)
     return {"created": True, "skill": skill.summary(), "files": sorted(files)}
 
 
 def install_builtin_skills(*, root: Path | None = None, source_root: Path | None = None) -> list[str]:
     skills_root = Path(root or get_skills_root()).expanduser()
-    builtins = Path(source_root or BUILTIN_SKILLS_ROOT)
-    if not builtins.is_dir():
+    builtin_root = Path(source_root or BUILTIN_SKILLS_ROOT)
+    if not builtin_root.is_dir():
         return []
 
     installed: list[str] = []
-    for source in sorted(path for path in builtins.iterdir() if path.is_dir()):
+    for source in sorted(path for path in builtin_root.iterdir() if path.is_dir()):
         skill_file = source / "SKILL.md"
         if not skill_file.is_file():
             continue
@@ -225,7 +269,8 @@ def install_builtin_skills(*, root: Path | None = None, source_root: Path | None
                 additional,
                 root=skills_root,
             )
-        except FileExistsError:
+        except Exception:
+            logger.exception("Failed to install builtin skill %s", skill_id)
             continue
         installed.append(skill_id)
     return installed
