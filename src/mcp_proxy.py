@@ -128,7 +128,7 @@ def load_proxy_config(
             type(exc).__name__,
         )
         if raise_on_error:
-            raise ProxyConfigUnavailable(type(exc).__name__) from exc
+            raise ProxyConfigUnavailable(f"{type(exc).__name__} reading {config_path}") from exc
         return []
     if not isinstance(data, dict) or not isinstance(data.get("mcpServers"), dict):
         logger.error("MCP proxy config %s must contain an mcpServers object", config_path)

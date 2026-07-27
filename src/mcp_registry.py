@@ -213,7 +213,10 @@ class MCPRegistry:
         return diff
 
     async def reload_server(self, server_name: str) -> ServerState:
-        configured = await self._load_configured()
+        try:
+            configured = await self._load_configured()
+        except ProxyConfigUnavailable as exc:
+            raise KeyError(f"registry unavailable while reloading MCP server: {server_name}") from exc
         async with self._lock:
             if server_name not in configured:
                 raise KeyError(f"unknown or disabled MCP server: {server_name}")
