@@ -258,3 +258,17 @@ def test_fastmcp_skills_create_publishes_package(monkeypatch, tmp_path):
     assert created['skill']['id'] == 'generated/example'
     assert read['content'] == 'Note\n'
     assert (tmp_path / 'gate/skill-creator/SKILL.md').is_file()
+
+
+
+def test_skills_create_writes_audit_log(monkeypatch, tmp_path):
+    events = []
+    skill_md = '---\nname: Audited\ndescription: Audit creation.\n---\nBody\n'
+
+    monkeypatch.setenv('MCP_SKILLS_ROOT', str(tmp_path))
+    monkeypatch.setattr(gateway, 'log_action', lambda action, payload=None: events.append((action, payload)))
+
+    result = gateway.skills_create('audited/example', skill_md, {'note.txt': 'Note\n'})
+
+    assert result['created'] is True
+    assert events == [('skills_create', {'skill_id': 'audited/example', 'file_count': 2})]

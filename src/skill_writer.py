@@ -101,6 +101,7 @@ def _exclusive_creation_lock(skills_root: Path, skill_id: str) -> Iterator[None]
     lock_name = hashlib.sha256(skill_id.encode("utf-8")).hexdigest()
     lock_path = skills_root / f".create-{lock_name}.lock"
     metadata = {"pid": os.getpid(), "created": time.time()}
+    descriptor = -1
 
     for attempt in range(2):
         try:
@@ -158,7 +159,7 @@ def _parent_fd_matches_path(parent_fd: int, parent: Path) -> bool:
 
 
 def _open_parent_fd(parent: Path) -> int | None:
-    if os.replace not in os.supports_dir_fd:
+    if os.rename not in os.supports_dir_fd:
         return None
     flags = os.O_RDONLY
     flags |= getattr(os, "O_DIRECTORY", 0)
@@ -198,18 +199,16 @@ def atomic_write_package(
             if target.exists() or target.is_symlink():
                 raise FileExistsError(f"skill already exists: {skill_id}")
 
-            if parent_fd is not None:
-                os.replace(
-                    temp_path.name,
-                    target.name,
-                    src_dir_fd=parent_fd,
-                    dst_dir_fd=parent_fd,
+            if parent_fd is None:
+                raise RuntimeError(
+                    "secure skill publication requires dir_fd support"
                 )
-            else:
-                temp_path.replace(target)
-                if not _resolved_within(target, skills_root):
-                    shutil.rmtree(target, ignore_errors=True)
-                    raise ValueError("published skill escaped skills root")
+            os.replace(
+                temp_path.name,
+                target.name,
+                src_dir_fd=parent_fd,
+                dst_dir_fd=parent_fd,
+            )
         finally:
             if parent_fd is not None:
                 os.close(parent_fd)

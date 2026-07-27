@@ -138,24 +138,14 @@ def test_validation_failure_leaves_no_destination_or_temp_directory(tmp_path):
 def test_publish_failure_cleans_temp_directory(tmp_path, monkeypatch):
     import skill_writer
 
-    if skill_writer.os.replace in skill_writer.os.supports_dir_fd:
-        real_replace = skill_writer.os.replace
+    real_replace = skill_writer.os.replace
 
-        def fail_replace(src, dst, **kwargs):
-            if str(src).startswith(".example.tmp-"):
-                raise OSError("publish failed")
-            return real_replace(src, dst, **kwargs)
+    def fail_replace(src, dst, **kwargs):
+        if str(src).startswith(".example.tmp-"):
+            raise OSError("publish failed")
+        return real_replace(src, dst, **kwargs)
 
-        monkeypatch.setattr(skill_writer.os, "replace", fail_replace)
-    else:
-        real_replace = Path.replace
-
-        def fail_replace(self, target):
-            if self.name.startswith(".example.tmp-"):
-                raise OSError("publish failed")
-            return real_replace(self, target)
-
-        monkeypatch.setattr(Path, "replace", fail_replace)
+    monkeypatch.setattr(skill_writer.os, "replace", fail_replace)
 
     with pytest.raises(OSError, match="publish failed"):
         create_skill("example", VALID_SKILL, root=tmp_path)
@@ -329,3 +319,36 @@ def test_broken_builtin_does_not_block_following_builtin(tmp_path):
 
     assert installed == ["gate/b-valid"]
     assert (tmp_path / "skills/gate/b-valid/SKILL.md").is_file()
+
+
+
+def test_stale_lock_retry_race_preserves_file_exists_error(tmp_path, monkeypatch):
+    import skill_writer
+
+    real_open = skill_writer.os.open
+    attempts = 0
+
+    def race_open(path, flags, mode=0o777):
+        nonlocal attempts
+        if str(path).endswith(".lock"):
+            attempts += 1
+            raise FileExistsError("raced")
+        return real_open(path, flags, mode)
+
+    monkeypatch.setattr(skill_writer, "_remove_stale_lock", lambda path: True)
+    monkeypatch.setattr(skill_writer.os, "open", race_open)
+
+    with pytest.raises(FileExistsError, match="in progress"):
+        create_skill("race/example", VALID_SKILL, root=tmp_path)
+    assert attempts == 2
+
+
+def test_publish_fails_closed_without_dir_fd_support(tmp_path, monkeypatch):
+    import skill_writer
+
+    monkeypatch.setattr(skill_writer, "_open_parent_fd", lambda parent: None)
+
+    with pytest.raises(RuntimeError, match="dir_fd"):
+        create_skill("example", VALID_SKILL, root=tmp_path)
+    assert not (tmp_path / "example").exists()
+    assert list(tmp_path.glob(".example.tmp-*")) == []

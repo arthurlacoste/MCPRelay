@@ -278,7 +278,12 @@ proxy_manager = MCPProxyManager(
 @asynccontextmanager
 async def gateway_lifespan(server: FastMCP):
     try:
-        await asyncio.to_thread(install_builtin_skills)
+        await asyncio.wait_for(
+            asyncio.to_thread(install_builtin_skills),
+            timeout=30,
+        )
+    except TimeoutError:
+        logger.error("Builtin skill installation timed out; continuing gateway startup")
     except Exception:
         logger.exception("Failed to install builtin skills; continuing gateway startup")
     await proxy_manager.start(server)
@@ -341,7 +346,12 @@ def skills_create(
     skill_md: str,
     additional_files: dict[str, str] | None = None,
 ) -> dict:
-    return create_skill(skill_id, skill_md, additional_files)
+    result = create_skill(skill_id, skill_md, additional_files)
+    log_action('skills_create', {
+        'skill_id': skill_id,
+        'file_count': len(result['files']),
+    })
+    return result
 
 
 @configurable_tool(mcp, title='List MCP servers', description='List configured MCP subservers and their health state.')
