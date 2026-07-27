@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.1.19-alpha - 2026-07-27
+## 0.1.19-alpha
 
 ### Added
 
