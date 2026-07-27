@@ -159,6 +159,34 @@ def test_publish_failure_cleans_temp_directory(tmp_path, monkeypatch):
     assert list(tmp_path.glob(".example.tmp-*")) == []
 
 
+
+def test_path_fallback_publishes_without_dir_fd_support(tmp_path, monkeypatch):
+    import skill_writer
+
+    monkeypatch.setattr(skill_writer, "_supports_secure_dir_fd_publication", lambda: False)
+
+    result = create_skill("windows/example", VALID_SKILL, root=tmp_path)
+
+    assert result["created"] is True
+    assert (tmp_path / "windows/example/SKILL.md").read_text(encoding="utf-8") == VALID_SKILL
+    assert list(tmp_path.rglob(".example.tmp-*")) == []
+
+
+def test_secure_publication_does_not_use_path_based_mkdtemp(tmp_path, monkeypatch):
+    import skill_writer
+
+    monkeypatch.setattr(skill_writer, "_supports_secure_dir_fd_publication", lambda: True)
+
+    def fail_mkdtemp(*args, **kwargs):
+        raise AssertionError("secure publication must create temp directories via dir_fd")
+
+    monkeypatch.setattr(skill_writer.tempfile, "mkdtemp", fail_mkdtemp)
+
+    result = create_skill("nested/example", VALID_SKILL, root=tmp_path)
+
+    assert result["created"] is True
+    assert (tmp_path / "nested/example/SKILL.md").is_file()
+
 def test_builtin_skill_is_installed_but_user_copy_is_preserved(tmp_path):
     source = tmp_path / "source"
     builtin = source / "skill-creator"
@@ -188,14 +216,14 @@ def test_symlink_swap_before_temp_creation_is_rejected(tmp_path, monkeypatch):
 
     import skill_writer
 
-    real_mkdtemp = skill_writer.tempfile.mkdtemp
+    real_create_temp = skill_writer._create_temp_directory_at
 
     def swap_then_create(*args, **kwargs):
         namespace.rename(root / "nested-original")
         namespace.symlink_to(outside, target_is_directory=True)
-        return real_mkdtemp(*args, **kwargs)
+        return real_create_temp(*args, **kwargs)
 
-    monkeypatch.setattr(skill_writer.tempfile, "mkdtemp", swap_then_create)
+    monkeypatch.setattr(skill_writer, "_create_temp_directory_at", swap_then_create)
 
     with pytest.raises(ValueError, match="symlink|parent changed"):
         create_skill("nested/example", VALID_SKILL, root=root)

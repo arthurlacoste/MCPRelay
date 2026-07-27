@@ -5,9 +5,10 @@ import inspect
 import json
 import logging
 import os
-import time
+import secrets
 import shutil
 import tempfile
+import time
 from contextlib import contextmanager
 from pathlib import Path, PurePosixPath
 from typing import Iterator, Mapping
@@ -196,6 +197,104 @@ def _open_or_create_parent_fd(skills_root: Path, relative: PurePosixPath) -> int
         raise
 
 
+def _create_temp_directory_at(parent_fd: int, target_name: str) -> tuple[str, int]:
+    for _ in range(100):
+        name = f".{target_name}.tmp-{secrets.token_hex(8)}"
+        try:
+            os.mkdir(name, mode=0o700, dir_fd=parent_fd)
+        except FileExistsError:
+            continue
+        return name, _open_directory_at(parent_fd, name)
+    raise FileExistsError(f"could not allocate temporary directory for {target_name}")
+
+
+def _descriptor_path(descriptor: int) -> Path:
+    for base in (Path("/proc/self/fd"), Path("/dev/fd")):
+        candidate = base / str(descriptor)
+        if candidate.exists():
+            return candidate
+    raise RuntimeError("descriptor-backed paths are unavailable on this platform")
+
+
+def _descriptor_real_path(descriptor: int) -> Path:
+    descriptor_path = _descriptor_path(descriptor)
+    try:
+        return Path(os.readlink(descriptor_path))
+    except OSError:
+        return descriptor_path.resolve()
+
+
+def _write_package_tree(temp_path: Path, files: Mapping[str, tuple[str, bytes]]) -> None:
+    for relative, (_, encoded) in files.items():
+        destination = temp_path.joinpath(*PurePosixPath(relative).parts)
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_bytes(encoded)
+
+
+def _atomic_write_package_dir_fd(
+    target: Path,
+    files: Mapping[str, tuple[str, bytes]],
+    skill_id: str,
+    *,
+    skills_root: Path,
+    relative_parent: PurePosixPath,
+) -> None:
+    parent_fd = _open_or_create_parent_fd(skills_root, relative_parent)
+    if parent_fd is None:
+        raise RuntimeError("secure dir_fd publication is unavailable")
+
+    temp_name = ""
+    temp_fd = -1
+    try:
+        temp_name, temp_fd = _create_temp_directory_at(parent_fd, target.name)
+        temp_path = _descriptor_path(temp_fd)
+        _write_package_tree(temp_path, files)
+        parse_skill_package(temp_path / "SKILL.md", skill_id, temp_path)
+        try:
+            os.stat(target.name, dir_fd=parent_fd, follow_symlinks=False)
+        except FileNotFoundError:
+            pass
+        else:
+            raise FileExistsError(f"skill already exists: {skill_id}")
+        os.replace(
+            temp_name,
+            target.name,
+            src_dir_fd=parent_fd,
+            dst_dir_fd=parent_fd,
+        )
+        temp_name = ""
+    finally:
+        if temp_name and temp_fd >= 0:
+            shutil.rmtree(_descriptor_real_path(temp_fd), ignore_errors=True)
+        if temp_fd >= 0:
+            os.close(temp_fd)
+        os.close(parent_fd)
+
+
+def _atomic_write_package_path(
+    target: Path,
+    files: Mapping[str, tuple[str, bytes]],
+    skill_id: str,
+    *,
+    skills_root: Path,
+    relative_parent: PurePosixPath,
+) -> None:
+    _reject_symlink_components(skills_root, relative_parent)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    _reject_symlink_components(skills_root, relative_parent)
+    temp_path = Path(tempfile.mkdtemp(prefix=f".{target.name}.tmp-", dir=target.parent))
+    try:
+        _write_package_tree(temp_path, files)
+        parse_skill_package(temp_path / "SKILL.md", skill_id, temp_path)
+        _reject_symlink_components(skills_root, relative_parent)
+        if target.exists() or target.is_symlink():
+            raise FileExistsError(f"skill already exists: {skill_id}")
+        os.replace(temp_path, target)
+    finally:
+        if temp_path.exists() or temp_path.is_symlink():
+            shutil.rmtree(temp_path, ignore_errors=True)
+
+
 def atomic_write_package(
     target: Path,
     files: Mapping[str, tuple[str, bytes]],
@@ -204,41 +303,30 @@ def atomic_write_package(
     skills_root: Path,
 ) -> None:
     relative_parent = PurePosixPath(target.parent.relative_to(skills_root).as_posix())
-    parent = target.parent
 
     with _exclusive_creation_lock(skills_root, skill_id):
+        if skills_root.is_symlink():
+            raise ValueError("skills root must not be a symlink")
+        _reject_symlink_components(skills_root, relative_parent)
         if target.exists() or target.is_symlink():
             raise FileExistsError(f"skill already exists: {skill_id}")
 
-        parent_fd = _open_or_create_parent_fd(skills_root, relative_parent)
-        if parent_fd is None:
-            raise RuntimeError(
-                "secure skill publication requires os.open, os.mkdir, and "
-                "os.replace dir_fd support"
+        if _supports_secure_dir_fd_publication():
+            _atomic_write_package_dir_fd(
+                target,
+                files,
+                skill_id,
+                skills_root=skills_root,
+                relative_parent=relative_parent,
             )
-        temp_path = Path(tempfile.mkdtemp(prefix=f".{target.name}.tmp-", dir=parent))
-        try:
-            _reject_symlink_components(skills_root, relative_parent)
-            for relative, (_, encoded) in files.items():
-                destination = temp_path.joinpath(*PurePosixPath(relative).parts)
-                destination.parent.mkdir(parents=True, exist_ok=True)
-                destination.write_bytes(encoded)
-            parse_skill_package(temp_path / "SKILL.md", skill_id, temp_path)
-            _reject_symlink_components(skills_root, relative_parent)
-            if target.exists() or target.is_symlink():
-                raise FileExistsError(f"skill already exists: {skill_id}")
-
-            os.replace(
-                temp_path.name,
-                target.name,
-                src_dir_fd=parent_fd,
-                dst_dir_fd=parent_fd,
+        else:
+            _atomic_write_package_path(
+                target,
+                files,
+                skill_id,
+                skills_root=skills_root,
+                relative_parent=relative_parent,
             )
-        finally:
-            if parent_fd is not None:
-                os.close(parent_fd)
-            if temp_path.exists() or temp_path.is_symlink():
-                shutil.rmtree(temp_path, ignore_errors=True)
 
 
 def create_skill(
@@ -262,6 +350,7 @@ def create_skill(
         raise FileExistsError(f"skill already exists: {validated_id}")
 
     atomic_write_package(target, files, validated_id, skills_root=skills_root)
+    _reject_symlink_components(skills_root, relative)
     skill = parse_skill_package(target / "SKILL.md", validated_id, target)
     return {"created": True, "skill": skill.summary(), "files": sorted(files)}
 
