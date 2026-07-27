@@ -82,6 +82,52 @@ def test_failed_reload_preserves_last_healthy_catalog(tmp_path):
     assert status["next_retry_at"] is not None
 
 
+def test_invalid_registry_preserves_last_healthy_catalog(tmp_path):
+    from mcp_proxy import MCPProxyManager
+
+    script = _server_script(tmp_path)
+    config = tmp_path / "mcp.json"
+    _write_config(config, {"demo": {"command": sys.executable, "args": [str(script), "echo", "ok"]}})
+    gateway = FastMCP("gateway")
+    manager = MCPProxyManager(config, project_root=tmp_path, environ={}, refresh_interval_seconds=0)
+
+    async def scenario():
+        await manager.start(gateway)
+        config.write_text('{"mcpServers": ')
+        diff = await manager.refresh()
+        result = await gateway.call_tool("demo_echo", {})
+        status = manager.server_status("demo")
+        await manager.close()
+        return diff, result, status
+
+    diff, result, status = asyncio.run(scenario())
+    assert not diff.changed
+    assert result.content[0].text == "ok"
+    assert status["status"] == "healthy"
+
+
+def test_missing_registry_preserves_last_healthy_catalog(tmp_path):
+    from mcp_proxy import MCPProxyManager
+
+    script = _server_script(tmp_path)
+    config = tmp_path / "mcp.json"
+    _write_config(config, {"demo": {"command": sys.executable, "args": [str(script), "echo", "ok"]}})
+    gateway = FastMCP("gateway")
+    manager = MCPProxyManager(config, project_root=tmp_path, environ={}, refresh_interval_seconds=0)
+
+    async def scenario():
+        await manager.start(gateway)
+        config.unlink()
+        diff = await manager.refresh()
+        result = await gateway.call_tool("demo_echo", {})
+        await manager.close()
+        return diff, result
+
+    diff, result = asyncio.run(scenario())
+    assert not diff.changed
+    assert result.content[0].text == "ok"
+
+
 def test_concurrent_refresh_is_serialized_and_unchanged_is_noop(tmp_path):
     from mcp_proxy import MCPProxyManager
 

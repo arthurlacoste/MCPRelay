@@ -24,6 +24,7 @@ from command_guard import GuardService
 from mcp_proxy import (
     ProxyCallLoggingMiddleware,
     ProxyCommandGuardMiddleware,
+    ProxyConfigUnavailable,
     ProxyServerConfig,
     load_proxy_config,
 )
@@ -167,11 +168,19 @@ class MCPRegistry:
             self.config_path,
             project_root=self.project_root,
             environ=self.environ,
+            raise_on_error=True,
         )
         return {server.name: server for server in servers}
 
     async def refresh(self) -> RegistryDiff:
-        configured = await self._load_configured()
+        try:
+            configured = await self._load_configured()
+        except ProxyConfigUnavailable as exc:
+            self._event("mcp_registry_refresh_skipped", {
+                "reason": str(exc),
+                "config_path": str(self.config_path),
+            })
+            return RegistryDiff()
         async with self._lock:
             return await self._refresh_locked(configured)
 
