@@ -286,7 +286,7 @@ Gate-specific options:
 }
 ```
 
-`${VAR}` placeholders are resolved from `config/.env` and the process environment. Relative `cwd` values resolve from the Gate project root. Restart Gate after editing this file.
+`${VAR}` placeholders are resolved from `config/.env` and the process environment. Relative `cwd` values resolve from the Gate project root. Gate watches this file and reconciles valid changes automatically. Invalid or partial writes keep the last healthy catalog until the next successful refresh.
 
 The local `config/mcp.json` file is ignored by Git because it may contain secrets. Prefer `${VAR}` placeholders. Missing variables, unavailable binaries, and unreachable servers disable only the affected server.
 

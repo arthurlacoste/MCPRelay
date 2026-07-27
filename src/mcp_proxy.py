@@ -77,6 +77,10 @@ class ProxyCallLoggingMiddleware(Middleware):
         return result
 
 
+class ProxyConfigUnavailable(RuntimeError):
+    """Raised when the registry file cannot be trusted for reconciliation."""
+
+
 @dataclass(frozen=True)
 class ProxyServerConfig:
     name: str
@@ -106,13 +110,24 @@ def load_proxy_config(
     *,
     project_root: str | Path,
     environ: Mapping[str, str],
+    raise_on_error: bool = False,
 ) -> list[ProxyServerConfig]:
+    """Load enabled MCP proxy servers from a classic ``mcpServers`` file.
+
+    By default, unavailable or structurally invalid registry files are logged
+    and treated as empty for backward compatibility. Registry reconciliation
+    passes ``raise_on_error=True`` so it can preserve the last healthy catalog
+    instead of interpreting a failed read as an explicit request to remove all
+    servers. Per-server validation failures remain isolated and are omitted.
+    """
     root = Path(project_root)
     config_path = Path(path)
     try:
         data = json.loads(config_path.read_text(encoding="utf-8"))
-    except FileNotFoundError:
+    except FileNotFoundError as exc:
         logger.warning("MCP proxy config not found: %s", config_path)
+        if raise_on_error:
+            raise ProxyConfigUnavailable(f"registry file not found: {config_path}") from exc
         return []
     except (OSError, json.JSONDecodeError, UnicodeDecodeError) as exc:
         logger.error(
@@ -120,9 +135,13 @@ def load_proxy_config(
             config_path,
             type(exc).__name__,
         )
+        if raise_on_error:
+            raise ProxyConfigUnavailable(f"{type(exc).__name__} reading {config_path}") from exc
         return []
     if not isinstance(data, dict) or not isinstance(data.get("mcpServers"), dict):
         logger.error("MCP proxy config %s must contain an mcpServers object", config_path)
+        if raise_on_error:
+            raise ProxyConfigUnavailable(f"missing mcpServers object in {config_path}")
         return []
     servers = []
     for name, raw_config in data["mcpServers"].items():
