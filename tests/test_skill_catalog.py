@@ -11,6 +11,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / 'src'))
 from fastmcp import Client
 from environment_config import load_gateway_environment
 from skill_catalog import MAX_FILE_BYTES, get_skills_root, skills_read, skills_search
+from skill_writer import install_builtin_skills
 import mcp_gateway as gateway
 from tool_metadata import TOOL_METADATA
 
@@ -189,6 +190,14 @@ def test_fastmcp_exposes_instructions_skill_tools_and_metadata(monkeypatch, tmp_
         assert tool.annotations.readOnlyHint is True
         assert tool.annotations.idempotentHint is True
         assert tool.annotations.openWorldHint is False
+    create_tool = tools['skills_create']
+    assert create_tool.title
+    assert create_tool.description
+    assert create_tool.annotations.readOnlyHint is False
+    assert create_tool.annotations.destructiveHint is False
+    assert create_tool.annotations.idempotentHint is False
+    assert create_tool.annotations.openWorldHint is False
+
     assert set(TOOL_METADATA) <= set(tools)
     for name in TOOL_METADATA:
         tool = tools[name]
@@ -203,7 +212,7 @@ def test_fastmcp_exposes_instructions_skill_tools_and_metadata(monkeypatch, tmp_
 
 def test_skill_tools_can_be_disabled_through_registry(tmp_path):
     config = tmp_path / 'tools.toml'
-    config.write_text('[tools]\nskills_search = false\nskills_read = false\n')
+    config.write_text('[tools]\nskills_search = false\nskills_read = false\nskills_create = false\n')
     script = '''
 import asyncio, sys
 sys.path.insert(0, 'src')
@@ -224,3 +233,42 @@ asyncio.run(main())
     names = completed.stdout.strip().split(',')
     assert 'skills_search' not in names
     assert 'skills_read' not in names
+    assert 'skills_create' not in names
+
+def test_fastmcp_skills_create_publishes_package(monkeypatch, tmp_path):
+    monkeypatch.setenv('MCP_SKILLS_ROOT', str(tmp_path))
+    install_builtin_skills(root=tmp_path)
+    skill_md = '---\nname: Created\ndescription: Created through MCP.\n---\nBody\n'
+
+    async def scenario():
+        async with Client(gateway.mcp) as client:
+            created = await client.call_tool('skills_create', {
+                'skill_id': 'generated/example',
+                'skill_md': skill_md,
+                'additional_files': {'references/note.md': 'Note\n'},
+            })
+            read = await client.call_tool('skills_read', {
+                'skill_id': 'generated/example',
+                'path': 'references/note.md',
+            })
+            return created.structured_content or created.data, read.structured_content or read.data
+
+    created, read = asyncio.run(scenario())
+    assert created['created'] is True
+    assert created['skill']['id'] == 'generated/example'
+    assert read['content'] == 'Note\n'
+    assert (tmp_path / 'gate/skill-creator/SKILL.md').is_file()
+
+
+
+def test_skills_create_writes_audit_log(monkeypatch, tmp_path):
+    events = []
+    skill_md = '---\nname: Audited\ndescription: Audit creation.\n---\nBody\n'
+
+    monkeypatch.setenv('MCP_SKILLS_ROOT', str(tmp_path))
+    monkeypatch.setattr(gateway, 'log_action', lambda action, payload=None: events.append((action, payload)))
+
+    result = gateway.skills_create('audited/example', skill_md, {'note.txt': 'Note\n'})
+
+    assert result['created'] is True
+    assert events == [('skills_create', {'skill_id': 'audited/example', 'file_count': 2})]

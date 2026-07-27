@@ -234,6 +234,14 @@ def _available_files(skill: Skill) -> list[str]:
     return files
 
 
+
+def parse_skill_package(path: Path, skill_id: str, package_dir: Path) -> Skill:
+    return _parse_skill(path, skill_id, package_dir)
+
+
+def validate_skill_id(skill_id: str) -> str:
+    return _validate_skill_id(skill_id)
+
 def skills_read(skill_id: str, path: str = 'SKILL.md', root: Path | None = None) -> dict[str, Any]:
     validated_skill_id = _validate_skill_id(skill_id)
     root = root or get_skills_root()

@@ -32,6 +32,7 @@ from mcp_proxy import MCPProxyManager
 from runtime_features import RuntimeFeatures, runtime_mode_summary
 from realtime_calls import RealtimeCallStore
 from skill_catalog import skills_read as read_skill, skills_search as search_skills
+from skill_writer import create_skill, install_builtin_skills
 from tool_metadata import tool_metadata
 from pydantic import AnyHttpUrl
 from starlette.routing import Mount
@@ -43,6 +44,7 @@ RUNTIME_FEATURES = RuntimeFeatures.from_environ(os.environ)
 SECRET_REDACTOR = SecretRedactor.from_environ(os.environ)
 
 logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 LOG_FILE = GATEWAY_PATHS.logs / 'mcp_gateway.log'
 STREAM_DIR = GATEWAY_PATHS.logs / 'commands'
@@ -275,6 +277,15 @@ proxy_manager = MCPProxyManager(
 
 @asynccontextmanager
 async def gateway_lifespan(server: FastMCP):
+    try:
+        await asyncio.wait_for(
+            asyncio.to_thread(install_builtin_skills),
+            timeout=30,
+        )
+    except TimeoutError:
+        logger.error("Builtin skill installation timed out; continuing gateway startup")
+    except Exception:
+        logger.exception("Failed to install builtin skills; continuing gateway startup")
     await proxy_manager.start(server)
     try:
         yield {}
@@ -317,6 +328,30 @@ def skills_search(query: str | None = None, limit: int = 8, offset: int = 0) -> 
 )
 def skills_read(skill_id: str, path: str = 'SKILL.md') -> dict:
     return read_skill(skill_id=skill_id, path=path)
+
+
+@configurable_tool(
+    mcp,
+    title='Create skill package',
+    description='Create one validated UTF-8 Agent Skill package inside the configured skills root.',
+    annotations={
+        'readOnlyHint': False,
+        'destructiveHint': False,
+        'idempotentHint': False,
+        'openWorldHint': False,
+    },
+)
+def skills_create(
+    skill_id: str,
+    skill_md: str,
+    additional_files: dict[str, str] | None = None,
+) -> dict:
+    result = create_skill(skill_id, skill_md, additional_files)
+    log_action('skills_create', {
+        'skill_id': skill_id,
+        'file_count': len(result['files']),
+    })
+    return result
 
 
 @configurable_tool(mcp, title='List MCP servers', description='List configured MCP subservers and their health state.')
