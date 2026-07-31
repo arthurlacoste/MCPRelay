@@ -642,7 +642,10 @@ def test_descriptor_real_path_rejects_self_referential_readlink(monkeypatch):
     assert skill_writer._descriptor_real_path(7) == Path("/tmp/fallback-skill-package")
 
 
-@pytest.mark.parametrize("error", [ValueError("bad buffer"), BufferError("bad buffer"), TypeError("bad buffer")])
+@pytest.mark.parametrize(
+    "error",
+    [ValueError("bad buffer"), BufferError("bad buffer"), TypeError("bad buffer"), AttributeError("missing F_GETPATH")],
+)
 def test_descriptor_real_path_normalizes_fcntl_argument_errors(monkeypatch, error):
     import sys
     import types
@@ -661,3 +664,50 @@ def test_descriptor_real_path_normalizes_fcntl_argument_errors(monkeypatch, erro
 
     with pytest.raises(RuntimeError, match="could not resolve descriptor-backed path"):
         skill_writer._descriptor_real_path(7)
+
+
+def test_descriptor_real_path_uses_resolve_fallback(monkeypatch):
+    import skill_writer
+
+    descriptor_path = Path("/virtual/fd/7")
+    resolved_path = Path("/tmp/resolved-skill-package")
+    monkeypatch.setattr(skill_writer, "_descriptor_path", lambda descriptor: descriptor_path)
+    monkeypatch.setattr(skill_writer.os, "readlink", lambda path: (_ for _ in ()).throw(OSError()))
+    monkeypatch.setattr(skill_writer.sys, "platform", "linux")
+    monkeypatch.setattr(Path, "resolve", lambda self: resolved_path if self == descriptor_path else self)
+
+    assert skill_writer._descriptor_real_path(7) == resolved_path
+
+
+def test_secure_publication_cleanup_logs_rmdir_failure(monkeypatch, tmp_path, caplog):
+    from pathlib import PurePosixPath
+    import logging
+    import skill_writer
+
+    parent_fd = 91
+    temp_fd = 92
+    monkeypatch.setattr(skill_writer, "_open_or_create_parent_fd", lambda root, relative: parent_fd)
+    monkeypatch.setattr(skill_writer, "_create_temp_directory_at", lambda fd, name: (".example.tmp-test", temp_fd))
+    monkeypatch.setattr(
+        skill_writer,
+        "_descriptor_real_path",
+        lambda fd: (_ for _ in ()).throw(RuntimeError("primary resolution failure")),
+    )
+    monkeypatch.setattr(
+        skill_writer.os,
+        "rmdir",
+        lambda name, dir_fd: (_ for _ in ()).throw(OSError("cleanup failed")),
+    )
+    monkeypatch.setattr(skill_writer.os, "close", lambda fd: None)
+
+    with caplog.at_level(logging.WARNING, logger="skill_writer"):
+        with pytest.raises(RuntimeError, match="primary resolution failure"):
+            skill_writer._atomic_write_package_dir_fd(
+                tmp_path / "example",
+                {"SKILL.md": ("text", b"text")},
+                "example",
+                skills_root=tmp_path,
+                relative_parent=PurePosixPath("."),
+            )
+
+    assert "Failed to remove temporary skill directory .example.tmp-test" in caplog.text

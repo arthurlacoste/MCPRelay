@@ -233,7 +233,7 @@ def _descriptor_real_path(descriptor: int) -> Path:
         try:
             # macOS PATH_MAX is 1024. fcntl returns the kernel-filled copy.
             buffer = fcntl.fcntl(descriptor, fcntl.F_GETPATH, bytes(1024))
-        except (OSError, ValueError, BufferError, TypeError):
+        except (OSError, ValueError, BufferError, TypeError, AttributeError):
             pass
         else:
             raw_path = buffer.split(b"\0", 1)[0]
@@ -293,8 +293,8 @@ def _atomic_write_package_dir_fd(
             else:
                 try:
                     os.rmdir(temp_name, dir_fd=parent_fd)
-                except OSError:
-                    pass
+                except OSError as exc:
+                    logger.warning("Failed to remove temporary skill directory %s: %s", temp_name, exc)
         if temp_fd >= 0:
             os.close(temp_fd)
         os.close(parent_fd)
