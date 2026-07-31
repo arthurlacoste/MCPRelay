@@ -227,10 +227,14 @@ def _descriptor_real_path(descriptor: int) -> Path:
     if sys.platform == "darwin":
         import fcntl
 
-        buffer = fcntl.fcntl(descriptor, 50, bytes(1024))  # F_GETPATH
-        raw_path = buffer.split(b"\0", 1)[0]
-        if raw_path:
-            return Path(os.fsdecode(raw_path))
+        try:
+            buffer = fcntl.fcntl(descriptor, fcntl.F_GETPATH, bytes(1024))
+        except OSError:
+            pass
+        else:
+            raw_path = buffer.split(b"\0", 1)[0]
+            if raw_path:
+                return Path(os.fsdecode(raw_path))
 
     resolved = descriptor_path.resolve()
     if resolved == descriptor_path:
@@ -259,6 +263,7 @@ def _atomic_write_package_dir_fd(
 
     temp_name = ""
     temp_fd = -1
+    temp_path: Path | None = None
     try:
         temp_name, temp_fd = _create_temp_directory_at(parent_fd, target.name)
         temp_path = _descriptor_real_path(temp_fd)
@@ -279,7 +284,13 @@ def _atomic_write_package_dir_fd(
         temp_name = ""
     finally:
         if temp_name and temp_fd >= 0:
-            shutil.rmtree(_descriptor_real_path(temp_fd), ignore_errors=True)
+            if temp_path is not None:
+                shutil.rmtree(temp_path, ignore_errors=True)
+            else:
+                try:
+                    os.rmdir(temp_name, dir_fd=parent_fd)
+                except OSError:
+                    pass
         if temp_fd >= 0:
             os.close(temp_fd)
         os.close(parent_fd)
