@@ -7,6 +7,7 @@ import logging
 import os
 import secrets
 import shutil
+import sys
 import tempfile
 import time
 from contextlib import contextmanager
@@ -219,9 +220,30 @@ def _descriptor_path(descriptor: int) -> Path:
 def _descriptor_real_path(descriptor: int) -> Path:
     descriptor_path = _descriptor_path(descriptor)
     try:
-        return Path(os.readlink(descriptor_path))
+        linked_path = Path(os.readlink(descriptor_path))
     except OSError:
-        return descriptor_path.resolve()
+        pass
+    else:
+        if linked_path.is_absolute() and linked_path != descriptor_path:
+            return linked_path
+
+    if sys.platform == "darwin":
+        import fcntl
+
+        try:
+            # macOS PATH_MAX is 1024. fcntl returns the kernel-filled copy.
+            buffer = fcntl.fcntl(descriptor, fcntl.F_GETPATH, bytes(1024))
+        except (OSError, ValueError, BufferError, TypeError, AttributeError):
+            pass
+        else:
+            raw_path = buffer.split(b"\0", 1)[0]
+            if raw_path:
+                return Path(os.fsdecode(raw_path))
+
+    resolved = descriptor_path.resolve()
+    if resolved == descriptor_path:
+        raise RuntimeError("could not resolve descriptor-backed path")
+    return resolved
 
 
 def _write_package_tree(temp_path: Path, files: Mapping[str, tuple[str, bytes]]) -> None:
@@ -245,11 +267,13 @@ def _atomic_write_package_dir_fd(
 
     temp_name = ""
     temp_fd = -1
+    cleanup_path: Path | None = None
     try:
         temp_name, temp_fd = _create_temp_directory_at(parent_fd, target.name)
-        temp_path = _descriptor_path(temp_fd)
-        _write_package_tree(temp_path, files)
-        parse_skill_package(temp_path / "SKILL.md", skill_id, temp_path)
+        cleanup_path = _descriptor_real_path(temp_fd)
+        write_path = cleanup_path if sys.platform == "darwin" else _descriptor_path(temp_fd)
+        _write_package_tree(write_path, files)
+        parse_skill_package(write_path / "SKILL.md", skill_id, write_path)
         try:
             os.stat(target.name, dir_fd=parent_fd, follow_symlinks=False)
         except FileNotFoundError:
@@ -265,7 +289,13 @@ def _atomic_write_package_dir_fd(
         temp_name = ""
     finally:
         if temp_name and temp_fd >= 0:
-            shutil.rmtree(_descriptor_real_path(temp_fd), ignore_errors=True)
+            if cleanup_path is not None:
+                shutil.rmtree(cleanup_path, ignore_errors=True)
+            else:
+                try:
+                    os.rmdir(temp_name, dir_fd=parent_fd)
+                except OSError as exc:
+                    logger.warning("Failed to remove temporary skill directory %s: %s", temp_name, exc)
         if temp_fd >= 0:
             os.close(temp_fd)
         os.close(parent_fd)

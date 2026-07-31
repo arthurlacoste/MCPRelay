@@ -523,3 +523,271 @@ def test_secure_publication_requires_replace_dir_fd_parameters(monkeypatch):
     monkeypatch.setattr(skill_writer.inspect, "signature", signature_without_replace_dir_fd)
 
     assert skill_writer._supports_secure_dir_fd_publication() is False
+
+
+def test_descriptor_real_path_uses_macos_f_getpath(monkeypatch):
+    import sys
+    import types
+    import skill_writer
+
+    expected = b"/tmp/skill-package"
+    fake_fcntl = types.SimpleNamespace(
+        F_GETPATH=50,
+        fcntl=lambda descriptor, operation, buffer: expected + b"\0" * (len(buffer) - len(expected)),
+    )
+    monkeypatch.setattr(skill_writer, "_descriptor_path", lambda descriptor: Path(f"/dev/fd/{descriptor}"))
+    monkeypatch.setattr(skill_writer.os, "readlink", lambda path: (_ for _ in ()).throw(OSError()))
+    monkeypatch.setattr(skill_writer.sys, "platform", "darwin")
+    monkeypatch.setitem(sys.modules, "fcntl", fake_fcntl)
+
+    assert skill_writer._descriptor_real_path(7) == Path("/tmp/skill-package")
+
+
+def test_descriptor_real_path_preserves_readlink_short_circuit(monkeypatch):
+    import skill_writer
+
+    monkeypatch.setattr(skill_writer, "_descriptor_path", lambda descriptor: Path(f"/proc/self/fd/{descriptor}"))
+    monkeypatch.setattr(skill_writer.os, "readlink", lambda path: "/tmp/linked-skill-package")
+    monkeypatch.setattr(skill_writer.sys, "platform", "darwin")
+
+    assert skill_writer._descriptor_real_path(7) == Path("/tmp/linked-skill-package")
+
+
+def test_descriptor_real_path_fails_closed_when_macos_lookup_fails(monkeypatch):
+    import sys
+    import types
+    import skill_writer
+
+    class UnresolvableDescriptorPath:
+        def resolve(self):
+            return self
+
+    descriptor_path = UnresolvableDescriptorPath()
+    fake_fcntl = types.SimpleNamespace(
+        F_GETPATH=50,
+        fcntl=lambda descriptor, operation, buffer: (_ for _ in ()).throw(OSError("lookup failed")),
+    )
+    monkeypatch.setattr(skill_writer, "_descriptor_path", lambda descriptor: descriptor_path)
+    monkeypatch.setattr(skill_writer.os, "readlink", lambda path: (_ for _ in ()).throw(OSError()))
+    monkeypatch.setattr(skill_writer.sys, "platform", "darwin")
+    monkeypatch.setitem(sys.modules, "fcntl", fake_fcntl)
+
+    with pytest.raises(RuntimeError, match="could not resolve descriptor-backed path"):
+        skill_writer._descriptor_real_path(7)
+
+
+def test_secure_publication_cleanup_preserves_resolution_error(monkeypatch, tmp_path):
+    from pathlib import PurePosixPath
+    import skill_writer
+
+    parent_fd = 91
+    temp_fd = 92
+    removed: list[tuple[str, int]] = []
+    closed: list[int] = []
+
+    monkeypatch.setattr(skill_writer, "_open_or_create_parent_fd", lambda root, relative: parent_fd)
+    monkeypatch.setattr(skill_writer, "_create_temp_directory_at", lambda fd, name: (".example.tmp-test", temp_fd))
+    monkeypatch.setattr(
+        skill_writer,
+        "_descriptor_real_path",
+        lambda fd: (_ for _ in ()).throw(RuntimeError("primary resolution failure")),
+    )
+    monkeypatch.setattr(skill_writer.os, "rmdir", lambda name, dir_fd: removed.append((name, dir_fd)))
+    monkeypatch.setattr(skill_writer.os, "close", lambda fd: closed.append(fd))
+
+    with pytest.raises(RuntimeError, match="primary resolution failure"):
+        skill_writer._atomic_write_package_dir_fd(
+            tmp_path / "example",
+            {"SKILL.md": ("text", b"text")},
+            "example",
+            skills_root=tmp_path,
+            relative_parent=PurePosixPath("."),
+        )
+
+    assert removed == [(".example.tmp-test", parent_fd)]
+    assert closed == [temp_fd, parent_fd]
+
+
+def test_descriptor_real_path_rejects_relative_readlink_result(monkeypatch):
+    import sys
+    import types
+    import skill_writer
+
+    expected = b"/tmp/fallback-skill-package"
+    fake_fcntl = types.SimpleNamespace(
+        F_GETPATH=50,
+        fcntl=lambda descriptor, operation, buffer: expected + b"\0" * (len(buffer) - len(expected)),
+    )
+    monkeypatch.setattr(skill_writer, "_descriptor_path", lambda descriptor: Path(f"/dev/fd/{descriptor}"))
+    monkeypatch.setattr(skill_writer.os, "readlink", lambda path: "relative/path")
+    monkeypatch.setattr(skill_writer.sys, "platform", "darwin")
+    monkeypatch.setitem(sys.modules, "fcntl", fake_fcntl)
+
+    assert skill_writer._descriptor_real_path(7) == Path("/tmp/fallback-skill-package")
+
+
+def test_descriptor_real_path_rejects_self_referential_readlink(monkeypatch):
+    import sys
+    import types
+    import skill_writer
+
+    descriptor_path = Path("/dev/fd/7")
+    expected = b"/tmp/fallback-skill-package"
+    fake_fcntl = types.SimpleNamespace(
+        F_GETPATH=50,
+        fcntl=lambda descriptor, operation, buffer: expected + b"\0" * (len(buffer) - len(expected)),
+    )
+    monkeypatch.setattr(skill_writer, "_descriptor_path", lambda descriptor: descriptor_path)
+    monkeypatch.setattr(skill_writer.os, "readlink", lambda path: str(descriptor_path))
+    monkeypatch.setattr(skill_writer.sys, "platform", "darwin")
+    monkeypatch.setitem(sys.modules, "fcntl", fake_fcntl)
+
+    assert skill_writer._descriptor_real_path(7) == Path("/tmp/fallback-skill-package")
+
+
+@pytest.mark.parametrize(
+    "error",
+    [ValueError("bad buffer"), BufferError("bad buffer"), TypeError("bad buffer"), AttributeError("missing F_GETPATH")],
+)
+def test_descriptor_real_path_normalizes_fcntl_argument_errors(monkeypatch, error):
+    import sys
+    import types
+    import skill_writer
+
+    class UnresolvableDescriptorPath:
+        def resolve(self):
+            return self
+
+    descriptor_path = UnresolvableDescriptorPath()
+    fake_fcntl = types.SimpleNamespace(
+        F_GETPATH=50,
+        fcntl=lambda descriptor, operation, buffer: (_ for _ in ()).throw(error),
+    )
+    monkeypatch.setattr(skill_writer, "_descriptor_path", lambda descriptor: descriptor_path)
+    monkeypatch.setattr(skill_writer.os, "readlink", lambda path: (_ for _ in ()).throw(OSError()))
+    monkeypatch.setattr(skill_writer.sys, "platform", "darwin")
+    monkeypatch.setitem(sys.modules, "fcntl", fake_fcntl)
+
+    with pytest.raises(RuntimeError, match="could not resolve descriptor-backed path"):
+        skill_writer._descriptor_real_path(7)
+
+
+def test_descriptor_real_path_uses_resolve_fallback(monkeypatch):
+    import skill_writer
+
+    resolved_path = Path("/tmp/resolved-skill-package")
+
+    class ResolvableDescriptorPath:
+        def resolve(self):
+            return resolved_path
+
+    descriptor_path = ResolvableDescriptorPath()
+    monkeypatch.setattr(skill_writer, "_descriptor_path", lambda descriptor: descriptor_path)
+    monkeypatch.setattr(skill_writer.os, "readlink", lambda path: (_ for _ in ()).throw(OSError()))
+    monkeypatch.setattr(skill_writer.sys, "platform", "linux")
+
+    assert skill_writer._descriptor_real_path(7) == resolved_path
+
+
+def test_secure_publication_cleanup_logs_rmdir_failure(monkeypatch, tmp_path, caplog):
+    from pathlib import PurePosixPath
+    import logging
+    import skill_writer
+
+    parent_fd = 91
+    temp_fd = 92
+    monkeypatch.setattr(skill_writer, "_open_or_create_parent_fd", lambda root, relative: parent_fd)
+    monkeypatch.setattr(skill_writer, "_create_temp_directory_at", lambda fd, name: (".example.tmp-test", temp_fd))
+    monkeypatch.setattr(
+        skill_writer,
+        "_descriptor_real_path",
+        lambda fd: (_ for _ in ()).throw(RuntimeError("primary resolution failure")),
+    )
+    monkeypatch.setattr(
+        skill_writer.os,
+        "rmdir",
+        lambda name, dir_fd: (_ for _ in ()).throw(OSError("cleanup failed")),
+    )
+    monkeypatch.setattr(skill_writer.os, "close", lambda fd: None)
+
+    with caplog.at_level(logging.WARNING, logger="skill_writer"):
+        with pytest.raises(RuntimeError, match="primary resolution failure"):
+            skill_writer._atomic_write_package_dir_fd(
+                tmp_path / "example",
+                {"SKILL.md": ("text", b"text")},
+                "example",
+                skills_root=tmp_path,
+                relative_parent=PurePosixPath("."),
+            )
+
+    assert "Failed to remove temporary skill directory .example.tmp-test" in caplog.text
+
+
+def test_secure_publication_keeps_linux_writes_fd_pinned(monkeypatch, tmp_path):
+    from pathlib import PurePosixPath
+    import skill_writer
+
+    parent_fd = 91
+    temp_fd = 92
+    descriptor_path = Path("/proc/self/fd/92")
+    cleanup_path = tmp_path / ".example.tmp-test"
+    written_paths: list[Path] = []
+    parsed_paths: list[tuple[Path, Path]] = []
+
+    monkeypatch.setattr(skill_writer, "_open_or_create_parent_fd", lambda root, relative: parent_fd)
+    monkeypatch.setattr(skill_writer, "_create_temp_directory_at", lambda fd, name: (".example.tmp-test", temp_fd))
+    monkeypatch.setattr(skill_writer, "_descriptor_path", lambda fd: descriptor_path)
+    monkeypatch.setattr(skill_writer, "_descriptor_real_path", lambda fd: cleanup_path)
+    monkeypatch.setattr(skill_writer.sys, "platform", "linux")
+    monkeypatch.setattr(skill_writer, "_write_package_tree", lambda path, files: written_paths.append(path))
+    monkeypatch.setattr(
+        skill_writer,
+        "parse_skill_package",
+        lambda skill_path, skill_id, root: parsed_paths.append((skill_path, root)),
+    )
+    monkeypatch.setattr(skill_writer.os, "stat", lambda *args, **kwargs: (_ for _ in ()).throw(FileNotFoundError()))
+    monkeypatch.setattr(skill_writer.os, "replace", lambda *args, **kwargs: None)
+    monkeypatch.setattr(skill_writer.os, "close", lambda fd: None)
+
+    skill_writer._atomic_write_package_dir_fd(
+        tmp_path / "example",
+        {"SKILL.md": ("text", b"text")},
+        "example",
+        skills_root=tmp_path,
+        relative_parent=PurePosixPath("."),
+    )
+
+    assert written_paths == [descriptor_path]
+    assert parsed_paths == [(descriptor_path / "SKILL.md", descriptor_path)]
+
+
+def test_secure_publication_uses_real_path_on_macos(monkeypatch, tmp_path):
+    from pathlib import PurePosixPath
+    import skill_writer
+
+    parent_fd = 91
+    temp_fd = 92
+    descriptor_path = Path("/dev/fd/92")
+    real_path = tmp_path / ".example.tmp-test"
+    written_paths: list[Path] = []
+
+    monkeypatch.setattr(skill_writer, "_open_or_create_parent_fd", lambda root, relative: parent_fd)
+    monkeypatch.setattr(skill_writer, "_create_temp_directory_at", lambda fd, name: (".example.tmp-test", temp_fd))
+    monkeypatch.setattr(skill_writer, "_descriptor_path", lambda fd: descriptor_path)
+    monkeypatch.setattr(skill_writer, "_descriptor_real_path", lambda fd: real_path)
+    monkeypatch.setattr(skill_writer.sys, "platform", "darwin")
+    monkeypatch.setattr(skill_writer, "_write_package_tree", lambda path, files: written_paths.append(path))
+    monkeypatch.setattr(skill_writer, "parse_skill_package", lambda *args, **kwargs: None)
+    monkeypatch.setattr(skill_writer.os, "stat", lambda *args, **kwargs: (_ for _ in ()).throw(FileNotFoundError()))
+    monkeypatch.setattr(skill_writer.os, "replace", lambda *args, **kwargs: None)
+    monkeypatch.setattr(skill_writer.os, "close", lambda fd: None)
+
+    skill_writer._atomic_write_package_dir_fd(
+        tmp_path / "example",
+        {"SKILL.md": ("text", b"text")},
+        "example",
+        skills_root=tmp_path,
+        relative_parent=PurePosixPath("."),
+    )
+
+    assert written_paths == [real_path]
