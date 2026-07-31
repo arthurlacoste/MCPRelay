@@ -1,16 +1,22 @@
 # Changelog
 
-## 0.1.19-alpha
+## 0.1.19 - 2026-07-31
 
 ### Added
 
-- Added deterministic `skills_create` support for creating validated local skill packages.
-- Added the builtin `skill-creator` workflow.
+- Add deterministic `skills_create` support for creating validated local skill packages.
+- Add the builtin `skill-creator` workflow.
 
 ### Fixed
 
-- Added a Windows-compatible atomic publication fallback when `dir_fd` APIs are unavailable.
-- Hardened POSIX skill publication against symlink swaps and temporary-directory races.
+- Add a Windows-compatible atomic publication fallback when `dir_fd` APIs are unavailable.
+- Harden POSIX skill publication against symlink swaps and temporary-directory races.
+- Fix secure skill publication on macOS with Python 3.14 by resolving directory descriptors through `F_GETPATH` while preserving fd-pinned writes on Linux.
+- Preserve the original publication error during temporary-directory cleanup and log unexpected cleanup failures.
+
+### Tests
+
+- Add focused coverage for macOS descriptor resolution, fail-closed behavior, cleanup, and platform-specific write paths.
 
 ## 0.1.18
 
