@@ -220,16 +220,20 @@ def _descriptor_path(descriptor: int) -> Path:
 def _descriptor_real_path(descriptor: int) -> Path:
     descriptor_path = _descriptor_path(descriptor)
     try:
-        return Path(os.readlink(descriptor_path))
+        linked_path = Path(os.readlink(descriptor_path))
     except OSError:
         pass
+    else:
+        if linked_path.is_absolute() and linked_path != descriptor_path:
+            return linked_path
 
     if sys.platform == "darwin":
         import fcntl
 
         try:
+            # macOS PATH_MAX is 1024. fcntl returns the kernel-filled copy.
             buffer = fcntl.fcntl(descriptor, fcntl.F_GETPATH, bytes(1024))
-        except OSError:
+        except (OSError, ValueError, BufferError, TypeError):
             pass
         else:
             raw_path = buffer.split(b"\0", 1)[0]

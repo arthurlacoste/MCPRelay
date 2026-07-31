@@ -603,3 +603,61 @@ def test_secure_publication_cleanup_preserves_resolution_error(monkeypatch, tmp_
 
     assert removed == [(".example.tmp-test", parent_fd)]
     assert closed == [temp_fd, parent_fd]
+
+
+def test_descriptor_real_path_rejects_relative_readlink_result(monkeypatch):
+    import sys
+    import types
+    import skill_writer
+
+    expected = b"/tmp/fallback-skill-package"
+    fake_fcntl = types.SimpleNamespace(
+        F_GETPATH=50,
+        fcntl=lambda descriptor, operation, buffer: expected + b"\0" * (len(buffer) - len(expected)),
+    )
+    monkeypatch.setattr(skill_writer, "_descriptor_path", lambda descriptor: Path(f"/dev/fd/{descriptor}"))
+    monkeypatch.setattr(skill_writer.os, "readlink", lambda path: "relative/path")
+    monkeypatch.setattr(skill_writer.sys, "platform", "darwin")
+    monkeypatch.setitem(sys.modules, "fcntl", fake_fcntl)
+
+    assert skill_writer._descriptor_real_path(7) == Path("/tmp/fallback-skill-package")
+
+
+def test_descriptor_real_path_rejects_self_referential_readlink(monkeypatch):
+    import sys
+    import types
+    import skill_writer
+
+    descriptor_path = Path("/dev/fd/7")
+    expected = b"/tmp/fallback-skill-package"
+    fake_fcntl = types.SimpleNamespace(
+        F_GETPATH=50,
+        fcntl=lambda descriptor, operation, buffer: expected + b"\0" * (len(buffer) - len(expected)),
+    )
+    monkeypatch.setattr(skill_writer, "_descriptor_path", lambda descriptor: descriptor_path)
+    monkeypatch.setattr(skill_writer.os, "readlink", lambda path: str(descriptor_path))
+    monkeypatch.setattr(skill_writer.sys, "platform", "darwin")
+    monkeypatch.setitem(sys.modules, "fcntl", fake_fcntl)
+
+    assert skill_writer._descriptor_real_path(7) == Path("/tmp/fallback-skill-package")
+
+
+@pytest.mark.parametrize("error", [ValueError("bad buffer"), BufferError("bad buffer"), TypeError("bad buffer")])
+def test_descriptor_real_path_normalizes_fcntl_argument_errors(monkeypatch, error):
+    import sys
+    import types
+    import skill_writer
+
+    descriptor_path = Path("/dev/fd/7")
+    fake_fcntl = types.SimpleNamespace(
+        F_GETPATH=50,
+        fcntl=lambda descriptor, operation, buffer: (_ for _ in ()).throw(error),
+    )
+    monkeypatch.setattr(skill_writer, "_descriptor_path", lambda descriptor: descriptor_path)
+    monkeypatch.setattr(skill_writer.os, "readlink", lambda path: (_ for _ in ()).throw(OSError()))
+    monkeypatch.setattr(skill_writer.sys, "platform", "darwin")
+    monkeypatch.setattr(Path, "resolve", lambda self: self)
+    monkeypatch.setitem(sys.modules, "fcntl", fake_fcntl)
+
+    with pytest.raises(RuntimeError, match="could not resolve descriptor-backed path"):
+        skill_writer._descriptor_real_path(7)
