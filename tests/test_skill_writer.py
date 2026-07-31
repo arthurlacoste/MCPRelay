@@ -558,7 +558,11 @@ def test_descriptor_real_path_fails_closed_when_macos_lookup_fails(monkeypatch):
     import types
     import skill_writer
 
-    descriptor_path = Path("/dev/fd/7")
+    class UnresolvableDescriptorPath:
+        def resolve(self):
+            return self
+
+    descriptor_path = UnresolvableDescriptorPath()
     fake_fcntl = types.SimpleNamespace(
         F_GETPATH=50,
         fcntl=lambda descriptor, operation, buffer: (_ for _ in ()).throw(OSError("lookup failed")),
@@ -566,7 +570,6 @@ def test_descriptor_real_path_fails_closed_when_macos_lookup_fails(monkeypatch):
     monkeypatch.setattr(skill_writer, "_descriptor_path", lambda descriptor: descriptor_path)
     monkeypatch.setattr(skill_writer.os, "readlink", lambda path: (_ for _ in ()).throw(OSError()))
     monkeypatch.setattr(skill_writer.sys, "platform", "darwin")
-    monkeypatch.setattr(Path, "resolve", lambda self: self)
     monkeypatch.setitem(sys.modules, "fcntl", fake_fcntl)
 
     with pytest.raises(RuntimeError, match="could not resolve descriptor-backed path"):
@@ -651,7 +654,11 @@ def test_descriptor_real_path_normalizes_fcntl_argument_errors(monkeypatch, erro
     import types
     import skill_writer
 
-    descriptor_path = Path("/dev/fd/7")
+    class UnresolvableDescriptorPath:
+        def resolve(self):
+            return self
+
+    descriptor_path = UnresolvableDescriptorPath()
     fake_fcntl = types.SimpleNamespace(
         F_GETPATH=50,
         fcntl=lambda descriptor, operation, buffer: (_ for _ in ()).throw(error),
@@ -659,7 +666,6 @@ def test_descriptor_real_path_normalizes_fcntl_argument_errors(monkeypatch, erro
     monkeypatch.setattr(skill_writer, "_descriptor_path", lambda descriptor: descriptor_path)
     monkeypatch.setattr(skill_writer.os, "readlink", lambda path: (_ for _ in ()).throw(OSError()))
     monkeypatch.setattr(skill_writer.sys, "platform", "darwin")
-    monkeypatch.setattr(Path, "resolve", lambda self: self)
     monkeypatch.setitem(sys.modules, "fcntl", fake_fcntl)
 
     with pytest.raises(RuntimeError, match="could not resolve descriptor-backed path"):
@@ -669,12 +675,16 @@ def test_descriptor_real_path_normalizes_fcntl_argument_errors(monkeypatch, erro
 def test_descriptor_real_path_uses_resolve_fallback(monkeypatch):
     import skill_writer
 
-    descriptor_path = Path("/virtual/fd/7")
     resolved_path = Path("/tmp/resolved-skill-package")
+
+    class ResolvableDescriptorPath:
+        def resolve(self):
+            return resolved_path
+
+    descriptor_path = ResolvableDescriptorPath()
     monkeypatch.setattr(skill_writer, "_descriptor_path", lambda descriptor: descriptor_path)
     monkeypatch.setattr(skill_writer.os, "readlink", lambda path: (_ for _ in ()).throw(OSError()))
     monkeypatch.setattr(skill_writer.sys, "platform", "linux")
-    monkeypatch.setattr(Path, "resolve", lambda self: resolved_path if self == descriptor_path else self)
 
     assert skill_writer._descriptor_real_path(7) == resolved_path
 
