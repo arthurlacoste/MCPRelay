@@ -523,3 +523,20 @@ def test_secure_publication_requires_replace_dir_fd_parameters(monkeypatch):
     monkeypatch.setattr(skill_writer.inspect, "signature", signature_without_replace_dir_fd)
 
     assert skill_writer._supports_secure_dir_fd_publication() is False
+
+
+def test_descriptor_real_path_uses_macos_f_getpath(monkeypatch):
+    import sys
+    import types
+    import skill_writer
+
+    expected = b"/tmp/skill-package"
+    fake_fcntl = types.SimpleNamespace(
+        fcntl=lambda descriptor, operation, buffer: expected + b"\0" * (len(buffer) - len(expected))
+    )
+    monkeypatch.setattr(skill_writer, "_descriptor_path", lambda descriptor: Path(f"/dev/fd/{descriptor}"))
+    monkeypatch.setattr(skill_writer.os, "readlink", lambda path: (_ for _ in ()).throw(OSError()))
+    monkeypatch.setattr(skill_writer.sys, "platform", "darwin")
+    monkeypatch.setitem(sys.modules, "fcntl", fake_fcntl)
+
+    assert skill_writer._descriptor_real_path(7) == Path("/tmp/skill-package")

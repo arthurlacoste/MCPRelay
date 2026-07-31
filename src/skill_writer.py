@@ -7,6 +7,7 @@ import logging
 import os
 import secrets
 import shutil
+import sys
 import tempfile
 import time
 from contextlib import contextmanager
@@ -221,7 +222,20 @@ def _descriptor_real_path(descriptor: int) -> Path:
     try:
         return Path(os.readlink(descriptor_path))
     except OSError:
-        return descriptor_path.resolve()
+        pass
+
+    if sys.platform == "darwin":
+        import fcntl
+
+        buffer = fcntl.fcntl(descriptor, 50, bytes(1024))  # F_GETPATH
+        raw_path = buffer.split(b"\0", 1)[0]
+        if raw_path:
+            return Path(os.fsdecode(raw_path))
+
+    resolved = descriptor_path.resolve()
+    if resolved == descriptor_path:
+        raise RuntimeError("could not resolve descriptor-backed path")
+    return resolved
 
 
 def _write_package_tree(temp_path: Path, files: Mapping[str, tuple[str, bytes]]) -> None:
@@ -247,7 +261,7 @@ def _atomic_write_package_dir_fd(
     temp_fd = -1
     try:
         temp_name, temp_fd = _create_temp_directory_at(parent_fd, target.name)
-        temp_path = _descriptor_path(temp_fd)
+        temp_path = _descriptor_real_path(temp_fd)
         _write_package_tree(temp_path, files)
         parse_skill_package(temp_path / "SKILL.md", skill_id, temp_path)
         try:
