@@ -267,12 +267,13 @@ def _atomic_write_package_dir_fd(
 
     temp_name = ""
     temp_fd = -1
-    temp_path: Path | None = None
+    cleanup_path: Path | None = None
     try:
         temp_name, temp_fd = _create_temp_directory_at(parent_fd, target.name)
-        temp_path = _descriptor_real_path(temp_fd)
-        _write_package_tree(temp_path, files)
-        parse_skill_package(temp_path / "SKILL.md", skill_id, temp_path)
+        cleanup_path = _descriptor_real_path(temp_fd)
+        write_path = cleanup_path if sys.platform == "darwin" else _descriptor_path(temp_fd)
+        _write_package_tree(write_path, files)
+        parse_skill_package(write_path / "SKILL.md", skill_id, write_path)
         try:
             os.stat(target.name, dir_fd=parent_fd, follow_symlinks=False)
         except FileNotFoundError:
@@ -288,8 +289,8 @@ def _atomic_write_package_dir_fd(
         temp_name = ""
     finally:
         if temp_name and temp_fd >= 0:
-            if temp_path is not None:
-                shutil.rmtree(temp_path, ignore_errors=True)
+            if cleanup_path is not None:
+                shutil.rmtree(cleanup_path, ignore_errors=True)
             else:
                 try:
                     os.rmdir(temp_name, dir_fd=parent_fd)

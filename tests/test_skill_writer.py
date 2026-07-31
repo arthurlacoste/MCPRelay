@@ -711,3 +711,73 @@ def test_secure_publication_cleanup_logs_rmdir_failure(monkeypatch, tmp_path, ca
             )
 
     assert "Failed to remove temporary skill directory .example.tmp-test" in caplog.text
+
+
+def test_secure_publication_keeps_linux_writes_fd_pinned(monkeypatch, tmp_path):
+    from pathlib import PurePosixPath
+    import skill_writer
+
+    parent_fd = 91
+    temp_fd = 92
+    descriptor_path = Path("/proc/self/fd/92")
+    cleanup_path = tmp_path / ".example.tmp-test"
+    written_paths: list[Path] = []
+    parsed_paths: list[tuple[Path, Path]] = []
+
+    monkeypatch.setattr(skill_writer, "_open_or_create_parent_fd", lambda root, relative: parent_fd)
+    monkeypatch.setattr(skill_writer, "_create_temp_directory_at", lambda fd, name: (".example.tmp-test", temp_fd))
+    monkeypatch.setattr(skill_writer, "_descriptor_path", lambda fd: descriptor_path)
+    monkeypatch.setattr(skill_writer, "_descriptor_real_path", lambda fd: cleanup_path)
+    monkeypatch.setattr(skill_writer.sys, "platform", "linux")
+    monkeypatch.setattr(skill_writer, "_write_package_tree", lambda path, files: written_paths.append(path))
+    monkeypatch.setattr(
+        skill_writer,
+        "parse_skill_package",
+        lambda skill_path, skill_id, root: parsed_paths.append((skill_path, root)),
+    )
+    monkeypatch.setattr(skill_writer.os, "stat", lambda *args, **kwargs: (_ for _ in ()).throw(FileNotFoundError()))
+    monkeypatch.setattr(skill_writer.os, "replace", lambda *args, **kwargs: None)
+    monkeypatch.setattr(skill_writer.os, "close", lambda fd: None)
+
+    skill_writer._atomic_write_package_dir_fd(
+        tmp_path / "example",
+        {"SKILL.md": ("text", b"text")},
+        "example",
+        skills_root=tmp_path,
+        relative_parent=PurePosixPath("."),
+    )
+
+    assert written_paths == [descriptor_path]
+    assert parsed_paths == [(descriptor_path / "SKILL.md", descriptor_path)]
+
+
+def test_secure_publication_uses_real_path_on_macos(monkeypatch, tmp_path):
+    from pathlib import PurePosixPath
+    import skill_writer
+
+    parent_fd = 91
+    temp_fd = 92
+    descriptor_path = Path("/dev/fd/92")
+    real_path = tmp_path / ".example.tmp-test"
+    written_paths: list[Path] = []
+
+    monkeypatch.setattr(skill_writer, "_open_or_create_parent_fd", lambda root, relative: parent_fd)
+    monkeypatch.setattr(skill_writer, "_create_temp_directory_at", lambda fd, name: (".example.tmp-test", temp_fd))
+    monkeypatch.setattr(skill_writer, "_descriptor_path", lambda fd: descriptor_path)
+    monkeypatch.setattr(skill_writer, "_descriptor_real_path", lambda fd: real_path)
+    monkeypatch.setattr(skill_writer.sys, "platform", "darwin")
+    monkeypatch.setattr(skill_writer, "_write_package_tree", lambda path, files: written_paths.append(path))
+    monkeypatch.setattr(skill_writer, "parse_skill_package", lambda *args, **kwargs: None)
+    monkeypatch.setattr(skill_writer.os, "stat", lambda *args, **kwargs: (_ for _ in ()).throw(FileNotFoundError()))
+    monkeypatch.setattr(skill_writer.os, "replace", lambda *args, **kwargs: None)
+    monkeypatch.setattr(skill_writer.os, "close", lambda fd: None)
+
+    skill_writer._atomic_write_package_dir_fd(
+        tmp_path / "example",
+        {"SKILL.md": ("text", b"text")},
+        "example",
+        skills_root=tmp_path,
+        relative_parent=PurePosixPath("."),
+    )
+
+    assert written_paths == [real_path]
