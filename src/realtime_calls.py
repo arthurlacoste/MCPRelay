@@ -9,7 +9,6 @@ from typing import Callable
 
 ACTIVE_STATUSES = {"starting", "running"}
 QUEUED_STATUSES = {"queued", "waiting"}
-ERROR_STATUSES = {"failed", "timeout", "interrupted", "cancelled"}
 MAX_PREVIEW_CHARS = 500
 MAX_PURPOSE_CHARS = 240
 MAX_TOOL_CHARS = 80
@@ -54,10 +53,8 @@ def sort_key(call: dict) -> tuple[int, str]:
         rank = 0
     elif status in QUEUED_STATUSES:
         rank = 1
-    elif status in ERROR_STATUSES:
-        rank = 2
     else:
-        rank = 3
+        rank = 2
     timestamp = call.get("started_at") or call.get("created_at") or ""
     return rank, "".join(chr(0x10FFFF - ord(char)) for char in timestamp)
 
