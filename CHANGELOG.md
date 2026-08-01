@@ -1,5 +1,66 @@
 # Changelog
 
+## [0.2.0](https://github.com/spelcc/gate/compare/gate-v0.1.19...gate-v0.2.0) (2026-08-01)
+
+
+### Added
+
+* add configurable MCP proxy aggregation ([d2c0d3d](https://github.com/spelcc/gate/commit/d2c0d3dddb44ffbb9af8691f9df348010c5cc580))
+* add configurable MCP proxy aggregation ([38d77c9](https://github.com/spelcc/gate/commit/38d77c9e7931f1c43963f53e922b09ebdeb0b0e3))
+* add configurable preprompt and hard limits for deepseek agent ([71b0e96](https://github.com/spelcc/gate/commit/71b0e969bea2f6ec6ecd0ad16bb0374fa0fedc34))
+* add daemon log monitor ([#36](https://github.com/spelcc/gate/issues/36)) ([89c8f51](https://github.com/spelcc/gate/commit/89c8f5183a0cdb9ff57ed8e1b4bf5ccf54033608))
+* add MCP auto-discovery and hot reload ([#27](https://github.com/spelcc/gate/issues/27)) ([2bbe9b3](https://github.com/spelcc/gate/commit/2bbe9b38ca349aefa0af58849ee46dd075c77617))
+* add optional ChatGPT startup browser assist ([282e1ba](https://github.com/spelcc/gate/commit/282e1ba8fe52e233ad43c79080500f493bda3a85))
+* add realtime call monitor ([#29](https://github.com/spelcc/gate/issues/29)) ([1c7d4c7](https://github.com/spelcc/gate/commit/1c7d4c7180d70501e0e4ae65db06ba0cda5fede0))
+* add settings.yaml support and tool config ([549b5e8](https://github.com/spelcc/gate/commit/549b5e861ce7085ec2e9cd86425d5e74b2269ee3))
+* **safety:** add pluggable command guards ([fcdce47](https://github.com/spelcc/gate/commit/fcdce478068cb1a7a25767891fa71662c952717a))
+* support prerelease and explicit version updates ([#35](https://github.com/spelcc/gate/issues/35)) ([c8647c2](https://github.com/spelcc/gate/commit/c8647c2dc4115e05436e24802ab962cb17a4b8e4))
+
+
+### Fixed
+
+* align alpha changelog with release workflow ([5810b6d](https://github.com/spelcc/gate/commit/5810b6d1627bad9097e3393c4cd73aecd404dd15))
+* align v0.1.19 changelog with release workflow ([2478f47](https://github.com/spelcc/gate/commit/2478f47881e69ac85ea4c4179280c1aa5002afa8))
+* **ci:** install pytest for test workflow ([17c2bf3](https://github.com/spelcc/gate/commit/17c2bf324aa47165bd4305ed9fea5354685f4149))
+* configure filesystem roots from environment ([#3](https://github.com/spelcc/gate/issues/3)) ([f36acd4](https://github.com/spelcc/gate/commit/f36acd40b2fb54765a09f6d6368737aeac72a09f))
+* convert async def tools to def to unblock the event loop ([#6](https://github.com/spelcc/gate/issues/6)) ([d5252fb](https://github.com/spelcc/gate/commit/d5252fb19256b880efa91648cae9fe3c320987f2))
+* handle Python version, SSL, and ngrok web_allow_hosts edge cases ([7a723cc](https://github.com/spelcc/gate/commit/7a723cc2db6db43d5e437fce838d2fb076439045))
+* handle Python version, SSL, and ngrok web_allow_hosts edge cases ([813204f](https://github.com/spelcc/gate/commit/813204fedfa2bbb89e44be686bded46aa2294010))
+* **installer:** support Alpine Linux ([b8e053d](https://github.com/spelcc/gate/commit/b8e053dc5680a15b78142d86efc2c94aa0ad66f5))
+* **installer:** support Alpine Linux ([521a6ff](https://github.com/spelcc/gate/commit/521a6ff5ab65b18dcd34efb1feeb4136c4f9e49a))
+* probe gateway health on the resolved target ([#31](https://github.com/spelcc/gate/issues/31)) ([8677c4d](https://github.com/spelcc/gate/commit/8677c4ddd61a89a084491a502817a9a5240f4ff1))
+* route ngrok to the production gateway ([#30](https://github.com/spelcc/gate/issues/30)) ([acd8653](https://github.com/spelcc/gate/commit/acd8653ca87dd87cea67357526bc1877fefba65d))
+* **test:** update venv bootstrap assertion for find_compatible_python ([dfad906](https://github.com/spelcc/gate/commit/dfad906f45fa5f3c4810cc4881991ae5ea9de023))
+* **test:** use active Python in onboarding sandbox ([516bc0e](https://github.com/spelcc/gate/commit/516bc0ed0097a6ed567d50e0b5d8f1ab1b125697))
+* use venv interpreter for startup checks ([97ad220](https://github.com/spelcc/gate/commit/97ad2205aa68f876879e92614226c452eeee021a))
+
+
+### Documentation
+
+* Add DeepSeek Agent preprompt and refine .gitignore ([6510132](https://github.com/spelcc/gate/commit/6510132c388ba95fc519abee27fbeeae402a6a66))
+* add VISION banner ([8ba925e](https://github.com/spelcc/gate/commit/8ba925eacb560889ce6bc62b47da795e2c33e23f))
+* Update README: add features, remove userscript, update license ([608efeb](https://github.com/spelcc/gate/commit/608efebd6944e348e73b373697a7c147625c9d0f))
+
+
+### Tests
+
+* remove queue and skill catalog flakes ([61bd35b](https://github.com/spelcc/gate/commit/61bd35b55da4845e619f8a15dd08ed208513cf4c))
+
+
+### Continuous Integration
+
+* add Release Please automation ([#42](https://github.com/spelcc/gate/issues/42)) ([ed34f17](https://github.com/spelcc/gate/commit/ed34f17c9e120747b8d0d7a4081e29a1371352a6))
+
+
+### Maintenance
+
+* enforce pull request structure ([#33](https://github.com/spelcc/gate/issues/33)) ([3555090](https://github.com/spelcc/gate/commit/355509073789eb989b77dc3f2c263f4a21f2d15a))
+* release 0.1.19-alpha ([41ab5d1](https://github.com/spelcc/gate/commit/41ab5d10847c7f15e319d5f7f50507949bac6f69))
+* **release:** prepare v0.1.13 ([152aaca](https://github.com/spelcc/gate/commit/152aacadf1c86294da0fa3af8abcae49f5136508))
+* **release:** prepare v0.1.14 ([0e60b29](https://github.com/spelcc/gate/commit/0e60b2998c6dcafee128bbc37bbba0323b1a4d32))
+* **release:** prepare v0.1.18 ([56114c9](https://github.com/spelcc/gate/commit/56114c9b1c8d2a0b2fccdf225c1dc557de0443f2))
+* **release:** prepare v0.1.19 ([148f679](https://github.com/spelcc/gate/commit/148f679ce34e5241bc5486889b37892f8b8859db))
+
 ## 0.1.19
 
 ### Added
