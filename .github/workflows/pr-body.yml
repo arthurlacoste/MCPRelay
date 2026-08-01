@@ -9,6 +9,7 @@ permissions:
 
 jobs:
   validate:
+    if: "${{ !contains(github.event.pull_request.labels.*.name, 'autorelease: pending') }}"
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

@@ -2,21 +2,49 @@ name: Release Gate
 
 on:
   push:
-    tags:
-      - "v[0-9]*.*"
+    branches:
+      - main
 
 permissions:
   contents: write
+  issues: write
+  pull-requests: write
 
 jobs:
+  release-please:
+    name: Prepare or create release
+    runs-on: ubuntu-latest
+    outputs:
+      release_created: ${{ steps.release.outputs.release_created }}
+      tag_name: ${{ steps.release.outputs.tag_name }}
+    steps:
+      - name: Require Release Please token
+        env:
+          RELEASE_PLEASE_TOKEN: ${{ secrets.RELEASE_PLEASE_TOKEN }}
+        run: |
+          if [ -z "$RELEASE_PLEASE_TOKEN" ]; then
+            echo "Configure the RELEASE_PLEASE_TOKEN repository secret before enabling releases." >&2
+            exit 1
+          fi
+
+      - name: Run Release Please
+        id: release
+        uses: googleapis/release-please-action@v5
+        with:
+          token: ${{ secrets.RELEASE_PLEASE_TOKEN }}
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+
   test:
-    name: Python tests
+    name: Release Python tests
+    if: ${{ needs.release-please.outputs.release_created == 'true' }}
+    needs: release-please
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
+      - name: Checkout release tag
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.ref }}
+          ref: ${{ needs.release-please.outputs.tag_name }}
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -34,13 +62,15 @@ jobs:
         run: git diff --check
 
   dedup:
-    name: Duplicate code
+    name: Release duplicate code
+    if: ${{ needs.release-please.outputs.release_created == 'true' }}
+    needs: release-please
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
+      - name: Checkout release tag
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.ref }}
+          ref: ${{ needs.release-please.outputs.tag_name }}
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
@@ -54,60 +84,49 @@ jobs:
       - name: Detect duplicate code
         run: npm run dedup
 
-  release:
-    name: Create GitHub Release
+  release-assets:
+    name: Upload release assets
+    if: ${{ needs.release-please.outputs.release_created == 'true' }}
     needs:
+      - release-please
       - test
       - dedup
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout release tag
+        uses: actions/checkout@v4
         with:
-          ref: ${{ github.ref }}
+          ref: ${{ needs.release-please.outputs.tag_name }}
 
       - name: Verify version matches tag
         shell: bash
+        env:
+          TAG_NAME: ${{ needs.release-please.outputs.tag_name }}
         run: |
           set -euo pipefail
-          if [[ ! "$GITHUB_REF_NAME" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$ ]]; then
-            echo "Unsupported Gate release tag: $GITHUB_REF_NAME" >&2
+          if [[ ! "$TAG_NAME" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$ ]]; then
+            echo "Unsupported Gate release tag: $TAG_NAME" >&2
             exit 1
           fi
-          test "v$(tr -d '\n' < VERSION)" = "${GITHUB_REF_NAME}"
+          test "v$(tr -d '\n' < VERSION)" = "$TAG_NAME"
 
       - name: Build release archive
         shell: bash
+        env:
+          TAG_NAME: ${{ needs.release-please.outputs.tag_name }}
         run: |
           set -euo pipefail
-          archive="gate-${GITHUB_REF_NAME}.tar.gz"
-          git archive --format=tar.gz --prefix="Gate-${GITHUB_REF_NAME}/" -o "$archive" "$GITHUB_REF_NAME"
+          archive="gate-${TAG_NAME}.tar.gz"
+          git archive --format=tar.gz --prefix="Gate-${TAG_NAME}/" -o "$archive" "$TAG_NAME"
           sha256sum "$archive" > SHA256SUMS
 
-      - name: Extract release notes from changelog
-        shell: bash
-        run: |
-          set -euo pipefail
-          version="${GITHUB_REF_NAME#v}"
-          awk -v version="$version" '
-            $0 == "## " version { found=1 }
-            found && $0 ~ /^## / && $0 != "## " version { exit }
-            found { print }
-          ' CHANGELOG.md > release-notes.md
-          test -s release-notes.md
-
-      - name: Create GitHub Release
+      - name: Upload release assets
         env:
           GH_TOKEN: ${{ github.token }}
+          TAG_NAME: ${{ needs.release-please.outputs.tag_name }}
         run: |
           set -euo pipefail
-          prerelease=()
-          if [[ "$GITHUB_REF_NAME" == *-* ]]; then
-            prerelease=(--prerelease)
-          fi
-          gh release create "$GITHUB_REF_NAME" \
-            "gate-${GITHUB_REF_NAME}.tar.gz" \
+          gh release upload "$TAG_NAME" \
+            "gate-${TAG_NAME}.tar.gz" \
             SHA256SUMS \
-            --verify-tag \
-            --notes-file release-notes.md \
-            --title "Gate $GITHUB_REF_NAME" \
-            "${prerelease[@]}"
+            --clobber
