@@ -38,9 +38,12 @@ def test_release_workflow_creates_release_and_uploads_verified_assets():
     assert "branches:\n      - main" in workflow
     assert "tags:" not in workflow
     assert "needs.release-please.outputs.release_created == 'true'" in workflow
-    assert "ref: ${{ needs.release-please.outputs.tag_name }}" in workflow
+    assert "release_sha: ${{ steps.release.outputs.sha }}" in workflow
+    assert "ref: ${{ needs.release-please.outputs.release_sha }}" in workflow
+    assert "ref: ${{ needs.release-please.outputs.tag_name }}" not in workflow
     assert 'test "v$(tr -d \'\\n\' < VERSION)" = "$TAG_NAME"' in workflow
     assert 'git archive --format=tar.gz' in workflow
+    assert '"$RELEASE_SHA"' in workflow
     assert 'gh release upload "$TAG_NAME"' in workflow
     assert 'gh release edit "$TAG_NAME" --draft=false' in workflow
     assert workflow.index('gh release upload "$TAG_NAME"') < workflow.index('gh release edit "$TAG_NAME" --draft=false')
