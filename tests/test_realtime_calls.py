@@ -31,6 +31,17 @@ def test_store_sorts_active_queued_then_terminal_calls_by_datetime():
     ]
 
 
+def test_store_sorts_missing_timestamps_last_within_status_group():
+    store = RealtimeCallStore()
+    base = datetime(2026, 7, 22, tzinfo=UTC)
+    store.update(call("dated", "success", base.isoformat()))
+    store.update(call("undated", "success", None))
+
+    assert [item["execution_id"] for item in store.snapshot()["calls"]] == [
+        "dated", "undated",
+    ]
+
+
 def test_store_masks_secrets_and_terminal_controls_in_display_fields():
     redactor = SecretRedactor(("top-secret-value",))
     store = RealtimeCallStore(redact_text=redactor.redact_text)

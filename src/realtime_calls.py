@@ -47,7 +47,7 @@ def shorten(value: str, width: int) -> str:
     return value[: width - 3] + "..."
 
 
-def sort_key(call: dict) -> tuple[int, str]:
+def sort_key(call: dict) -> tuple[int, int, str]:
     status = call.get("status", "")
     if status in ACTIVE_STATUSES:
         rank = 0
@@ -56,7 +56,9 @@ def sort_key(call: dict) -> tuple[int, str]:
     else:
         rank = 2
     timestamp = call.get("started_at") or call.get("created_at") or ""
-    return rank, "".join(chr(0x10FFFF - ord(char)) for char in timestamp)
+    missing_timestamp = 0 if timestamp else 1
+    descending_timestamp = "".join(chr(0x10FFFF - ord(char)) for char in timestamp)
+    return rank, missing_timestamp, descending_timestamp
 
 
 class RealtimeCallStore:
