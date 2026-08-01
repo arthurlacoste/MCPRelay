@@ -50,5 +50,6 @@
       ]
     }
   },
-  "draft": true
+  "draft": true,
+  "include-component-in-tag": false
 }
