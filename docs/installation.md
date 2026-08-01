@@ -747,26 +747,39 @@ Guard audit records include provider, decision, rule, reason, and remediation bu
 
 ## Maintainer release workflow
 
-Stable installation is driven by GitHub Releases. A tag push runs `.github/workflows/release.yml`, which builds and publishes:
+Stable installation is driven by Release Please and GitHub Releases. Pushes to `main` run `.github/workflows/release.yml`.
+
+Release Please reads Conventional Commits and maintains a release pull request that updates:
+
+```text
+VERSION
+CHANGELOG.md
+.release-please-manifest.json
+```
+
+Use these commit prefixes to control semantic versioning:
+
+```text
+fix:      patch release
+feat:     minor release
+feat!:    major release
+```
+
+When the release pull request is merged, Release Please creates the matching `vX.Y.Z` tag and a draft GitHub Release. The same workflow then runs the release tests, uploads the assets, and publishes the release only after those steps pass:
 
 ```text
 gate-vX.Y.Z.tar.gz
 SHA256SUMS
 ```
 
+Before merging this integration, configure the repository secret `RELEASE_PLEASE_TOKEN` with a fine-grained personal access token that can write contents, issues, and pull requests. The workflow fails closed when this secret is missing. Using a personal access token also lets GitHub run CI on Release Please pull requests; pull requests created with `GITHUB_TOKEN` do not trigger new workflow runs.
+
 Release steps:
 
-1. Update `VERSION` and `CHANGELOG.md`.
-2. Commit and push the release code.
-3. Create and push the matching stable tag:
-
-```bash
-git tag vX.Y.Z
-git push origin vX.Y.Z
-```
-
-4. Wait for the **Release Gate** GitHub Actions workflow to finish.
-5. Confirm the GitHub Release contains both assets.
-6. Test the public one-line installer from a clean user environment.
+1. Merge normal changes to `main` using Conventional Commit titles.
+2. Review the generated Release Please pull request and its changelog.
+3. Merge the release pull request when the version is ready.
+4. Wait for the **Release Gate** workflow to upload both assets.
+5. Test the public one-line installer from a clean user environment.
 
 The installer and default `gate update` use the latest stable GitHub Release, download the custom archive and `SHA256SUMS`, then verify the archive before extraction. Draft and prerelease releases are not returned by GitHub's `releases/latest` endpoint. Use `gate update --version VERSION` to install an exact stable or prerelease tag, including an older release. Explicit releases use the same checksum verification. Edge updates remain based on an immutable commit SHA from `main` and do not use release assets.
