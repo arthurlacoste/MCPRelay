@@ -18,6 +18,8 @@ def test_release_please_updates_version_and_uses_gate_tags():
 
     assert config["release-type"] == "simple"
     assert config["include-v-in-tag"] is True
+    assert config["include-component-in-tag"] is False
+    assert config["bump-patch-for-minor-pre-major"] is True
     assert config["draft"] is True
     assert package["package-name"] == "gate"
     assert package["version-file"] == "VERSION"
