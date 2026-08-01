@@ -18,16 +18,27 @@ def call(execution_id, status, created_at, command="echo ok", purpose=None):
     }
 
 
-def test_store_sorts_active_queued_errors_then_success():
+def test_store_sorts_active_queued_then_terminal_calls_by_datetime():
     store = RealtimeCallStore()
     base = datetime(2026, 7, 22, tzinfo=UTC)
-    store.update(call("done", "success", (base + timedelta(seconds=1)).isoformat()))
-    store.update(call("error", "failed", (base + timedelta(seconds=2)).isoformat()))
+    store.update(call("error", "failed", (base + timedelta(seconds=1)).isoformat()))
+    store.update(call("done", "success", (base + timedelta(seconds=2)).isoformat()))
     store.update(call("queued", "queued", (base + timedelta(seconds=3)).isoformat()))
     store.update(call("running", "running", (base + timedelta(seconds=4)).isoformat()))
 
     assert [item["execution_id"] for item in store.snapshot()["calls"]] == [
-        "running", "queued", "error", "done",
+        "running", "queued", "done", "error",
+    ]
+
+
+def test_store_sorts_missing_timestamps_last_within_status_group():
+    store = RealtimeCallStore()
+    base = datetime(2026, 7, 22, tzinfo=UTC)
+    store.update(call("dated", "success", base.isoformat()))
+    store.update(call("undated", "success", None))
+
+    assert [item["execution_id"] for item in store.snapshot()["calls"]] == [
+        "dated", "undated",
     ]
 
 
