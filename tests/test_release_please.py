@@ -18,6 +18,7 @@ def test_release_please_updates_version_and_uses_gate_tags():
 
     assert config["release-type"] == "simple"
     assert config["include-v-in-tag"] is True
+    assert config["draft"] is True
     assert package["package-name"] == "gate"
     assert package["version-file"] == "VERSION"
     assert {section["type"] for section in package["changelog-sections"]} >= {
@@ -39,6 +40,8 @@ def test_release_workflow_creates_release_and_uploads_verified_assets():
     assert 'test "v$(tr -d \'\\n\' < VERSION)" = "$TAG_NAME"' in workflow
     assert 'git archive --format=tar.gz' in workflow
     assert 'gh release upload "$TAG_NAME"' in workflow
+    assert 'gh release edit "$TAG_NAME" --draft=false' in workflow
+    assert workflow.index('gh release upload "$TAG_NAME"') < workflow.index('gh release edit "$TAG_NAME" --draft=false')
     assert "SHA256SUMS" in workflow
 
 
@@ -47,3 +50,4 @@ def test_release_please_pull_requests_skip_human_pr_body_validation():
 
     assert "autorelease: pending" in workflow
     assert "!contains(github.event.pull_request.labels.*.name" in workflow
+    assert "!startsWith(github.head_ref, 'release-please--branches--')" in workflow

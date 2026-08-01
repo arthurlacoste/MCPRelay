@@ -765,7 +765,7 @@ feat:     minor release
 feat!:    major release
 ```
 
-When the release pull request is merged, Release Please creates the matching `vX.Y.Z` tag and GitHub Release. The same workflow then runs the release tests and uploads:
+When the release pull request is merged, Release Please creates the matching `vX.Y.Z` tag and a draft GitHub Release. The same workflow then runs the release tests, uploads the assets, and publishes the release only after those steps pass:
 
 ```text
 gate-vX.Y.Z.tar.gz

@@ -130,3 +130,4 @@ jobs:
             "gate-${TAG_NAME}.tar.gz" \
             SHA256SUMS \
             --clobber
+          gh release edit "$TAG_NAME" --draft=false
