@@ -17,6 +17,7 @@ jobs:
     outputs:
       release_created: ${{ steps.release.outputs.release_created }}
       tag_name: ${{ steps.release.outputs.tag_name }}
+      release_sha: ${{ steps.release.outputs.sha }}
     steps:
       - name: Require Release Please token
         env:
@@ -41,10 +42,10 @@ jobs:
     needs: release-please
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout release tag
+      - name: Checkout release commit
         uses: actions/checkout@v4
         with:
-          ref: ${{ needs.release-please.outputs.tag_name }}
+          ref: ${{ needs.release-please.outputs.release_sha }}
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -67,10 +68,10 @@ jobs:
     needs: release-please
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout release tag
+      - name: Checkout release commit
         uses: actions/checkout@v4
         with:
-          ref: ${{ needs.release-please.outputs.tag_name }}
+          ref: ${{ needs.release-please.outputs.release_sha }}
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
@@ -93,10 +94,10 @@ jobs:
       - dedup
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout release tag
+      - name: Checkout release commit
         uses: actions/checkout@v4
         with:
-          ref: ${{ needs.release-please.outputs.tag_name }}
+          ref: ${{ needs.release-please.outputs.release_sha }}
 
       - name: Verify version matches tag
         shell: bash
@@ -114,10 +115,11 @@ jobs:
         shell: bash
         env:
           TAG_NAME: ${{ needs.release-please.outputs.tag_name }}
+          RELEASE_SHA: ${{ needs.release-please.outputs.release_sha }}
         run: |
           set -euo pipefail
           archive="gate-${TAG_NAME}.tar.gz"
-          git archive --format=tar.gz --prefix="Gate-${TAG_NAME}/" -o "$archive" "$TAG_NAME"
+          git archive --format=tar.gz --prefix="Gate-${TAG_NAME}/" -o "$archive" "$RELEASE_SHA"
           sha256sum "$archive" > SHA256SUMS
 
       - name: Upload release assets
