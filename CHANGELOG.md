@@ -2,6 +2,24 @@
 
 ## [0.1.20](https://github.com/spelcc/gate/compare/v0.1.19...v0.1.20) (2026-08-01)
 
+
+### Fixed
+
+* reset Release Please state to v0.1.19 ([#47](https://github.com/spelcc/gate/issues/47)) ([b8ad057](https://github.com/spelcc/gate/commit/b8ad0577497205449e7b9c635e09f7062b4f9d73))
+
+
+### Continuous Integration
+
+* add Release Please automation ([#42](https://github.com/spelcc/gate/issues/42)) ([ed34f17](https://github.com/spelcc/gate/commit/ed34f17c9e120747b8d0d7a4081e29a1371352a6))
+
+
+### Maintenance
+
+* **main:** release Gate 0.1.20 ([#44](https://github.com/spelcc/gate/issues/44)) ([c753f60](https://github.com/spelcc/gate/commit/c753f60b9d75eb05c88aa17cdaa2c163e5da8af1))
+* **main:** release gate 0.2.0 ([#43](https://github.com/spelcc/gate/issues/43)) ([36db61b](https://github.com/spelcc/gate/commit/36db61bfe392db686a94908268ad8f40b0f7abdf))
+
+## [0.1.20](https://github.com/spelcc/gate/compare/v0.1.19...v0.1.20) (2026-08-01)
+
 ### Fixed
 
 - Sort completed realtime calls by date regardless of terminal status.
