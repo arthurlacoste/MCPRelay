@@ -59,6 +59,12 @@ class TestMetadata:
         r2 = oauth_client.get("/.well-known/openid-configuration")
         assert r1.json() == r2.json()
 
+    def test_issuer_path_openid_configuration_alias(self, oauth_client: TestClient):
+        r1 = oauth_client.get("/.well-known/oauth-authorization-server/oauth")
+        r2 = oauth_client.get("/.well-known/openid-configuration/oauth")
+        assert r2.status_code == 200
+        assert r2.json() == r1.json()
+
     def test_health(self, oauth_client: TestClient):
         resp = oauth_client.get("/oauth/health")
         assert resp.status_code == 200
