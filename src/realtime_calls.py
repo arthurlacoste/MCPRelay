@@ -48,19 +48,30 @@ def _snapshot_log_ref(call: dict) -> str | None:
 
 def read_call_log(path: str | Path | None, offset: int = 0, limit: int | None = None) -> dict:
     """Read an existing call log defensively; rotation/deletion is not fatal."""
-    if not path:
-        return {"text": "", "offset": 0, "size": 0, "rotated": True}
+    empty = {"text": "", "offset": 0, "size": 0, "rotated": True}
+    if path is None:
+        return empty
+
+    log_path = Path(path)
     try:
-        size = Path(path).stat().st_size
-        safe_offset = max(0, int(offset))
-        if safe_offset > size:
-            return {"text": "", "offset": 0, "size": size, "rotated": True}
-        with Path(path).open("rb") as handle:
-            handle.seek(safe_offset)
-            content = handle.read() if limit is None else handle.read(max(0, int(limit)))
-        return {"text": content.decode("utf-8", errors="replace"), "offset": safe_offset + len(content), "size": size, "rotated": False}
+        size = log_path.stat().st_size
+        start = max(0, int(offset))
+        if start > size:
+            return {**empty, "size": size}
+
+        byte_count = None if limit is None else max(0, int(limit))
+        with log_path.open("rb") as handle:
+            handle.seek(start)
+            content = handle.read(byte_count)
     except OSError:
-        return {"text": "", "offset": 0, "size": 0, "rotated": True}
+        return empty
+
+    return {
+        "text": content.decode("utf-8", errors="replace"),
+        "offset": start + len(content),
+        "size": size,
+        "rotated": False,
+    }
 
 
 def infer_purpose(command: str | None) -> str:
