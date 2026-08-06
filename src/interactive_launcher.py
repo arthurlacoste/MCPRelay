@@ -310,10 +310,15 @@ def render_realtime_panel(selected: int = 0, errors_only: bool = False, paused: 
         print(f"Age:      {format_age(call)}")
         print(f"Exit:     {call.get('exit_code')}")
         print("Command:")
-        print(sanitize_command(call.get("command") or call.get("preview", "") or "(unavailable)"))
+        command = sanitize_command(call.get("command") or call.get("preview", "") or "(unavailable)")
+        print(command)
+        if call.get("command_truncated"):
+            print("[command truncated at 8000 characters]")
         log = read_call_log(resolve_realtime_log(call.get("log_ref")), 0)
         log_lines = log["text"].splitlines()
-        visible = max(1, height - 14)
+        command_lines = max(1, len(command.splitlines()))
+        truncation_lines = 1 if call.get("command_truncated") else 0
+        visible = max(1, height - 14 - command_lines - truncation_lines)
         if follow_tail:
             shown = log_lines[-visible:]
         else:

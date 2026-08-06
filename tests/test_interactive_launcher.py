@@ -27,6 +27,45 @@ def test_realtime_detail_renders_safe_full_command_and_log(tmp_path, monkeypatch
     assert "output" in output
 
 
+def test_realtime_detail_reserves_height_for_multiline_command(tmp_path, monkeypatch, capsys):
+    log = tmp_path / "commands" / "safe.log"
+    log.parent.mkdir()
+    log.write_text("\n".join(f"log-{index}" for index in range(20)) + "\n", encoding="utf-8")
+    monkeypatch.setattr(interactive_launcher, "LOG_ROOT", tmp_path)
+    monkeypatch.setattr(interactive_launcher, "REALTIME_CALLS_FILE", tmp_path / "calls.json")
+    command = "\n".join(f"cmd-{index}" for index in range(5))
+    (tmp_path / "calls.json").write_text(
+        __import__("json").dumps({"calls": [{
+            "status": "running",
+            "command": command,
+            "log_ref": "logs/commands/safe.log",
+        }]}),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(interactive_launcher, "clear_terminal", lambda: None)
+    monkeypatch.setattr(interactive_launcher.shutil, "get_terminal_size", lambda _: (120, 20))
+
+    interactive_launcher.render_realtime_panel(details=True)
+
+    output = capsys.readouterr().out
+    assert "log-19" in output
+    assert "log-18" not in output
+
+
+def test_realtime_detail_surfaces_command_truncation(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(interactive_launcher, "REALTIME_CALLS_FILE", tmp_path / "calls.json")
+    (tmp_path / "calls.json").write_text(
+        '{"calls": [{"status":"success", "command":"echo ok", "command_truncated":true}]}',
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(interactive_launcher, "clear_terminal", lambda: None)
+    monkeypatch.setattr(interactive_launcher.shutil, "get_terminal_size", lambda _: (120, 30))
+
+    interactive_launcher.render_realtime_panel(details=True)
+
+    assert "command truncated" in capsys.readouterr().out.lower()
+
+
 def test_resolve_realtime_log_ref_rejects_absolute_and_traversal(monkeypatch, tmp_path):
     monkeypatch.setattr(interactive_launcher, "LOG_ROOT", tmp_path)
     for value in ("/etc/passwd", "logs/commands/../../secret.log", "logs/commands/sub/ok.log"):
