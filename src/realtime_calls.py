@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import threading
+import re
 from collections import deque
 from datetime import UTC, datetime
 from pathlib import Path
@@ -12,6 +13,54 @@ QUEUED_STATUSES = {"queued", "waiting"}
 MAX_PREVIEW_CHARS = 500
 MAX_PURPOSE_CHARS = 240
 MAX_TOOL_CHARS = 80
+MAX_COMMAND_CHARS = 8_000
+_ANSI_RE = re.compile(r"\x1b(?:\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1b\\))")
+
+
+def sanitize_command(value: str) -> str:
+    """Keep shell layout while removing terminal escape/control sequences."""
+    value = _ANSI_RE.sub("", value)
+    return "".join(char for char in value if char in "\n\t" or (char.isprintable() and ord(char) >= 32))
+
+
+def normalize_log_ref(value: str | Path | None) -> str | None:
+    if not value:
+        return None
+    path = Path(str(value))
+    if path.is_absolute() or any(part in {"", ".", ".."} for part in path.parts):
+        return None
+    name = path.name
+    if not name.endswith(".log") or not name:
+        return None
+    return f"logs/commands/{name}"
+
+
+def _snapshot_log_ref(call: dict) -> str | None:
+    if call.get("log_ref") is not None:
+        return normalize_log_ref(call.get("log_ref"))
+    # The runner supplies an internal absolute Path; only its safe basename is persisted.
+    value = call.get("log_path")
+    if value:
+        name = Path(str(value)).name
+        return normalize_log_ref(name)
+    return None
+
+
+def read_call_log(path: str | Path | None, offset: int = 0, limit: int | None = None) -> dict:
+    """Read an existing call log defensively; rotation/deletion is not fatal."""
+    if not path:
+        return {"text": "", "offset": 0, "size": 0, "rotated": True}
+    try:
+        size = Path(path).stat().st_size
+        safe_offset = max(0, int(offset))
+        if safe_offset > size:
+            return {"text": "", "offset": 0, "size": size, "rotated": True}
+        with Path(path).open("rb") as handle:
+            handle.seek(safe_offset)
+            content = handle.read() if limit is None else handle.read(max(0, int(limit)))
+        return {"text": content.decode("utf-8", errors="replace"), "offset": safe_offset + len(content), "size": size, "rotated": False}
+    except OSError:
+        return {"text": "", "offset": 0, "size": 0, "rotated": True}
 
 
 def infer_purpose(command: str | None) -> str:
@@ -113,7 +162,10 @@ class RealtimeCallStore:
             }
 
     def _sanitize(self, call: dict) -> dict:
-        command = self.redact_text(single_line(call.get("command")))
+        command = sanitize_command(self.redact_text(str(call.get("command") or "")))
+        command_truncated = len(command) > MAX_COMMAND_CHARS
+        command = command[:MAX_COMMAND_CHARS]
+        preview = single_line(command)
         purpose = self.redact_text(single_line(call.get("purpose"))) or infer_purpose(command)
         return {
             "execution_id": str(call["execution_id"]),
@@ -124,7 +176,10 @@ class RealtimeCallStore:
             "duration_ms": int(call.get("duration_ms") or 0),
             "tool": shorten(single_line(call.get("tool")) or "run_command", MAX_TOOL_CHARS),
             "purpose": shorten(purpose, MAX_PURPOSE_CHARS),
-            "preview": shorten(command, MAX_PREVIEW_CHARS),
+            "command": command,
+            "preview": shorten(preview, MAX_PREVIEW_CHARS),
+            "log_ref": _snapshot_log_ref(call),
+            "command_truncated": command_truncated,
             "exit_code": call.get("exit_code"),
         }
 

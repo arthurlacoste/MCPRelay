@@ -92,6 +92,8 @@ class BlockingCommandRunner:
             "duration_ms": 0,
             "exit_code": None,
             "tool": "run_command",
+            "log_path": str(log_path),
+            "log_ref": f"logs/commands/{log_path.name}",
         }
         self._publish_state(state)
         with self._capacity:

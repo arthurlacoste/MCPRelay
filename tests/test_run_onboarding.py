@@ -472,6 +472,12 @@ def test_ctrl_c_exits_after_interactive_startup(tmp_path):
                 pass
         os.close(fd)
 
+
+def test_interactive_launcher_is_standalone_for_realtime_helpers():
+    source = INTERACTIVE_LAUNCHER.read_text()
+
+    assert "from realtime_calls import" not in source
+
 def test_onboarding_reuses_detected_ngrok_process():
     content = RUN_SCRIPT.read_text()
     launcher = INTERACTIVE_LAUNCHER.read_text()

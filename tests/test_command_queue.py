@@ -42,6 +42,16 @@ def test_enqueue_returns_non_final_job_and_captures_cursor_output(tmp_path):
     queue.close()
 
 
+def test_queue_state_exposes_full_command_and_reusable_log_metadata(tmp_path):
+    queue = CommandQueue(tmp_path / 'queue.sqlite3', tmp_path / 'logs', worker_limit=0)
+    job = queue.enqueue('echo full-command')
+    state = queue.get_state(job['execution_id'], include_lines=False)
+
+    assert state['command'] == 'echo full-command'
+    assert state['log_ref'] == f"logs/commands/{job['execution_id']}.log"
+    queue.close()
+
+
 def test_fifo_worker_limit_and_stop_starts_next(tmp_path):
     queue = CommandQueue(tmp_path / 'queue.sqlite3', tmp_path / 'logs', worker_limit=1)
     first = queue.enqueue(python_command('import time; time.sleep(5)'))
