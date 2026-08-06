@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import select
 import shutil
 import signal
@@ -61,6 +62,31 @@ CHATGPT_CONNECTOR_URL = (
 
 STOP_REQUESTED = False
 UPDATE_REQUESTED = False
+_ANSI_RE = re.compile(r"\x1b(?:\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1b\\))")
+
+
+def sanitize_command(value: str) -> str:
+    """Keep shell layout while removing terminal escape/control sequences."""
+    value = _ANSI_RE.sub("", value)
+    return "".join(char for char in value if char in "\n\t" or (char.isprintable() and ord(char) >= 32))
+
+
+def read_call_log(path: str | Path | None, offset: int = 0, limit: int | None = None) -> dict:
+    """Read a call log defensively using byte offsets and an optional byte bound."""
+    if not path:
+        return {"text": "", "offset": 0, "size": 0, "rotated": True}
+    try:
+        path = Path(path)
+        size = path.stat().st_size
+        safe_offset = max(0, int(offset))
+        if safe_offset > size:
+            return {"text": "", "offset": 0, "size": size, "rotated": True}
+        with path.open("rb") as handle:
+            handle.seek(safe_offset)
+            content = handle.read() if limit is None else handle.read(max(0, int(limit)))
+        return {"text": content.decode("utf-8", errors="replace"), "offset": safe_offset + len(content), "size": size, "rotated": False}
+    except OSError:
+        return {"text": "", "offset": 0, "size": 0, "rotated": True}
 
 
 
@@ -217,6 +243,21 @@ def shorten(value: str, width: int) -> str:
     return value[: width - 3] + "..."
 
 
+def resolve_realtime_log(log_ref: str | None) -> Path | None:
+    if not isinstance(log_ref, str) or not log_ref:
+        return None
+    relative = Path(log_ref)
+    if relative.is_absolute() or relative.parts != ("logs", "commands", relative.name) or any(part in {"", ".", ".."} for part in relative.parts):
+        return None
+    commands_root = (LOG_ROOT / "commands").resolve()
+    candidate = (commands_root / relative.name).resolve()
+    try:
+        candidate.relative_to(commands_root)
+    except ValueError:
+        return None
+    return candidate
+
+
 def load_snapshot(path: Path) -> dict:
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
@@ -252,7 +293,7 @@ def realtime_rows(errors_only: bool = False) -> list[dict]:
     return calls
 
 
-def render_realtime_panel(selected: int = 0, errors_only: bool = False, paused: bool = False, details: bool = False) -> None:
+def render_realtime_panel(selected: int = 0, errors_only: bool = False, paused: bool = False, details: bool = False, detail_offset: int = 0, follow_tail: bool = True) -> None:
     clear_terminal()
     width, height = shutil.get_terminal_size((120, 30))
     calls = realtime_rows(errors_only)
@@ -268,8 +309,18 @@ def render_realtime_panel(selected: int = 0, errors_only: bool = False, paused: 
         print(f"Started:  {_start_time(call)}")
         print(f"Age:      {format_age(call)}")
         print(f"Exit:     {call.get('exit_code')}")
-        print(f"Preview:  {shorten(call.get('preview', ''), max(10, width - 10))}")
-        print("\n[Enter] Back  [q/Esc] Exit")
+        print("Command:")
+        print(sanitize_command(call.get("command") or call.get("preview", "") or "(unavailable)"))
+        log = read_call_log(resolve_realtime_log(call.get("log_ref")), 0)
+        log_lines = log["text"].splitlines()
+        visible = max(1, height - 14)
+        if follow_tail:
+            shown = log_lines[-visible:]
+        else:
+            shown = log_lines[detail_offset:detail_offset + visible]
+        print("\nTerminal log" + (" (following)" if follow_tail else "") + ":")
+        print("\n".join(shown) if shown else ("(log unavailable or empty)" if log["rotated"] else "(log empty)"))
+        print("\n[Enter] Back  [q/Esc] Exit  [↑/↓] Scroll  [f] Follow tail", flush=True)
         return
     print("STATUS    START     AGE      TOOL                  PURPOSE")
     print("=" * min(width, 100))
@@ -500,6 +551,8 @@ def monitor(services, tunnel, keep_awake: str, update_result: list[str | None] |
     realtime_paused = False
     realtime_errors = False
     realtime_details = False
+    realtime_detail_offset = 0
+    realtime_follow_tail = True
     last_realtime_render = 0.0
     with terminal_input() as input_fd:
         render_screen(services, tunnel, keep_awake, update_result[0] if update_result else None, panel)
@@ -513,7 +566,7 @@ def monitor(services, tunnel, keep_awake: str, update_result: list[str | None] |
                 print(f"Error: {provider} stopped. Check {log_path}.", file=sys.stderr)
                 return 1
             if panel == "realtime" and not realtime_paused and time.monotonic() - last_realtime_render >= REALTIME_REFRESH_SECONDS:
-                render_realtime_panel(realtime_selected, realtime_errors, realtime_paused, realtime_details)
+                render_realtime_panel(realtime_selected, realtime_errors, realtime_paused, realtime_details, realtime_detail_offset, realtime_follow_tail)
                 last_realtime_render = time.monotonic()
             if input_fd is None:
                 time.sleep(0.2)
@@ -536,7 +589,7 @@ def monitor(services, tunnel, keep_awake: str, update_result: list[str | None] |
                     realtime_paused = not realtime_paused
                     render_realtime_panel(realtime_selected, realtime_errors, realtime_paused, realtime_details)
                 elif key == b"r":
-                    render_realtime_panel(realtime_selected, realtime_errors, realtime_paused, realtime_details)
+                    render_realtime_panel(realtime_selected, realtime_errors, realtime_paused, realtime_details, realtime_detail_offset, realtime_follow_tail)
                 elif key == b"e":
                     realtime_errors = True
                     realtime_selected = 0
@@ -546,14 +599,25 @@ def monitor(services, tunnel, keep_awake: str, update_result: list[str | None] |
                     realtime_selected = 0
                     render_realtime_panel(realtime_selected, realtime_errors, realtime_paused, realtime_details)
                 elif key in {b"j", b"down"}:
-                    realtime_selected += 1
-                    render_realtime_panel(realtime_selected, realtime_errors, realtime_paused, realtime_details)
+                    if realtime_details:
+                        realtime_follow_tail = False
+                        realtime_detail_offset += 1
+                    else:
+                        realtime_selected += 1
+                    render_realtime_panel(realtime_selected, realtime_errors, realtime_paused, realtime_details, realtime_detail_offset, realtime_follow_tail)
                 elif key in {b"k", b"up"}:
-                    realtime_selected = max(0, realtime_selected - 1)
-                    render_realtime_panel(realtime_selected, realtime_errors, realtime_paused, realtime_details)
+                    if realtime_details:
+                        realtime_follow_tail = False
+                        realtime_detail_offset = max(0, realtime_detail_offset - 1)
+                    else:
+                        realtime_selected = max(0, realtime_selected - 1)
+                    render_realtime_panel(realtime_selected, realtime_errors, realtime_paused, realtime_details, realtime_detail_offset, realtime_follow_tail)
                 elif key in {b"\r", b"\n"}:
                     realtime_details = not realtime_details
                     render_realtime_panel(realtime_selected, realtime_errors, realtime_paused, realtime_details)
+                elif realtime_details and key in {b"f"}:
+                    realtime_follow_tail = not realtime_follow_tail
+                    render_realtime_panel(realtime_selected, realtime_errors, realtime_paused, realtime_details, realtime_detail_offset, realtime_follow_tail)
                 continue
             if key == b"m":
                 panel = None if panel == "connections" else "connections"
@@ -567,6 +631,8 @@ def monitor(services, tunnel, keep_awake: str, update_result: list[str | None] |
                 realtime_paused = False
                 realtime_errors = False
                 realtime_details = False
+                realtime_detail_offset = 0
+                realtime_follow_tail = True
                 render_realtime_panel()
                 last_realtime_render = time.monotonic()
             elif key == b"\x1b" and panel is not None:

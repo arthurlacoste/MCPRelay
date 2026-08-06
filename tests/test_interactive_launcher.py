@@ -11,6 +11,28 @@ def test_log_tail_returns_only_last_lines(tmp_path):
     assert interactive_launcher.log_tail(log, max_lines=2) == "three\nfour"
 
 
+def test_realtime_detail_renders_safe_full_command_and_log(tmp_path, monkeypatch, capsys):
+    log = tmp_path / "commands" / "safe.log"
+    log.parent.mkdir()
+    log.write_text("output\n", encoding="utf-8")
+    monkeypatch.setattr(interactive_launcher, "LOG_ROOT", tmp_path)
+    monkeypatch.setattr(interactive_launcher, "REALTIME_CALLS_FILE", tmp_path / "calls.json")
+    (tmp_path / "calls.json").write_text('{"calls": [{"status":"running", "command":"echo a\\nb\\t\\u001b[2J", "log_ref":"logs/commands/safe.log"}]}')
+    monkeypatch.setattr(interactive_launcher, "clear_terminal", lambda: None)
+    monkeypatch.setattr(interactive_launcher.shutil, "get_terminal_size", lambda _: (120, 30))
+    interactive_launcher.render_realtime_panel(details=True)
+    output = capsys.readouterr().out
+    assert "echo a\nb\t" in output
+    assert "echo a\nb\t\x1b" not in output
+    assert "output" in output
+
+
+def test_resolve_realtime_log_ref_rejects_absolute_and_traversal(monkeypatch, tmp_path):
+    monkeypatch.setattr(interactive_launcher, "LOG_ROOT", tmp_path)
+    for value in ("/etc/passwd", "logs/commands/../../secret.log", "logs/commands/sub/ok.log"):
+        assert interactive_launcher.resolve_realtime_log(value) is None
+
+
 def test_gateway_startup_failure_includes_log_output(monkeypatch, tmp_path):
     log = tmp_path / "launcher.log"
     log.write_text(

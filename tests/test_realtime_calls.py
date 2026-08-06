@@ -1,7 +1,7 @@
 import os
 from datetime import UTC, datetime, timedelta
 
-from src.realtime_calls import RealtimeCallStore, format_age, shorten
+from src.realtime_calls import RealtimeCallStore, format_age, read_call_log, shorten
 from src.secret_redactor import SecretRedactor
 
 
@@ -108,3 +108,33 @@ def test_shorten_and_age_formatting():
     now = datetime(2026, 7, 22, 12, 0, 10, tzinfo=UTC)
     item = {"created_at": (now - timedelta(seconds=10)).isoformat(), "duration_ms": 0}
     assert format_age(item, now=now) == "10s"
+
+
+def test_snapshot_keeps_full_redacted_command_and_log_path_metadata(tmp_path):
+    store = RealtimeCallStore(redact_text=lambda value: value.replace("secret", "[REDACTED]"))
+    store.update({
+        **call("detail", "running", datetime.now(UTC).isoformat(), command="echo secret && printf 'two'"),
+        "log_path": str(tmp_path / "detail.log"),
+    })
+
+    item = store.snapshot()["calls"][0]
+    assert item["command"] == "echo [REDACTED] && printf 'two'"
+    assert item["log_ref"] == "logs/commands/detail.log"
+    assert "log_path" not in item
+    assert "command" not in item["preview"] or item["preview"] == item["command"]
+
+
+def test_read_call_log_handles_missing_and_rotated_files(tmp_path):
+    path = tmp_path / "command.log"
+    path.write_text("one\ntwo\nthree\n", encoding="utf-8")
+    assert read_call_log(path, offset=4) == {"text": "two\nthree\n", "offset": 14, "size": 14, "rotated": False}
+    path.unlink()
+    assert read_call_log(path, offset=0) == {"text": "", "offset": 0, "size": 0, "rotated": True}
+
+
+def test_read_call_log_uses_byte_offsets_and_bounded_bytes(tmp_path):
+    path = tmp_path / "command.log"
+    path.write_bytes("é\n二\n".encode())
+    result = read_call_log(path, offset=3, limit=4)
+    assert result["text"] == "二\n"
+    assert result["offset"] == 7

@@ -52,3 +52,12 @@ def test_blocking_runner_publishes_monitor_states(tmp_path):
     assert calls[0]["status"] == "success"
     assert calls[0]["purpose"] == "Verify blocking monitor"
     assert calls[0]["exit_code"] == 0
+
+
+def test_blocking_monitor_state_includes_reusable_log_metadata(tmp_path):
+    states = []
+    runner = BlockingCommandRunner(tmp_path / "logs", state_observer=states.append)
+    runner.run("echo full-command", purpose="detail")
+
+    assert states[0]["command"] == "echo full-command"
+    assert states[0]["log_path"] == str(tmp_path / "logs" / f"{states[0]['execution_id']}.log")
