@@ -146,9 +146,16 @@ def oauth_metadata() -> dict:
         "token_endpoint_auth_methods_supported": ["none", "client_secret_post"],
         "code_challenge_methods_supported": ["S256", "plain"],
         "scopes_supported": ["openid", "profile", "email"],
+        # OIDC discovery clients require these when they probe the alias.
+        "subject_types_supported": ["public"],
+        "id_token_signing_alg_values_supported": ["RS256"],
     }
 
 
+# RFC 8414 path insertion for issuer https://host/oauth.
+@app.get("/.well-known/oauth-authorization-server/oauth")
+@app.get("/.well-known/openid-configuration/oauth")
+# Legacy aliases retained for existing clients.
 @app.get("/oauth/.well-known/oauth-authorization-server")
 @app.get("/oauth/.well-known/openid-configuration")
 @app.get("/.well-known/oauth-authorization-server")

@@ -45,11 +45,25 @@ class TestMetadata:
         assert "authorization_code" in body["grant_types_supported"]
         assert "S256" in body["code_challenge_methods_supported"]
 
+    def test_issuer_path_rfc8414_alias(self, oauth_client: TestClient):
+        resp = oauth_client.get("/.well-known/oauth-authorization-server/oauth")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["issuer"] == "https://test.local/oauth"
+        assert body["subject_types_supported"] == ["public"]
+        assert body["id_token_signing_alg_values_supported"] == ["RS256"]
+
     def test_openid_configuration_alias(self, oauth_client: TestClient):
         """.well-known/openid-configuration returns the same metadata."""
         r1 = oauth_client.get("/.well-known/oauth-authorization-server")
         r2 = oauth_client.get("/.well-known/openid-configuration")
         assert r1.json() == r2.json()
+
+    def test_issuer_path_openid_configuration_alias(self, oauth_client: TestClient):
+        r1 = oauth_client.get("/.well-known/oauth-authorization-server/oauth")
+        r2 = oauth_client.get("/.well-known/openid-configuration/oauth")
+        assert r2.status_code == 200
+        assert r2.json() == r1.json()
 
     def test_health(self, oauth_client: TestClient):
         resp = oauth_client.get("/oauth/health")
