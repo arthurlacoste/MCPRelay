@@ -14,6 +14,7 @@ RUN_SCRIPT = Path(__file__).resolve().parents[1] / "run.sh"
 VENV_PYTHON = Path(sys.executable)
 INTERACTIVE_LAUNCHER = RUN_SCRIPT.parent / "src" / "interactive_launcher.py"
 NGROK_TARGET = RUN_SCRIPT.parent / "src" / "ngrok_target.py"
+TERMINAL_RENDERING = RUN_SCRIPT.parent / "src" / "terminal_rendering.py"
 
 
 def _write_executable(path: Path, content: str) -> None:
@@ -64,6 +65,7 @@ def _enable_interactive_fakes(tmp_path: Path) -> None:
     (tmp_path / "src").mkdir()
     shutil.copy2(INTERACTIVE_LAUNCHER, tmp_path / "src" / "interactive_launcher.py")
     shutil.copy2(NGROK_TARGET, tmp_path / "src" / "ngrok_target.py")
+    shutil.copy2(TERMINAL_RENDERING, tmp_path / "src" / "terminal_rendering.py")
     shutil.copy2(RUN_SCRIPT.parent / "src" / "tunnel_provider.py", tmp_path / "src" / "tunnel_provider.py")
     (tmp_path / "start_services.py").write_text(
         "import signal, json, threading\n"

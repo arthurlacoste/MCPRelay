@@ -23,6 +23,7 @@ from pathlib import Path
 
 from dotenv import dotenv_values
 from ngrok_target import gateway_health_url, resolve_ngrok_target
+from terminal_rendering import TerminalFrameRenderer, restore_terminal_output
 
 try:
     from src.tunnel_provider import (
@@ -293,56 +294,84 @@ def realtime_rows(errors_only: bool = False) -> list[dict]:
     return calls
 
 
-def render_realtime_panel(selected: int = 0, errors_only: bool = False, paused: bool = False, details: bool = False, detail_offset: int = 0, follow_tail: bool = True) -> None:
-    clear_terminal()
+def build_realtime_panel(
+    selected: int = 0,
+    errors_only: bool = False,
+    paused: bool = False,
+    details: bool = False,
+    detail_offset: int = 0,
+    follow_tail: bool = True,
+) -> list[str]:
     width, height = shutil.get_terminal_size((120, 30))
     calls = realtime_rows(errors_only)
     selected = max(0, min(selected, max(0, len(calls) - 1)))
     mode = "PAUSED" if paused else "LIVE"
     filter_label = "errors" if errors_only else "all"
-    print(f"\033[1;34mRealtime calls\033[0m  {mode}  filter:{filter_label}\n")
+    lines = [f"\033[1;34mRealtime calls\033[0m  {mode}  filter:{filter_label}", ""]
+
     if details and calls:
         call = calls[selected]
-        print(f"Status:   {call.get('status', '').upper()}")
-        print(f"Tool:     {call.get('tool', 'run_command')}")
-        print(f"Purpose:  {call.get('purpose', 'No purpose')}")
-        print(f"Started:  {_start_time(call)}")
-        print(f"Age:      {format_age(call)}")
-        print(f"Exit:     {call.get('exit_code')}")
-        print("Command:")
+        lines.extend([
+            f"Status:   {call.get('status', '').upper()}",
+            f"Tool:     {call.get('tool', 'run_command')}",
+            f"Purpose:  {call.get('purpose', 'No purpose')}",
+            f"Started:  {_start_time(call)}",
+            f"Age:      {format_age(call)}",
+            f"Exit:     {call.get('exit_code')}",
+            "Command:",
+        ])
         command = sanitize_command(call.get("command") or call.get("preview", "") or "(unavailable)")
-        print(command)
+        lines.extend(command.splitlines() or [""])
         if call.get("command_truncated"):
-            print("[command truncated at 8000 characters]")
+            lines.append("[command truncated at 8000 characters]")
         log = read_call_log(resolve_realtime_log(call.get("log_ref")), 0)
         log_lines = log["text"].splitlines()
         command_lines = max(1, len(command.splitlines()))
         truncation_lines = 1 if call.get("command_truncated") else 0
         visible = max(1, height - 14 - command_lines - truncation_lines)
-        if follow_tail:
-            shown = log_lines[-visible:]
-        else:
-            shown = log_lines[detail_offset:detail_offset + visible]
-        print("\nTerminal log" + (" (following)" if follow_tail else "") + ":")
-        print("\n".join(shown) if shown else ("(log unavailable or empty)" if log["rotated"] else "(log empty)"))
-        print("\n[Enter] Back  [q/Esc] Exit  [↑/↓] Scroll  [f] Follow tail", flush=True)
-        return
-    print("STATUS    START     AGE      TOOL                  PURPOSE")
-    print("=" * min(width, 100))
+        shown = log_lines[-visible:] if follow_tail else log_lines[detail_offset:detail_offset + visible]
+        lines.extend(["", "Terminal log" + (" (following)" if follow_tail else "") + ":"])
+        lines.extend(shown or ["(log unavailable or empty)" if log["rotated"] else "(log empty)"])
+        lines.extend(["", "[Enter] Back  [q/Esc] Exit  [↑/↓] Scroll  [f] Follow tail"])
+        return lines
+
+    lines.extend([
+        "STATUS    START     AGE      TOOL                  PURPOSE",
+        "=" * min(width, 100),
+    ])
     visible = max(1, (height - 9) // 2)
     for index, call in enumerate(calls[:visible]):
         marker = ">" if index == selected else " "
         status = call.get("status", "").upper()[:8]
         tool = shorten(call.get("tool", "run_command"), 20)
         purpose = shorten(call.get("purpose", "No purpose"), max(8, width - 55))
-        print(f"{marker}{status:<9} {_start_time(call):<9} {format_age(call):<8} {tool:<21} {purpose}")
+        lines.append(f"{marker}{status:<9} {_start_time(call):<9} {format_age(call):<8} {tool:<21} {purpose}")
         preview = call.get("preview", "")
-        if preview and index < visible:
-            print(f"  {shorten(preview, max(8, width - 2))}")
+        if preview:
+            lines.append(f"  {shorten(preview, max(8, width - 2))}")
     if not calls:
-        print("No calls yet.")
-    print("\n[q/Esc] Exit  [p] Pause  [r] Refresh  [e] Errors  [a] All  [↑/↓] Navigate  [Enter] Details", flush=True)
+        lines.append("No calls yet.")
+    lines.extend(["", "[q/Esc] Exit  [p] Pause  [r] Refresh  [e] Errors  [a] All  [↑/↓] Navigate  [Enter] Details"])
+    return lines
 
+
+def render_realtime_panel(
+    selected: int = 0,
+    errors_only: bool = False,
+    paused: bool = False,
+    details: bool = False,
+    detail_offset: int = 0,
+    follow_tail: bool = True,
+    *,
+    renderer: TerminalFrameRenderer | None = None,
+    force_full: bool = False,
+) -> None:
+    lines = build_realtime_panel(selected, errors_only, paused, details, detail_offset, follow_tail)
+    if renderer is None:
+        clear_terminal()
+        print("\n".join(lines), flush=True)
+        return
+    renderer.render(lines, full=force_full)
 
 def render_screen(services, tunnel, keep_awake: str, update_version: str | None, panel: str | None) -> None:
     clear_terminal()
@@ -376,13 +405,17 @@ def terminal_input():
         yield None
         return
 
+    restore_terminal_output()
     fd = sys.stdin.fileno()
     previous = termios.tcgetattr(fd)
     tty.setcbreak(fd)
     try:
         yield fd
     finally:
-        termios.tcsetattr(fd, termios.TCSADRAIN, previous)
+        try:
+            termios.tcsetattr(fd, termios.TCSADRAIN, previous)
+        finally:
+            restore_terminal_output()
 
 
 def log_tail(path: Path, max_lines: int = 8) -> str:
@@ -559,6 +592,7 @@ def monitor(services, tunnel, keep_awake: str, update_result: list[str | None] |
     realtime_detail_offset = 0
     realtime_follow_tail = True
     last_realtime_render = 0.0
+    realtime_renderer = TerminalFrameRenderer()
     with terminal_input() as input_fd:
         render_screen(services, tunnel, keep_awake, update_result[0] if update_result else None, panel)
         while not STOP_REQUESTED:
@@ -571,7 +605,7 @@ def monitor(services, tunnel, keep_awake: str, update_result: list[str | None] |
                 print(f"Error: {provider} stopped. Check {log_path}.", file=sys.stderr)
                 return 1
             if panel == "realtime" and not realtime_paused and time.monotonic() - last_realtime_render >= REALTIME_REFRESH_SECONDS:
-                render_realtime_panel(realtime_selected, realtime_errors, realtime_paused, realtime_details, realtime_detail_offset, realtime_follow_tail)
+                render_realtime_panel(realtime_selected, realtime_errors, realtime_paused, realtime_details, realtime_detail_offset, realtime_follow_tail, renderer=realtime_renderer)
                 last_realtime_render = time.monotonic()
             if input_fd is None:
                 time.sleep(0.2)
@@ -589,40 +623,41 @@ def monitor(services, tunnel, keep_awake: str, update_result: list[str | None] |
                 if key in {b"q", b"\x1b"}:
                     panel = None
                     realtime_details = False
+                    realtime_renderer.finish()
                     render_screen(services, tunnel, keep_awake, update_result[0] if update_result else None, panel)
                 elif key == b"p":
                     realtime_paused = not realtime_paused
-                    render_realtime_panel(realtime_selected, realtime_errors, realtime_paused, realtime_details)
+                    render_realtime_panel(realtime_selected, realtime_errors, realtime_paused, realtime_details, renderer=realtime_renderer)
                 elif key == b"r":
-                    render_realtime_panel(realtime_selected, realtime_errors, realtime_paused, realtime_details, realtime_detail_offset, realtime_follow_tail)
+                    render_realtime_panel(realtime_selected, realtime_errors, realtime_paused, realtime_details, realtime_detail_offset, realtime_follow_tail, renderer=realtime_renderer)
                 elif key == b"e":
                     realtime_errors = True
                     realtime_selected = 0
-                    render_realtime_panel(realtime_selected, realtime_errors, realtime_paused, realtime_details)
+                    render_realtime_panel(realtime_selected, realtime_errors, realtime_paused, realtime_details, renderer=realtime_renderer)
                 elif key == b"a":
                     realtime_errors = False
                     realtime_selected = 0
-                    render_realtime_panel(realtime_selected, realtime_errors, realtime_paused, realtime_details)
+                    render_realtime_panel(realtime_selected, realtime_errors, realtime_paused, realtime_details, renderer=realtime_renderer)
                 elif key in {b"j", b"down"}:
                     if realtime_details:
                         realtime_follow_tail = False
                         realtime_detail_offset += 1
                     else:
                         realtime_selected += 1
-                    render_realtime_panel(realtime_selected, realtime_errors, realtime_paused, realtime_details, realtime_detail_offset, realtime_follow_tail)
+                    render_realtime_panel(realtime_selected, realtime_errors, realtime_paused, realtime_details, realtime_detail_offset, realtime_follow_tail, renderer=realtime_renderer)
                 elif key in {b"k", b"up"}:
                     if realtime_details:
                         realtime_follow_tail = False
                         realtime_detail_offset = max(0, realtime_detail_offset - 1)
                     else:
                         realtime_selected = max(0, realtime_selected - 1)
-                    render_realtime_panel(realtime_selected, realtime_errors, realtime_paused, realtime_details, realtime_detail_offset, realtime_follow_tail)
+                    render_realtime_panel(realtime_selected, realtime_errors, realtime_paused, realtime_details, realtime_detail_offset, realtime_follow_tail, renderer=realtime_renderer)
                 elif key in {b"\r", b"\n"}:
                     realtime_details = not realtime_details
-                    render_realtime_panel(realtime_selected, realtime_errors, realtime_paused, realtime_details)
+                    render_realtime_panel(realtime_selected, realtime_errors, realtime_paused, realtime_details, renderer=realtime_renderer)
                 elif realtime_details and key in {b"f"}:
                     realtime_follow_tail = not realtime_follow_tail
-                    render_realtime_panel(realtime_selected, realtime_errors, realtime_paused, realtime_details, realtime_detail_offset, realtime_follow_tail)
+                    render_realtime_panel(realtime_selected, realtime_errors, realtime_paused, realtime_details, realtime_detail_offset, realtime_follow_tail, renderer=realtime_renderer)
                 continue
             if key == b"m":
                 panel = None if panel == "connections" else "connections"
@@ -638,7 +673,7 @@ def monitor(services, tunnel, keep_awake: str, update_result: list[str | None] |
                 realtime_details = False
                 realtime_detail_offset = 0
                 realtime_follow_tail = True
-                render_realtime_panel()
+                render_realtime_panel(renderer=realtime_renderer, force_full=True)
                 last_realtime_render = time.monotonic()
             elif key == b"\x1b" and panel is not None:
                 panel = None
@@ -659,6 +694,8 @@ def main() -> int:
     UPDATE_REQUESTED = False
     signal.signal(signal.SIGINT, request_shutdown)
     signal.signal(signal.SIGTERM, request_shutdown)
+    if hasattr(signal, "SIGHUP"):
+        signal.signal(signal.SIGHUP, request_shutdown)
 
     try:
         services = start_services()
@@ -683,11 +720,18 @@ def main() -> int:
         print(f"Error: {exc}", file=sys.stderr, flush=True)
         exit_code = 1
     finally:
+        restore_terminal_output()
         if services is not None or tunnel is not None:
-            print("\n⟶ stopping services…", flush=True)
+            try:
+                print("\n⟶ stopping services…", flush=True)
+            except (BrokenPipeError, OSError):
+                pass
             terminate_group(tunnel)
             terminate_group(services)
-            print("✓ Services stopped", flush=True)
+            try:
+                print("✓ Services stopped", flush=True)
+            except (BrokenPipeError, OSError):
+                pass
 
     if UPDATE_REQUESTED:
         return install_update_and_relaunch()

@@ -73,3 +73,27 @@ def test_follow_snapshot_handles_interrupt_during_render(tmp_path, monkeypatch):
 
     assert follow_snapshot(snapshot, stream=stream, interactive=True) == 130
     assert "Detached from Gate logs." in stream.getvalue()
+
+
+def test_follow_snapshot_patches_interactive_rows_without_reclearing(tmp_path, monkeypatch):
+    snapshot = tmp_path / "realtime_calls.json"
+    write_snapshot(snapshot, [{"status": "running"}])
+    outputs = iter([
+        "Realtime calls\nRUNNING 1s",
+        "Realtime calls\nRUNNING 2s",
+    ])
+
+    def fake_render(*_args, **_kwargs):
+        try:
+            return next(outputs)
+        except StopIteration:
+            raise KeyboardInterrupt
+
+    monkeypatch.setattr("gate_cli.log_viewer.render_snapshot", fake_render)
+    monkeypatch.setattr("gate_cli.log_viewer.time.sleep", lambda _seconds: None)
+    stream = StringIO()
+
+    assert follow_snapshot(snapshot, stream=stream, interactive=True) == 130
+    output = stream.getvalue()
+    assert output.count("\x1b[2J\x1b[H") == 1
+    assert "\x1b[2;1H\x1b[2KRUNNING 2s" in output
