@@ -306,3 +306,54 @@ def test_monitor_ignores_update_key_while_panel_is_open(monkeypatch):
 def test_tailscale_failure_uses_tailscale_log():
     message = interactive_launcher.startup_failure_message("tailscale", 1)
     assert str(interactive_launcher.TAILSCALE_LOG) in message
+
+
+def test_terminal_input_restores_raw_and_output_modes(monkeypatch):
+    events = []
+
+    class FakeInput:
+        def isatty(self):
+            return True
+
+        def fileno(self):
+            return 42
+
+    monkeypatch.setattr(interactive_launcher.sys, "stdin", FakeInput())
+    monkeypatch.setattr(interactive_launcher, "restore_terminal_output", lambda: events.append("output-reset"))
+    monkeypatch.setattr(interactive_launcher.termios, "tcgetattr", lambda fd: events.append(("get", fd)) or [1, 2, 3])
+    monkeypatch.setattr(interactive_launcher.tty, "setcbreak", lambda fd: events.append(("cbreak", fd)))
+    monkeypatch.setattr(
+        interactive_launcher.termios,
+        "tcsetattr",
+        lambda fd, when, attrs: events.append(("restore", fd, when, attrs)),
+    )
+
+    with interactive_launcher.terminal_input() as fd:
+        assert fd == 42
+        events.append("body")
+
+    assert events == [
+        "output-reset",
+        ("get", 42),
+        ("cbreak", 42),
+        "body",
+        ("restore", 42, interactive_launcher.termios.TCSADRAIN, [1, 2, 3]),
+        "output-reset",
+    ]
+
+
+def test_main_handles_sighup_when_available(monkeypatch):
+    if not hasattr(interactive_launcher.signal, "SIGHUP"):
+        return
+
+    installed = []
+    monkeypatch.setattr(interactive_launcher.signal, "signal", lambda sig, handler: installed.append((sig, handler)))
+    monkeypatch.setattr(
+        interactive_launcher,
+        "start_services",
+        lambda: (_ for _ in ()).throw(interactive_launcher.ShutdownRequested()),
+    )
+    monkeypatch.setattr(interactive_launcher, "restore_terminal_output", lambda: None)
+
+    assert interactive_launcher.main() == 0
+    assert (interactive_launcher.signal.SIGHUP, interactive_launcher.request_shutdown) in installed

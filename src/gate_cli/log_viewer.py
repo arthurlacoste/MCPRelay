@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import TextIO
 
 from realtime_calls import format_age, load_snapshot, shorten
+from terminal_rendering import TerminalFrameRenderer
 
 
 
@@ -51,6 +52,8 @@ def follow_snapshot(
 ) -> int:
     stream = stream or sys.stdout
     interactive = stream.isatty() if interactive is None else interactive
+    renderer = TerminalFrameRenderer(stream) if interactive else None
+    first_render = True
     try:
         while True:
             width, height = shutil.get_terminal_size((120, 30))
@@ -58,12 +61,16 @@ def follow_snapshot(
             if not output:
                 print("No realtime log data found.", file=stream)
                 return 1
-            if interactive:
-                print("\033[2J\033[H", end="", file=stream)
-            print(output, file=stream, flush=True)
-            if not interactive:
+            if renderer is not None:
+                renderer.render(output.splitlines(), full=first_render)
+                first_render = False
+            else:
+                print(output, file=stream, flush=True)
                 return 0
             time.sleep(refresh_seconds)
     except KeyboardInterrupt:
         print("\nDetached from Gate logs.", file=stream)
         return 130
+    finally:
+        if renderer is not None:
+            renderer.finish()
