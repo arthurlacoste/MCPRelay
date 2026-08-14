@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.1.24](https://github.com/spelcc/gate/compare/v0.1.23...v0.1.24) (2026-08-14)
+
+
+### Fixed
+
+* stabilize realtime terminal rendering ([#59](https://github.com/spelcc/gate/issues/59)) ([5c55c7c](https://github.com/spelcc/gate/commit/5c55c7c45d04e4c5cf62901a7f99e4d816eac7a7))
+
+
+### Tests
+
+* isolate Gate runtime environment ([#61](https://github.com/spelcc/gate/issues/61)) ([60226e4](https://github.com/spelcc/gate/commit/60226e4481a622dc60bb0e094405eca0e636b169))
+
 ## [0.1.23](https://github.com/spelcc/gate/compare/v0.1.22...v0.1.23) (2026-08-06)
 
 
