@@ -31,6 +31,16 @@ os.environ["OAUTH_LOGIN_MAX_ATTEMPTS"] = "5"
 os.environ["MCP_COMMAND_QUEUE_ENABLED"] = "true"
 os.environ["MCP_WIDGET_ENABLED"] = "false"
 
+# Test commands can be launched from a running Gate instance, including
+# the MJ reviewer itself. Never inherit its live tunnel/runtime state.
+for _runtime_key in (
+    "GATE_NGROK_TARGET",
+    "GATE_EXISTING_NGROK_PID",
+    "GATE_EXISTING_TAILSCALE_PID",
+    "TUNNEL_PROVIDER",
+):
+    os.environ.pop(_runtime_key, None)
+
 # -------------------------------------------------------------------
 # 2.  Import the OAuth FastAPI app.
 # -------------------------------------------------------------------
