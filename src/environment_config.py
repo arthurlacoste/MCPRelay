@@ -24,4 +24,9 @@ def gateway_paths(base_dir: Path) -> GatewayPaths:
 
 def load_gateway_environment(base_dir: Path) -> bool:
     """Load Gate's config/.env without overriding process variables."""
-    return load_dotenv(gateway_paths(base_dir).config / ".env")
+    loaded = load_dotenv(gateway_paths(base_dir).config / ".env")
+    # Keep the externally visible MCP tool catalog stable unless an operator
+    # explicitly opts into background subserver discovery. Some clients cache
+    # discovered tool handles and cannot safely follow topology changes mid-run.
+    os.environ.setdefault("MCP_DISCOVERY_REFRESH_INTERVAL_SECONDS", "0")
+    return loaded
