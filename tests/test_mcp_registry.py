@@ -412,20 +412,22 @@ def test_search_matches_historical_prefixed_tool_name(tmp_path):
 def test_discover_call_survives_concurrent_registry_reload(tmp_path):
     from mcp_proxy import MCPProxyManager
 
+    signal_file = tmp_path / "handler_started.signal"
     server_script = tmp_path / "slow_server.py"
     server_script.write_text(
         "import sys, time\n"
         "from fastmcp import FastMCP\n"
         "mcp = FastMCP('slow')\n"
-        "name, value = sys.argv[1], sys.argv[2]\n"
+        "name, value, signal_path = sys.argv[1], sys.argv[2], sys.argv[3]\n"
         "def handler(delay: float = 0.2) -> str:\n"
+        "    open(signal_path, 'w').close()\n"
         "    time.sleep(delay)\n"
         "    return value\n"
         "mcp.tool(name=name)(handler)\n"
         "mcp.run(transport='stdio')\n"
     )
     config = tmp_path / "mcp.json"
-    _write_config(config, {"demo": {"command": sys.executable, "args": [str(server_script), "slow", "old"]}})
+    _write_config(config, {"demo": {"command": sys.executable, "args": [str(server_script), "slow", "old", str(signal_file)]}})
     gateway = FastMCP("gateway")
     manager = MCPProxyManager(
         config,
@@ -439,8 +441,14 @@ def test_discover_call_survives_concurrent_registry_reload(tmp_path):
         await manager.start(gateway)
         try:
             call = asyncio.create_task(manager.call_tool("demo", "slow", {"delay": 1.2}))
-            await asyncio.sleep(0.05)
-            _write_config(config, {"demo": {"command": sys.executable, "args": [str(server_script), "fast", "new"]}})
+            # Wait for handler to actually start (signal file created)
+            timeout = 5.0
+            start = asyncio.get_event_loop().time()
+            while not signal_file.exists():
+                if asyncio.get_event_loop().time() - start > timeout:
+                    raise TimeoutError("Handler did not start within timeout")
+                await asyncio.sleep(0.01)
+            _write_config(config, {"demo": {"command": sys.executable, "args": [str(server_script), "fast", "new", str(signal_file)]}})
             refreshed = asyncio.create_task(manager.refresh())
             called = await call
             diff = await refreshed
