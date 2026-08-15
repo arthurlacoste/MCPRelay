@@ -357,9 +357,13 @@ def skills_create(
     return result
 
 
-@configurable_tool(mcp, title='List MCP servers', description='List configured MCP subservers and their health state.')
-def mcp_servers_list() -> dict:
-    return {'servers': proxy_manager.list_servers()}
+@configurable_tool(mcp, title='List MCP servers', description='List configured MCP subservers and their health state. Set refresh=true to re-read MCP configuration first.')
+async def mcp_servers_list(refresh: bool = False) -> dict:
+    result = {'servers': proxy_manager.list_servers()}
+    if refresh:
+        diff = await proxy_manager.refresh()
+        result = {'servers': proxy_manager.list_servers(), 'refresh': diff.as_dict()}
+    return result
 
 
 @configurable_tool(

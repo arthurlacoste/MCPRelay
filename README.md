@@ -24,19 +24,31 @@ See the **[installation and usage guide](docs/installation.md)**, if you want to
 
 ## 🛠️ Available MCP Tools
 
+Gate starts in **discover mode**. Only seven tools are exposed by default:
+
+| Tool | Description |
+| --- | --- |
+| `run_command` | Execute a local shell command |
+| `skills_search` | Search the local Agent Skills catalogue |
+| `skills_read` | Read a selected Agent Skill |
+| `mcp_servers_list` | List downstream MCP servers, or refresh their registry |
+| `mcp_tools_search` | Search tools across downstream MCP servers |
+| `mcp_tool_read` | Load the schema for one discovered MCP tool |
+| `mcp_tool_call` | Invoke one discovered MCP tool |
+
+Additional first-party maintenance and sharing tools are available in `full` mode. Queue polling/control helpers appear automatically when the optional command queue is enabled.
+
 ### 💻 Commands
 
-| Tool          | Description                            |
-| ------------- | -------------------------------------- |
-| `run_command` | Execute a shell command with streaming |
+`run_command` stays directly exposed because it is Gate's primary local execution tool.
 
-### 🔐 Authentication
+### 🔐 Authentication (`full` mode)
 
 | Tool          | Description                              |
 | ------------- | ---------------------------------------- |
 | `auth_status` | OAuth status: issuer, audience, base_url |
 
-### 📁 File Sharing
+### 📁 File Sharing (`full` mode)
 
 | Tool                 | Description                   |
 | -------------------- | ----------------------------- |
@@ -46,9 +58,9 @@ See the **[installation and usage guide](docs/installation.md)**, if you want to
 
 ### 🔌 Configurable MCP subservers
 
-Gate uses **discovery mode by default** so large downstream MCP catalogues do not flood ChatGPT's initial tool context. The default surface stays at seven tools: `run_command`, `skills_search`, `skills_read`, `mcp_servers_list`, `mcp_tools_search`, `mcp_tool_read`, and `mcp_tool_call`.
+Gate uses **discovery mode by default** so large downstream MCP catalogues do not flood ChatGPT's initial tool context.
 
-Downstream tools from `config/mcp.json` remain connected and searchable. Use `mcp_tools_search` to find one, `mcp_tool_read` to load its schema, then `mcp_tool_call` to invoke it. For legacy eager exposure, launch Gate with `gate --tools full` or set `MCP_TOOL_EXPOSURE_MODE=full`. If the optional command queue is enabled, its polling/control helpers are also exposed because `run_command` depends on them.
+Downstream tools from `config/mcp.json` remain connected and searchable. Use `mcp_tools_search` to find one, including by its former `prefix_tool` public name, `mcp_tool_read` to load its schema, then `mcp_tool_call` to invoke it. For legacy eager exposure, launch Gate with `gate --tools full` or set `MCP_TOOL_EXPOSURE_MODE=full`. If the optional command queue is enabled, its polling/control helpers are also exposed because `run_command` depends on them.
 
 [See more about the MCP implementation and subserver configuration.](docs/installation.md#configure-mcp-subservers)
 

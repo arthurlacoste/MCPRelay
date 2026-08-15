@@ -30,7 +30,7 @@ def test_refresh_adds_changes_and_removes_server(tmp_path):
     config = tmp_path / "mcp.json"
     _write_config(config, {})
     gateway = FastMCP("gateway")
-    manager = MCPProxyManager(config, project_root=tmp_path, environ={}, refresh_interval_seconds=0)
+    manager = MCPProxyManager(config, project_root=tmp_path, environ={}, refresh_interval_seconds=0, tool_exposure_mode="full")
 
     async def scenario():
         await manager.start(gateway)
@@ -64,7 +64,7 @@ def test_failed_reload_preserves_last_healthy_catalog(tmp_path):
     config = tmp_path / "mcp.json"
     _write_config(config, {"demo": {"command": sys.executable, "args": [str(script), "echo", "ok"]}})
     gateway = FastMCP("gateway")
-    manager = MCPProxyManager(config, project_root=tmp_path, environ={}, refresh_interval_seconds=0)
+    manager = MCPProxyManager(config, project_root=tmp_path, environ={}, refresh_interval_seconds=0, tool_exposure_mode="full")
 
     async def scenario():
         await manager.start(gateway)
@@ -89,7 +89,7 @@ def test_invalid_registry_preserves_last_healthy_catalog(tmp_path):
     config = tmp_path / "mcp.json"
     _write_config(config, {"demo": {"command": sys.executable, "args": [str(script), "echo", "ok"]}})
     gateway = FastMCP("gateway")
-    manager = MCPProxyManager(config, project_root=tmp_path, environ={}, refresh_interval_seconds=0)
+    manager = MCPProxyManager(config, project_root=tmp_path, environ={}, refresh_interval_seconds=0, tool_exposure_mode="full")
 
     async def scenario():
         await manager.start(gateway)
@@ -113,7 +113,7 @@ def test_missing_registry_preserves_last_healthy_catalog(tmp_path):
     config = tmp_path / "mcp.json"
     _write_config(config, {"demo": {"command": sys.executable, "args": [str(script), "echo", "ok"]}})
     gateway = FastMCP("gateway")
-    manager = MCPProxyManager(config, project_root=tmp_path, environ={}, refresh_interval_seconds=0)
+    manager = MCPProxyManager(config, project_root=tmp_path, environ={}, refresh_interval_seconds=0, tool_exposure_mode="full")
 
     async def scenario():
         await manager.start(gateway)
@@ -136,7 +136,7 @@ def test_reload_server_keeps_key_error_contract_when_registry_is_unavailable(tmp
     config = tmp_path / "mcp.json"
     _write_config(config, {})
     gateway = FastMCP("gateway")
-    manager = MCPProxyManager(config, project_root=tmp_path, environ={}, refresh_interval_seconds=0)
+    manager = MCPProxyManager(config, project_root=tmp_path, environ={}, refresh_interval_seconds=0, tool_exposure_mode="full")
 
     async def scenario():
         await manager.start(gateway)
@@ -157,7 +157,7 @@ def test_concurrent_refresh_is_serialized_and_unchanged_is_noop(tmp_path):
     config = tmp_path / "mcp.json"
     _write_config(config, {})
     gateway = FastMCP("gateway")
-    manager = MCPProxyManager(config, project_root=tmp_path, environ={}, refresh_interval_seconds=0)
+    manager = MCPProxyManager(config, project_root=tmp_path, environ={}, refresh_interval_seconds=0, tool_exposure_mode="full")
 
     async def scenario():
         await manager.start(gateway)
@@ -175,7 +175,7 @@ def test_registry_management_methods_report_current_state(tmp_path):
     config = tmp_path / "mcp.json"
     _write_config(config, {"demo": {"command": sys.executable, "args": [str(script), "echo", "ok"]}})
     gateway = FastMCP("gateway")
-    manager = MCPProxyManager(config, project_root=tmp_path, environ={}, refresh_interval_seconds=0)
+    manager = MCPProxyManager(config, project_root=tmp_path, environ={}, refresh_interval_seconds=0, tool_exposure_mode="full")
 
     async def scenario():
         await manager.start(gateway)
@@ -209,6 +209,7 @@ def test_repeated_failed_reloads_keep_last_healthy_provider(tmp_path):
         environ={},
         refresh_interval_seconds=0,
         retry_initial_seconds=0,
+        tool_exposure_mode="full",
     )
 
     async def scenario():
@@ -238,7 +239,7 @@ def test_native_tool_registered_after_start_blocks_proxy_collision(tmp_path):
     config = tmp_path / "mcp.json"
     _write_config(config, {})
     gateway = FastMCP("gateway")
-    manager = MCPProxyManager(config, project_root=tmp_path, environ={}, refresh_interval_seconds=0)
+    manager = MCPProxyManager(config, project_root=tmp_path, environ={}, refresh_interval_seconds=0, tool_exposure_mode="full")
 
     async def scenario():
         await manager.start(gateway)
@@ -267,7 +268,7 @@ def test_failed_reload_is_not_reported_as_catalog_change(tmp_path):
     config = tmp_path / "mcp.json"
     _write_config(config, {})
     gateway = FastMCP("gateway")
-    manager = MCPProxyManager(config, project_root=tmp_path, environ={}, refresh_interval_seconds=0)
+    manager = MCPProxyManager(config, project_root=tmp_path, environ={}, refresh_interval_seconds=0, tool_exposure_mode="full")
 
     async def scenario():
         await manager.start(gateway)
@@ -287,7 +288,7 @@ def test_negative_refresh_interval_is_clamped_to_zero(tmp_path):
 
     config = tmp_path / "mcp.json"
     _write_config(config, {})
-    manager = MCPProxyManager(config, project_root=tmp_path, environ={}, refresh_interval_seconds=-5)
+    manager = MCPProxyManager(config, project_root=tmp_path, environ={}, refresh_interval_seconds=-5, tool_exposure_mode="full")
 
     assert manager.registry.refresh_interval_seconds == 0
 
@@ -352,3 +353,103 @@ def test_discover_mode_keeps_proxy_tools_hidden_but_searchable_readable_and_call
     assert read["inputSchema"]["required"] == ["url"]
     assert read["inputSchema"]["properties"]["limit"]["default"] == 20
     assert called["content"][0]["text"] == "https://example.test:3"
+
+
+def test_registry_defaults_to_discover_mode(tmp_path):
+    from mcp_proxy import MCPProxyManager
+
+    script = _server_script(tmp_path)
+    config = tmp_path / "mcp.json"
+    _write_config(config, {"demo": {"command": sys.executable, "args": [str(script), "echo", "ok"]}})
+    gateway = FastMCP("gateway")
+    manager = MCPProxyManager(config, project_root=tmp_path, environ={}, refresh_interval_seconds=0)
+
+    async def scenario():
+        await manager.start(gateway)
+        try:
+            return {tool.name for tool in await gateway.list_tools()}, manager.registry.tool_exposure_mode
+        finally:
+            await manager.close()
+
+    exposed, mode = asyncio.run(scenario())
+    assert mode == "discover"
+    assert "demo_echo" not in exposed
+
+
+def test_search_matches_historical_prefixed_tool_name(tmp_path):
+    from mcp_proxy import MCPProxyManager
+
+    script = _server_script(tmp_path)
+    config = tmp_path / "mcp.json"
+    _write_config(config, {
+        "demo": {
+            "command": sys.executable,
+            "args": [str(script), "secret_tool", "ok"],
+            "toolPrefix": "svc",
+        }
+    })
+    gateway = FastMCP("gateway")
+    manager = MCPProxyManager(
+        config,
+        project_root=tmp_path,
+        environ={},
+        refresh_interval_seconds=0,
+        tool_exposure_mode="discover",
+    )
+
+    async def scenario():
+        await manager.start(gateway)
+        try:
+            return manager.search_tools("svc_secret_tool")
+        finally:
+            await manager.close()
+
+    found = asyncio.run(scenario())
+    assert found["total"] == 1
+    assert found["matches"][0]["name"] == "secret_tool"
+
+
+def test_discover_call_survives_concurrent_registry_reload(tmp_path):
+    from mcp_proxy import MCPProxyManager
+
+    server_script = tmp_path / "slow_server.py"
+    server_script.write_text(
+        "import sys, time\n"
+        "from fastmcp import FastMCP\n"
+        "mcp = FastMCP('slow')\n"
+        "name, value = sys.argv[1], sys.argv[2]\n"
+        "def handler(delay: float = 0.2) -> str:\n"
+        "    time.sleep(delay)\n"
+        "    return value\n"
+        "mcp.tool(name=name)(handler)\n"
+        "mcp.run(transport='stdio')\n"
+    )
+    config = tmp_path / "mcp.json"
+    _write_config(config, {"demo": {"command": sys.executable, "args": [str(server_script), "slow", "old"]}})
+    gateway = FastMCP("gateway")
+    manager = MCPProxyManager(
+        config,
+        project_root=tmp_path,
+        environ={},
+        refresh_interval_seconds=0,
+        tool_exposure_mode="discover",
+    )
+
+    async def scenario():
+        await manager.start(gateway)
+        try:
+            call = asyncio.create_task(manager.call_tool("demo", "slow", {"delay": 1.2}))
+            await asyncio.sleep(0.05)
+            _write_config(config, {"demo": {"command": sys.executable, "args": [str(server_script), "fast", "new"]}})
+            refreshed = asyncio.create_task(manager.refresh())
+            called = await call
+            diff = await refreshed
+            found = manager.search_tools("fast")
+            return called, diff, found
+        finally:
+            await manager.close()
+
+    called, diff, found = asyncio.run(scenario())
+    assert called["content"][0]["text"] == "old"
+    assert diff.changed_servers == {"demo"}
+    assert found["matches"][0]["name"] == "fast"

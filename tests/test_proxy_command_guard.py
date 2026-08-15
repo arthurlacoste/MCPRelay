@@ -26,7 +26,7 @@ def test_declared_proxy_shell_tool_is_denied_before_forwarding(tmp_path):
         "commandGuards": {"execute": {"commandArgument": "command", "cwdArgument": "cwd"}},
     }}}))
     gateway = FastMCP("gateway")
-    manager = MCPProxyManager(config, project_root=tmp_path, environ={}, command_guard=GuardService())
+    manager = MCPProxyManager(config, project_root=tmp_path, environ={}, command_guard=GuardService(), tool_exposure_mode="full")
 
     async def scenario():
         await manager.start(gateway)

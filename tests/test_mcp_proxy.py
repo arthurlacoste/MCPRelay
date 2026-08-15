@@ -124,7 +124,7 @@ def test_manager_exposes_enabled_stdio_tools_with_namespace(tmp_path):
         }
     }))
     gateway = FastMCP("gateway")
-    manager = MCPProxyManager(config_path, project_root=tmp_path, environ={})
+    manager = MCPProxyManager(config_path, project_root=tmp_path, environ={}, tool_exposure_mode="full")
 
     async def scenario():
         await manager.start(gateway)
@@ -154,7 +154,7 @@ def test_unavailable_server_is_omitted_without_blocking_native_tools(tmp_path, c
     def native() -> str:
         return "ok"
 
-    manager = MCPProxyManager(config_path, project_root=tmp_path, environ={})
+    manager = MCPProxyManager(config_path, project_root=tmp_path, environ={}, tool_exposure_mode="full")
 
     async def scenario():
         await manager.start(gateway)
@@ -191,6 +191,7 @@ def test_proxied_calls_emit_technical_log_without_arguments(tmp_path):
         project_root=tmp_path,
         environ={},
         event_logger=lambda action, payload: events.append((action, payload)),
+        tool_exposure_mode="full",
     )
 
     async def scenario():
@@ -230,7 +231,7 @@ def test_proxy_namespaces_resources_templates_and_prompts(tmp_path):
         "mcpServers": {"components": {"command": sys.executable, "args": [str(server_script)]}}
     }))
     gateway = FastMCP("gateway")
-    manager = MCPProxyManager(config_path, project_root=tmp_path, environ={})
+    manager = MCPProxyManager(config_path, project_root=tmp_path, environ={}, tool_exposure_mode="full")
 
     async def scenario():
         await manager.start(gateway)
@@ -272,6 +273,7 @@ def test_proxied_failures_emit_error_log(tmp_path):
         project_root=tmp_path,
         environ={},
         event_logger=lambda action, payload: events.append((action, payload)),
+        tool_exposure_mode="full",
     )
 
     async def scenario():
@@ -305,7 +307,7 @@ def test_initialization_timeout_omits_stalled_server_quickly(tmp_path):
         }
     }))
     gateway = FastMCP("gateway")
-    manager = MCPProxyManager(config_path, project_root=tmp_path, environ={})
+    manager = MCPProxyManager(config_path, project_root=tmp_path, environ={}, tool_exposure_mode="full")
 
     started = monotonic()
     asyncio.run(manager.start(gateway))
@@ -333,7 +335,7 @@ def test_namespace_collision_keeps_first_server(tmp_path, caplog):
         "mcpServers": {"same-name": entry, "same_name": entry}
     }))
     gateway = FastMCP("gateway")
-    manager = MCPProxyManager(config_path, project_root=tmp_path, environ={})
+    manager = MCPProxyManager(config_path, project_root=tmp_path, environ={}, tool_exposure_mode="full")
 
     async def scenario():
         await manager.start(gateway)
@@ -377,7 +379,7 @@ def test_http_proxy_uses_configured_headers_without_forwarding_gateway_authoriza
             }
         }
     }))
-    manager = MCPProxyManager(config_path, project_root=tmp_path, environ={})
+    manager = MCPProxyManager(config_path, project_root=tmp_path, environ={}, tool_exposure_mode="full")
 
     async def wait_for_port(port: int) -> None:
         for _ in range(100):
@@ -509,7 +511,7 @@ def test_proxy_reuses_single_initialized_stdio_session(tmp_path):
         }
     }))
     gateway = FastMCP("gateway")
-    manager = MCPProxyManager(config_path, project_root=tmp_path, environ={})
+    manager = MCPProxyManager(config_path, project_root=tmp_path, environ={}, tool_exposure_mode="full")
 
     async def scenario():
         await manager.start(gateway)
@@ -589,3 +591,22 @@ def test_discover_mode_keeps_queue_helpers_when_queue_is_enabled(tmp_path):
     names = set(json.loads(result.stdout.strip().splitlines()[-1]))
 
     assert {"run_command", "get_command_state", "get_command_output", "stop_command"} <= names
+
+
+def test_mcp_servers_list_can_refresh_registry(monkeypatch):
+    import mcp_gateway
+
+    events = []
+
+    async def refresh():
+        events.append("refresh")
+        return type("Diff", (), {"as_dict": lambda self: {"added_servers": ["new"]}})()
+
+    monkeypatch.setattr(mcp_gateway.proxy_manager, "refresh", refresh)
+    monkeypatch.setattr(mcp_gateway.proxy_manager, "list_servers", lambda: [{"name": "new", "status": "healthy"}])
+
+    result = asyncio.run(mcp_gateway.mcp_servers_list(refresh=True))
+
+    assert events == ["refresh"]
+    assert result["servers"] == [{"name": "new", "status": "healthy"}]
+    assert result["refresh"]["added_servers"] == ["new"]

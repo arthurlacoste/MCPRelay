@@ -81,6 +81,7 @@ class ServerState:
     provider: Any = field(default=None, repr=False)
     proxy: FastMCP | None = field(default=None, repr=False)
     catalog_tools: dict[str, Any] = field(default_factory=dict, repr=False)
+    call_lock: asyncio.Lock = field(default_factory=asyncio.Lock, repr=False)
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -109,7 +110,7 @@ class MCPRegistry:
         refresh_interval_seconds: float | None = None,
         retry_initial_seconds: float | None = None,
         retry_max_seconds: float | None = None,
-        tool_exposure_mode: str = "full",
+        tool_exposure_mode: str = "discover",
     ) -> None:
         self.project_root = Path(project_root)
         candidate = Path(config_path)
@@ -305,8 +306,9 @@ class MCPRegistry:
             if old and old.provider in self.gateway.providers:
                 self.gateway.providers.remove(old.provider)
             if old and old.client:
-                with suppress(Exception, asyncio.CancelledError):
-                    await old.client.close()
+                async with old.call_lock:
+                    with suppress(Exception, asyncio.CancelledError):
+                        await old.client.close()
             if old:
                 diff.added_tools.update(public_tools - old.public_tools)
                 diff.removed_tools.update(old.public_tools - public_tools)
@@ -357,8 +359,9 @@ class MCPRegistry:
         if self.gateway and state.provider in self.gateway.providers:
             self.gateway.providers.remove(state.provider)
         if state.client:
-            with suppress(Exception, asyncio.CancelledError):
-                await state.client.close()
+            async with state.call_lock:
+                with suppress(Exception, asyncio.CancelledError):
+                    await state.client.close()
         self._event("mcp_server_disconnected", {"server": state.name, "prefix": state.prefix})
 
 
@@ -400,7 +403,8 @@ class MCPRegistry:
                 tool_name = tool.name.casefold()
                 title = (tool.title or "").casefold()
                 description = (tool.description or "").casefold()
-                haystack = f"{name.casefold()} {state.prefix.casefold()} {tool_name} {title} {description}"
+                public_name = f"{state.prefix}_{tool.name}".casefold()
+                haystack = f"{name.casefold()} {state.prefix.casefold()} {tool_name} {public_name} {title} {description}"
                 if needle and not any(token in haystack for token in tokens):
                     continue
                 score = 0
@@ -434,13 +438,17 @@ class MCPRegistry:
         tool_name: str,
         arguments: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        state = self.states.get(server_name)
-        if state is None or state.status not in {"healthy", "degraded"} or state.proxy is None:
-            return {"error": "server_not_available", "server": server_name}
-        if tool_name not in state.catalog_tools:
-            return {"error": "tool_not_found", "server": server_name, "name": tool_name}
-        result = await state.proxy.call_tool(tool_name, arguments or {})
-        return result.model_dump(mode="json", by_alias=True, exclude_none=True)
+        while True:
+            state = self.states.get(server_name)
+            if state is None or state.status not in {"healthy", "degraded"} or state.proxy is None:
+                return {"error": "server_not_available", "server": server_name}
+            if tool_name not in state.catalog_tools:
+                return {"error": "tool_not_found", "server": server_name, "name": tool_name}
+            async with state.call_lock:
+                if self.states.get(server_name) is not state:
+                    continue
+                result = await state.proxy.call_tool(tool_name, arguments or {})
+                return result.model_dump(mode="json", by_alias=True, exclude_none=True)
 
     def list_servers(self) -> list[dict[str, Any]]:
         return [self.states[name].as_dict() for name in sorted(self.states)]

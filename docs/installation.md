@@ -238,7 +238,9 @@ mcp_tool_read
 mcp_tool_call
 ```
 
-The normal downstream flow is `mcp_tools_search` → `mcp_tool_read` → `mcp_tool_call`. This avoids putting every downstream JSON schema into the initial model context. `mcp_tools_search` searches server names, prefixes, tool names, titles, and descriptions. When the optional command queue is enabled, Gate also exposes the queue polling/control helpers required by `run_command`.
+The normal downstream flow is `mcp_tools_search` → `mcp_tool_read` → `mcp_tool_call`. This avoids putting every downstream JSON schema into the initial model context. `mcp_tools_search` searches server names, prefixes, tool names, historical `prefix_tool` public names, titles, and descriptions. When the optional command queue is enabled, Gate also exposes the queue polling/control helpers required by `run_command`.
+
+Discover mode intentionally hides the other first-party Gate tools, including `skills_create`, `conversation_start`, `conversation_note`, `auth_status`, `public_file_share`, `public_file_list`, `public_file_revoke`, `mcp_server_status`, `mcp_server_reload`, and `mcp_registry_refresh`. Use `full` mode when those direct tools are needed. Normal command calls can still create their conversation log automatically when a `conversation_id` is supplied. To reconcile edits to `config/mcp.json` without switching to full mode or restarting Gate, call `mcp_servers_list` with `refresh=true`.
 
 For one launch with the historical eager behavior:
 
