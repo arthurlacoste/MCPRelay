@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.25](https://github.com/spelcc/gate/compare/v0.1.24...v0.1.25) (2026-08-15)
+
+
+### Fixed
+
+* keep MCP tool catalog stable by default ([#63](https://github.com/spelcc/gate/issues/63)) ([bfb477d](https://github.com/spelcc/gate/commit/bfb477da1d114b278dc91f74c8acaa38829ad820))
+
 ## [0.1.24](https://github.com/spelcc/gate/compare/v0.1.23...v0.1.24) (2026-08-14)
 
 
