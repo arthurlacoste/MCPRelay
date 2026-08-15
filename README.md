@@ -36,7 +36,7 @@ Gate starts in **discover mode**. Only seven tools are exposed by default:
 | `mcp_tool_read` | Load the schema for one discovered MCP tool |
 | `mcp_tool_call` | Invoke one discovered MCP tool |
 
-Additional first-party maintenance and sharing tools are available in `full` mode. Queue polling/control helpers appear automatically when the optional command queue is enabled.
+Additional first-party tools and runtime-specific helpers may be available outside this default surface. See the [installation and usage guide](docs/installation.md#configure-the-gateway) for exposure modes and configuration.
 
 ### 💻 Commands
 
@@ -60,7 +60,7 @@ Additional first-party maintenance and sharing tools are available in `full` mod
 
 Gate uses **discovery mode by default** so large downstream MCP catalogues do not flood ChatGPT's initial tool context.
 
-Downstream tools from `config/mcp.json` remain connected and searchable. Use `mcp_tools_search` to find one, including by its former `prefix_tool` public name, `mcp_tool_read` to load its schema, then `mcp_tool_call` to invoke it. For legacy eager exposure, launch Gate with `gate --tools full` or set `MCP_TOOL_EXPOSURE_MODE=full`. If the optional command queue is enabled, its polling/control helpers are also exposed because `run_command` depends on them.
+Downstream tools from `config/mcp.json` remain connected and searchable. Use `mcp_tools_search` to find one, including by its former `prefix_tool` public name, `mcp_tool_read` to load its schema, then `mcp_tool_call` to invoke it. Detailed exposure-mode and queue behavior lives in the [installation guide](docs/installation.md#configure-the-gateway).
 
 [See more about the MCP implementation and subserver configuration.](docs/installation.md#configure-mcp-subservers)
 

@@ -22,3 +22,14 @@ def test_can_disable_gateway_tool(tmp_path):
 
     assert is_tool_enabled('run_command', cfg) is False
     assert is_tool_enabled('public_file_list', cfg) is True
+
+
+def test_invalid_tool_exposure_mode_falls_back_to_discover(caplog):
+    from src.tool_registry import tool_exposure_mode
+
+    with caplog.at_level('WARNING'):
+        mode = tool_exposure_mode({'MCP_TOOL_EXPOSURE_MODE': 'ful'})
+
+    assert mode == 'discover'
+    assert 'MCP_TOOL_EXPOSURE_MODE' in caplog.text
+    assert 'discover' in caplog.text

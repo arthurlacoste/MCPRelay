@@ -461,3 +461,118 @@ def test_discover_call_survives_concurrent_registry_reload(tmp_path):
     assert called["content"][0]["text"] == "old"
     assert diff.changed_servers == {"demo"}
     assert found["matches"][0]["name"] == "fast"
+
+
+def test_invalid_registry_exposure_mode_falls_back_to_discover(tmp_path, caplog):
+    from mcp_proxy import MCPProxyManager
+
+    config = tmp_path / "mcp.json"
+    _write_config(config, {})
+    with caplog.at_level("WARNING"):
+        manager = MCPProxyManager(
+            config,
+            project_root=tmp_path,
+            environ={},
+            refresh_interval_seconds=0,
+            tool_exposure_mode="ful",
+        )
+
+    assert manager.registry.tool_exposure_mode == "discover"
+    assert "discover" in caplog.text
+
+
+def test_historical_public_name_gets_exact_match_ranking(tmp_path):
+    from mcp_proxy import MCPProxyManager
+
+    script = _server_script(tmp_path)
+    config = tmp_path / "mcp.json"
+    _write_config(config, {
+        "alpha": {
+            "command": sys.executable,
+            "args": [str(script), "secret_tool", "one"],
+            "toolPrefix": "svc",
+        },
+        "beta": {
+            "command": sys.executable,
+            "args": [str(script), "svc_secret_tool_helper", "two"],
+            "toolPrefix": "other",
+        },
+    })
+    gateway = FastMCP("gateway")
+    manager = MCPProxyManager(
+        config,
+        project_root=tmp_path,
+        environ={},
+        refresh_interval_seconds=0,
+        tool_exposure_mode="discover",
+    )
+
+    async def scenario():
+        await manager.start(gateway)
+        try:
+            return manager.search_tools("svc_secret_tool")
+        finally:
+            await manager.close()
+
+    found = asyncio.run(scenario())
+    assert found["matches"][0]["server"] == "alpha"
+    assert found["matches"][0]["name"] == "secret_tool"
+
+
+def test_manual_refresh_requests_are_coalesced(tmp_path, monkeypatch):
+    from mcp_proxy import MCPProxyManager
+    from mcp_registry import RegistryDiff
+
+    config = tmp_path / "mcp.json"
+    _write_config(config, {})
+    manager = MCPProxyManager(config, project_root=tmp_path, environ={}, refresh_interval_seconds=0)
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def slow_refresh():
+        started.set()
+        await release.wait()
+        return RegistryDiff()
+
+    monkeypatch.setattr(manager.registry, "refresh", slow_refresh)
+
+    async def scenario():
+        first = manager.request_refresh()
+        await started.wait()
+        second = manager.request_refresh()
+        release.set()
+        await manager.registry._manual_refresh_task
+        return first, second
+
+    first, second = asyncio.run(scenario())
+    assert first == {"status": "scheduled"}
+    assert second == {"status": "running"}
+
+
+def test_call_tool_stops_after_two_stale_catalog_retries(tmp_path):
+    from types import SimpleNamespace
+    from mcp_proxy import MCPProxyManager
+
+    config = tmp_path / "mcp.json"
+    _write_config(config, {})
+    manager = MCPProxyManager(config, project_root=tmp_path, environ={}, refresh_interval_seconds=0)
+    registry = manager.registry
+
+    class SwapLock:
+        def __init__(self, replacement):
+            self.replacement = replacement
+
+        async def __aenter__(self):
+            registry.states["demo"] = self.replacement
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+    state3 = SimpleNamespace(status="healthy", proxy=object(), catalog_tools={"echo": object()}, call_lock=None)
+    state2 = SimpleNamespace(status="healthy", proxy=object(), catalog_tools={"echo": object()}, call_lock=SwapLock(state3))
+    state1 = SimpleNamespace(status="healthy", proxy=object(), catalog_tools={"echo": object()}, call_lock=SwapLock(state2))
+    registry.states["demo"] = state1
+
+    result = asyncio.run(manager.call_tool("demo", "echo"))
+
+    assert result == {"error": "catalog_changed", "server": "demo", "name": "echo"}

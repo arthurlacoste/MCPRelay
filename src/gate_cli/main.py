@@ -15,6 +15,7 @@ from .paths import GatePaths
 from .state import load_state
 from .uninstall import uninstall
 from .updater import perform_update
+from tool_registry import TOOL_EXPOSURE_MODES
 
 
 def project_dir() -> Path:
@@ -153,7 +154,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="gate")
     parser.add_argument("--version", action="store_true")
     parser.add_argument("--noguard", action="store_true", help="disable command guards for this Gate launch only")
-    parser.add_argument("--tools", choices=("discover", "full"), help="tool exposure mode for this Gate launch")
+    parser.add_argument("--tools", choices=TOOL_EXPOSURE_MODES, help="tool exposure mode for this Gate launch")
     sub = parser.add_subparsers(dest="command")
     for name in ("start", "stop", "restart", "status", "secret", "setup", "renew-secret", "rollback", "doctor"):
         sub.add_parser(name)
@@ -192,6 +193,8 @@ def delegate_run_script(command: str | None = None, *, noguard: bool = False, to
 
 
 def launch_run_script(command: str | None = None, *, noguard: bool = False, tools: str | None = None) -> int:
+    if tools is not None and tools not in TOOL_EXPOSURE_MODES:
+        raise ValueError(f"unsupported tool exposure mode: {tools}")
     kwargs = {}
     if noguard:
         kwargs["noguard"] = True

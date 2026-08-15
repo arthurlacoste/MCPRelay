@@ -131,14 +131,20 @@ def test_manager_exposes_enabled_stdio_tools_with_namespace(tmp_path):
         try:
             tools = await gateway.list_tools()
             result = await gateway.call_tool("fixture_server_echo", {"text": "hello"})
-            return tools, result
+            hidden_search = manager.search_tools("hidden")
+            hidden_read = manager.read_tool("fixture-server", "hidden")
+            hidden_call = await manager.call_tool("fixture-server", "hidden")
+            return tools, result, hidden_search, hidden_read, hidden_call
         finally:
             await manager.close()
 
-    tools, result = asyncio.run(scenario())
+    tools, result, hidden_search, hidden_read, hidden_call = asyncio.run(scenario())
 
     assert [tool.name for tool in tools] == ["fixture_server_echo"]
     assert result.content[0].text == "hello"
+    assert hidden_search["total"] == 0
+    assert hidden_read["error"] == "tool_not_found"
+    assert hidden_call["error"] == "tool_not_found"
 
 
 def test_unavailable_server_is_omitted_without_blocking_native_tools(tmp_path, caplog):
@@ -537,6 +543,9 @@ def test_gateway_defaults_to_seven_discovery_tools(tmp_path):
     config.write_text('{"mcpServers": {}}')
     env = os.environ.copy()
     env["PYTHONPATH"] = str(Path(__file__).resolve().parents[1] / "src")
+    empty_config = tmp_path / "empty-config"
+    empty_config.mkdir()
+    env["MCP_CONFIG_ROOT"] = str(empty_config)
     env["MCP_SERVERS_CONFIG"] = str(config)
     env["ENABLE_OAUTH"] = "false"
     env["MCP_COMMAND_QUEUE_ENABLED"] = "false"
@@ -573,6 +582,9 @@ def test_discover_mode_keeps_queue_helpers_when_queue_is_enabled(tmp_path):
     config.write_text('{"mcpServers": {}}')
     env = os.environ.copy()
     env["PYTHONPATH"] = str(Path(__file__).resolve().parents[1] / "src")
+    empty_config = tmp_path / "empty-config"
+    empty_config.mkdir()
+    env["MCP_CONFIG_ROOT"] = str(empty_config)
     env["MCP_SERVERS_CONFIG"] = str(config)
     env["ENABLE_OAUTH"] = "false"
     env["MCP_TOOL_EXPOSURE_MODE"] = "discover"
@@ -590,23 +602,71 @@ def test_discover_mode_keeps_queue_helpers_when_queue_is_enabled(tmp_path):
     )
     names = set(json.loads(result.stdout.strip().splitlines()[-1]))
 
-    assert {"run_command", "get_command_state", "get_command_output", "stop_command"} <= names
+    assert {
+        "run_command",
+        "get_queue_state",
+        "get_command_state",
+        "get_command_output",
+        "get_command_log",
+        "stop_command",
+        "resolve_command_recovery",
+    } <= names
 
 
-def test_mcp_servers_list_can_refresh_registry(monkeypatch):
+def test_mcp_servers_list_can_schedule_registry_refresh(monkeypatch):
     import mcp_gateway
 
     events = []
-
-    async def refresh():
-        events.append("refresh")
-        return type("Diff", (), {"as_dict": lambda self: {"added_servers": ["new"]}})()
-
-    monkeypatch.setattr(mcp_gateway.proxy_manager, "refresh", refresh)
+    monkeypatch.setattr(
+        mcp_gateway.proxy_manager,
+        "request_refresh",
+        lambda: events.append("refresh") or {"status": "scheduled"},
+    )
     monkeypatch.setattr(mcp_gateway.proxy_manager, "list_servers", lambda: [{"name": "new", "status": "healthy"}])
 
     result = asyncio.run(mcp_gateway.mcp_servers_list(refresh=True))
 
     assert events == ["refresh"]
     assert result["servers"] == [{"name": "new", "status": "healthy"}]
-    assert result["refresh"]["added_servers"] == ["new"]
+    assert result["refresh"] == {"status": "scheduled"}
+
+
+def test_gateway_invalid_exposure_mode_falls_back_to_discover(tmp_path):
+    import os
+    import subprocess
+    from pathlib import Path
+
+    config = tmp_path / "mcp.json"
+    config.write_text('{"mcpServers": {}}')
+    empty_config = tmp_path / "empty-config"
+    empty_config.mkdir()
+    env = os.environ.copy()
+    env["PYTHONPATH"] = str(Path(__file__).resolve().parents[1] / "src")
+    env["MCP_CONFIG_ROOT"] = str(empty_config)
+    env["MCP_SERVERS_CONFIG"] = str(config)
+    env["ENABLE_OAUTH"] = "false"
+    env["MCP_COMMAND_QUEUE_ENABLED"] = "false"
+    env["MCP_TOOL_EXPOSURE_MODE"] = "ful"
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "import asyncio,json,mcp_gateway; print(json.dumps(sorted(t.name for t in asyncio.run(mcp_gateway.mcp.list_tools()))))",
+        ],
+        env=env,
+        text=True,
+        capture_output=True,
+        check=True,
+    )
+
+    names = json.loads(result.stdout.strip().splitlines()[-1])
+    assert names == [
+        "mcp_servers_list",
+        "mcp_tool_call",
+        "mcp_tool_read",
+        "mcp_tools_search",
+        "run_command",
+        "skills_read",
+        "skills_search",
+    ]
+    assert "falling back to 'discover'" in result.stderr

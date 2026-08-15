@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import os
 import tomllib
 from functools import lru_cache
@@ -8,6 +9,8 @@ from typing import Any, Callable
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 DEFAULT_CONFIG = BASE_DIR / 'config' / 'tools.toml'
+TOOL_EXPOSURE_MODES = ('discover', 'full')
+logger = logging.getLogger(__name__)
 DISCOVER_CORE_TOOLS = frozenset({
     'run_command',
     'skills_search',
@@ -26,12 +29,17 @@ DISCOVER_CORE_TOOLS = frozenset({
 })
 
 
+def normalize_tool_exposure_mode(value: str | None, *, source: str = 'MCP_TOOL_EXPOSURE_MODE') -> str:
+    mode = (value or 'discover').strip().lower()
+    if mode not in TOOL_EXPOSURE_MODES:
+        logger.warning("Invalid %s=%r; falling back to 'discover'", source, value)
+        return 'discover'
+    return mode
+
+
 def tool_exposure_mode(environ: dict[str, str] | None = None) -> str:
     env = os.environ if environ is None else environ
-    mode = env.get('MCP_TOOL_EXPOSURE_MODE', 'discover').strip().lower()
-    if mode not in {'discover', 'full'}:
-        raise ValueError(f'unsupported MCP_TOOL_EXPOSURE_MODE: {mode}')
-    return mode
+    return normalize_tool_exposure_mode(env.get('MCP_TOOL_EXPOSURE_MODE'))
 
 
 def is_tool_exposed(name: str, environ: dict[str, str] | None = None) -> bool:

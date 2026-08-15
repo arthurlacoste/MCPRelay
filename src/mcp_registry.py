@@ -21,6 +21,7 @@ from fastmcp.server.transforms import Namespace, ToolTransform
 from fastmcp.tools.tool_transform import ToolTransformConfig
 
 from command_guard import GuardService
+from tool_registry import normalize_tool_exposure_mode
 from mcp_proxy import (
     ProxyCallLoggingMiddleware,
     ProxyCommandGuardMiddleware,
@@ -130,13 +131,14 @@ class MCPRegistry:
             retry_max_seconds if retry_max_seconds is not None
             else self.environ.get("MCP_DISCOVERY_RETRY_MAX_SECONDS", 300)
         )
-        if tool_exposure_mode not in {"discover", "full"}:
-            raise ValueError(f"unsupported MCP tool exposure mode: {tool_exposure_mode}")
-        self.tool_exposure_mode = tool_exposure_mode
+        self.tool_exposure_mode = normalize_tool_exposure_mode(
+            tool_exposure_mode, source="MCPRegistry.tool_exposure_mode"
+        )
         self.gateway: FastMCP | None = None
         self.states: dict[str, ServerState] = {}
         self._lock = asyncio.Lock()
         self._watch_task: asyncio.Task | None = None
+        self._manual_refresh_task: asyncio.Task[RegistryDiff] | None = None
         self._closed = False
 
     def _event(self, action: str, payload: dict[str, Any]) -> None:
@@ -190,6 +192,24 @@ class MCPRegistry:
                 })
                 return RegistryDiff()
             return await self._refresh_locked(configured)
+
+    def request_refresh(self) -> dict[str, str]:
+        task = self._manual_refresh_task
+        if task is not None and not task.done():
+            return {"status": "running"}
+        task = asyncio.create_task(self.refresh(), name="mcp-registry-manual-refresh")
+        task.add_done_callback(self._manual_refresh_done)
+        self._manual_refresh_task = task
+        return {"status": "scheduled"}
+
+    @staticmethod
+    def _manual_refresh_done(task: asyncio.Task[RegistryDiff]) -> None:
+        try:
+            task.result()
+        except asyncio.CancelledError:
+            return
+        except Exception:
+            logger.exception("Manual MCP registry refresh failed")
 
     async def _refresh_locked(self, configured: dict[str, ProxyServerConfig]) -> RegistryDiff:
         diff = RegistryDiff()
@@ -274,7 +294,16 @@ class MCPRegistry:
             if self.event_logger:
                 proxy.add_middleware(ProxyCallLoggingMiddleware(server.name, self.event_logger))
 
-            catalog_tools = {tool.name: tool for tool in await proxy.list_tools()}
+            disabled_tool_names = {
+                transform.name or name
+                for name, transform in transforms.items()
+                if transform.enabled is False
+            }
+            catalog_tools = {
+                tool.name: tool
+                for tool in await proxy.list_tools()
+                if tool.name not in disabled_tool_names
+            }
             public_tools = {f"{server.prefix}_{name}" for name in catalog_tools}
             provider = FastMCPProvider(proxy).wrap_transform(Namespace(server.prefix))
             if self.tool_exposure_mode == "full":
@@ -364,7 +393,6 @@ class MCPRegistry:
                     await state.client.close()
         self._event("mcp_server_disconnected", {"server": state.name, "prefix": state.prefix})
 
-
     @staticmethod
     def _tool_summary(server: ServerState, tool: Any) -> dict[str, Any]:
         return {
@@ -409,8 +437,12 @@ class MCPRegistry:
                     continue
                 score = 0
                 if needle:
-                    if needle == tool_name:
+                    if needle == public_name:
+                        score += 120
+                    elif needle == tool_name:
                         score += 100
+                    elif needle in public_name:
+                        score += 70
                     elif needle in tool_name:
                         score += 60
                     score += sum(20 for token in tokens if token in tool_name)
@@ -438,7 +470,7 @@ class MCPRegistry:
         tool_name: str,
         arguments: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        while True:
+        for _attempt in range(2):
             state = self.states.get(server_name)
             if state is None or state.status not in {"healthy", "degraded"} or state.proxy is None:
                 return {"error": "server_not_available", "server": server_name}
@@ -449,6 +481,7 @@ class MCPRegistry:
                     continue
                 result = await state.proxy.call_tool(tool_name, arguments or {})
                 return result.model_dump(mode="json", by_alias=True, exclude_none=True)
+        return {"error": "catalog_changed", "server": server_name, "name": tool_name}
 
     def list_servers(self) -> list[dict[str, Any]]:
         return [self.states[name].as_dict() for name in sorted(self.states)]
