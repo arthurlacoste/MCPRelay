@@ -524,3 +524,68 @@ def test_proxy_reuses_single_initialized_stdio_session(tmp_path):
 
     assert [tool.name for tool in tools] == ["strict_echo"]
     assert result.content[0].text == "ok"
+
+
+def test_gateway_defaults_to_seven_discovery_tools(tmp_path):
+    import os
+    import subprocess
+    from pathlib import Path
+
+    config = tmp_path / "mcp.json"
+    config.write_text('{"mcpServers": {}}')
+    env = os.environ.copy()
+    env["PYTHONPATH"] = str(Path(__file__).resolve().parents[1] / "src")
+    env["MCP_SERVERS_CONFIG"] = str(config)
+    env["ENABLE_OAUTH"] = "false"
+    env["MCP_COMMAND_QUEUE_ENABLED"] = "false"
+    env.pop("MCP_TOOL_EXPOSURE_MODE", None)
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "import asyncio,json,mcp_gateway; print(json.dumps(sorted(t.name for t in asyncio.run(mcp_gateway.mcp.list_tools()))))",
+        ],
+        env=env,
+        text=True,
+        capture_output=True,
+        check=True,
+    )
+
+    assert json.loads(result.stdout.strip().splitlines()[-1]) == [
+        "mcp_servers_list",
+        "mcp_tool_call",
+        "mcp_tool_read",
+        "mcp_tools_search",
+        "run_command",
+        "skills_read",
+        "skills_search",
+    ]
+
+
+def test_discover_mode_keeps_queue_helpers_when_queue_is_enabled(tmp_path):
+    import os
+    import subprocess
+    from pathlib import Path
+
+    config = tmp_path / "mcp.json"
+    config.write_text('{"mcpServers": {}}')
+    env = os.environ.copy()
+    env["PYTHONPATH"] = str(Path(__file__).resolve().parents[1] / "src")
+    env["MCP_SERVERS_CONFIG"] = str(config)
+    env["ENABLE_OAUTH"] = "false"
+    env["MCP_TOOL_EXPOSURE_MODE"] = "discover"
+    env["MCP_COMMAND_QUEUE_ENABLED"] = "true"
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "import asyncio,json,mcp_gateway; print(json.dumps(sorted(t.name for t in asyncio.run(mcp_gateway.mcp.list_tools()))))",
+        ],
+        env=env,
+        text=True,
+        capture_output=True,
+        check=True,
+    )
+    names = set(json.loads(result.stdout.strip().splitlines()[-1]))
+
+    assert {"run_command", "get_command_state", "get_command_output", "stop_command"} <= names

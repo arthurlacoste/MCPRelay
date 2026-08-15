@@ -290,3 +290,65 @@ def test_negative_refresh_interval_is_clamped_to_zero(tmp_path):
     manager = MCPProxyManager(config, project_root=tmp_path, environ={}, refresh_interval_seconds=-5)
 
     assert manager.registry.refresh_interval_seconds == 0
+
+
+def test_discover_mode_keeps_proxy_tools_hidden_but_searchable_readable_and_callable(tmp_path):
+    from mcp_proxy import MCPProxyManager
+
+    server_script = tmp_path / "catalog_server.py"
+    server_script.write_text(
+        "from fastmcp import FastMCP\n"
+        "mcp = FastMCP('catalog')\n"
+        "@mcp.tool\n"
+        "def inspect_console(url: str, limit: int = 20) -> str:\n"
+        "    'Inspect browser console messages for a URL.'\n"
+        "    return f'{url}:{limit}'\n"
+        "@mcp.tool\n"
+        "def take_screenshot() -> str:\n"
+        "    'Capture the current browser page.'\n"
+        "    return 'shot'\n"
+        "mcp.run(transport='stdio')\n"
+    )
+    config = tmp_path / "mcp.json"
+    _write_config(config, {
+        "chrome-devtools": {
+            "command": sys.executable,
+            "args": [str(server_script)],
+            "toolPrefix": "chrome",
+        }
+    })
+    gateway = FastMCP("gateway")
+    manager = MCPProxyManager(
+        config,
+        project_root=tmp_path,
+        environ={},
+        refresh_interval_seconds=0,
+        tool_exposure_mode="discover",
+    )
+
+    async def scenario():
+        await manager.start(gateway)
+        try:
+            exposed = {tool.name for tool in await gateway.list_tools()}
+            found = manager.search_tools("chrome browser console errors", server_name="chrome-devtools")
+            read = manager.read_tool("chrome-devtools", "inspect_console")
+            called = await manager.call_tool(
+                "chrome-devtools",
+                "inspect_console",
+                {"url": "https://example.test", "limit": 3},
+            )
+            return exposed, found, read, called
+        finally:
+            await manager.close()
+
+    exposed, found, read, called = asyncio.run(scenario())
+
+    assert "chrome_inspect_console" not in exposed
+    assert found["matches"][0]["server"] == "chrome-devtools"
+    assert found["matches"][0]["name"] == "inspect_console"
+    assert "browser console" in found["matches"][0]["description"].lower()
+    assert "inputSchema" not in found["matches"][0]
+    assert "outputSchema" not in found["matches"][0]
+    assert read["inputSchema"]["required"] == ["url"]
+    assert read["inputSchema"]["properties"]["limit"]["default"] == 20
+    assert called["content"][0]["text"] == "https://example.test:3"

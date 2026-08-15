@@ -46,7 +46,9 @@ See the **[installation and usage guide](docs/installation.md)**, if you want to
 
 ### 🔌 Configurable MCP subservers
 
-Servers from `config/mcp.json` are exposed through Gate with namespaced tools. The included example configures Computer Use as `computer_use_*`.
+Gate uses **discovery mode by default** so large downstream MCP catalogues do not flood ChatGPT's initial tool context. The default surface stays at seven tools: `run_command`, `skills_search`, `skills_read`, `mcp_servers_list`, `mcp_tools_search`, `mcp_tool_read`, and `mcp_tool_call`.
+
+Downstream tools from `config/mcp.json` remain connected and searchable. Use `mcp_tools_search` to find one, `mcp_tool_read` to load its schema, then `mcp_tool_call` to invoke it. For legacy eager exposure, launch Gate with `gate --tools full` or set `MCP_TOOL_EXPOSURE_MODE=full`. If the optional command queue is enabled, its polling/control helpers are also exposed because `run_command` depends on them.
 
 [See more about the MCP implementation and subserver configuration.](docs/installation.md#configure-mcp-subservers)
 

@@ -153,6 +153,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="gate")
     parser.add_argument("--version", action="store_true")
     parser.add_argument("--noguard", action="store_true", help="disable command guards for this Gate launch only")
+    parser.add_argument("--tools", choices=("discover", "full"), help="tool exposure mode for this Gate launch")
     sub = parser.add_subparsers(dest="command")
     for name in ("start", "stop", "restart", "status", "secret", "setup", "renew-secret", "rollback", "doctor"):
         sub.add_parser(name)
@@ -171,7 +172,7 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def delegate_run_script(command: str | None = None, *, noguard: bool = False) -> int:
+def delegate_run_script(command: str | None = None, *, noguard: bool = False, tools: str | None = None) -> int:
     script = project_dir() / "run.sh"
     if not script.exists():
         print(f"Missing launcher: {script}")
@@ -182,10 +183,21 @@ def delegate_run_script(command: str | None = None, *, noguard: bool = False) ->
         if noguard:
             env["MCP_COMMAND_GUARD_PROVIDER"] = "disabled"
             print("WARNING: command guard disabled for this launch.")
+        if tools:
+            env["MCP_TOOL_EXPOSURE_MODE"] = tools
         return subprocess.run(args, cwd=project_dir(), env=env, check=False).returncode
     except KeyboardInterrupt:
         print("Interrupted.")
         return 130
+
+
+def launch_run_script(command: str | None = None, *, noguard: bool = False, tools: str | None = None) -> int:
+    kwargs = {}
+    if noguard:
+        kwargs["noguard"] = True
+    if tools:
+        kwargs["tools"] = tools
+    return delegate_run_script(command, **kwargs)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -207,7 +219,7 @@ def main(argv: list[str] | None = None) -> int:
                 confirm=confirm_default_yes,
                 stop=lambda: delegate_run_script("stop"),
                 update=lambda: perform_gate_update(args.edge, args.target_version),
-                start=lambda: delegate_run_script("start"),
+                start=lambda: launch_run_script("start", tools=args.tools),
             )
         except Exception as exc:
             from .migrations import MigrationError
@@ -227,7 +239,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if args.command == "restart":
         stopped = delegate_run_script("stop")
-        return stopped or delegate_run_script("start", noguard=args.noguard)
+        return stopped or launch_run_script("start", noguard=args.noguard, tools=args.tools)
     if args.command == "rollback":
         from .updater import rollback_release
         was_running = gate_is_running()
@@ -241,13 +253,13 @@ def main(argv: list[str] | None = None) -> int:
             state = rollback_release(paths())
         except Exception:
             if was_running:
-                delegate_run_script("start")
+                launch_run_script("start", tools=args.tools)
             raise
-        if was_running and delegate_run_script("start") != 0:
+        if was_running and launch_run_script("start", tools=args.tools) != 0:
             print("Rollback completed, but restart failed.")
             return 1
         print(f"Rolled back to Gate {state.active_version}")
         return 0
     if args.command in {"start", "stop", "setup", "renew-secret"}:
-        return delegate_run_script(args.command, noguard=args.noguard)
-    return delegate_run_script(noguard=args.noguard)
+        return launch_run_script(args.command, noguard=args.noguard, tools=args.tools)
+    return launch_run_script(noguard=args.noguard, tools=args.tools)

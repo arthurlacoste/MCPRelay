@@ -269,3 +269,27 @@ def test_log_command_renders_sanitized_realtime_snapshot(monkeypatch, tmp_path, 
     assert "RUNNING" in output
     assert "Run project tests" in output
     assert "[REDACTED]" in output
+
+
+def test_tools_mode_is_transient_and_defaults_to_discover(monkeypatch, tmp_path):
+    import gate_cli.main as main_module
+
+    project = tmp_path / "project"
+    project.mkdir()
+    script = project / "run.sh"
+    script.write_text("#!/usr/bin/env bash\n")
+    script.chmod(0o755)
+    captured = []
+    monkeypatch.setattr(main_module, "project_dir", lambda: project)
+    monkeypatch.setattr(
+        main_module.subprocess,
+        "run",
+        lambda *a, **k: captured.append(k["env"].get("MCP_TOOL_EXPOSURE_MODE")) or type("R", (), {"returncode": 0})(),
+    )
+
+    monkeypatch.delenv("MCP_TOOL_EXPOSURE_MODE", raising=False)
+    assert main_module.main(["start"]) == 0
+    assert main_module.main(["--tools", "full", "start"]) == 0
+    assert main_module.main(["--tools", "discover", "start"]) == 0
+
+    assert captured == [None, "full", "discover"]

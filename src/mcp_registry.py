@@ -79,6 +79,8 @@ class ServerState:
     config: ProxyServerConfig | None = field(default=None, repr=False)
     client: Client | None = field(default=None, repr=False)
     provider: Any = field(default=None, repr=False)
+    proxy: FastMCP | None = field(default=None, repr=False)
+    catalog_tools: dict[str, Any] = field(default_factory=dict, repr=False)
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -107,6 +109,7 @@ class MCPRegistry:
         refresh_interval_seconds: float | None = None,
         retry_initial_seconds: float | None = None,
         retry_max_seconds: float | None = None,
+        tool_exposure_mode: str = "full",
     ) -> None:
         self.project_root = Path(project_root)
         candidate = Path(config_path)
@@ -126,6 +129,9 @@ class MCPRegistry:
             retry_max_seconds if retry_max_seconds is not None
             else self.environ.get("MCP_DISCOVERY_RETRY_MAX_SECONDS", 300)
         )
+        if tool_exposure_mode not in {"discover", "full"}:
+            raise ValueError(f"unsupported MCP tool exposure mode: {tool_exposure_mode}")
+        self.tool_exposure_mode = tool_exposure_mode
         self.gateway: FastMCP | None = None
         self.states: dict[str, ServerState] = {}
         self._lock = asyncio.Lock()
@@ -254,21 +260,10 @@ class MCPRegistry:
                 transport.forward_incoming_headers = False
             client = StatefulProxyClient(transport, timeout=server.call_timeout, init_timeout=server.init_timeout)
             await client.__aenter__()
-            tools = await client.list_tools()
             # FastMCP providers resolve resources and prompts dynamically. Avoid
             # probing optional capabilities here because older servers may not
             # answer unsupported list methods.
             transforms = {name: ToolTransformConfig.model_validate(value) for name, value in raw_transforms.items()}
-            public_tools = {
-                f"{server.prefix}_{transforms[t.name].name or t.name}" if t.name in transforms else f"{server.prefix}_{t.name}"
-                for t in tools if t.name not in transforms or transforms[t.name].enabled
-            }
-            occupied = {tool.name for tool in await self.gateway.list_tools()}
-            if old:
-                occupied.difference_update(old.public_tools)
-            collisions = public_tools & occupied
-            if collisions:
-                raise ValueError(f"tool name collision: {', '.join(sorted(collisions))}")
 
             proxy = create_proxy(client, name=server.name)
             if transforms:
@@ -278,8 +273,17 @@ class MCPRegistry:
             if self.event_logger:
                 proxy.add_middleware(ProxyCallLoggingMiddleware(server.name, self.event_logger))
 
+            catalog_tools = {tool.name: tool for tool in await proxy.list_tools()}
+            public_tools = {f"{server.prefix}_{name}" for name in catalog_tools}
             provider = FastMCPProvider(proxy).wrap_transform(Namespace(server.prefix))
-            self.gateway.add_provider(provider)
+            if self.tool_exposure_mode == "full":
+                occupied = {tool.name for tool in await self.gateway.list_tools()}
+                if old:
+                    occupied.difference_update(old.public_tools)
+                collisions = public_tools & occupied
+                if collisions:
+                    raise ValueError(f"tool name collision: {', '.join(sorted(collisions))}")
+                self.gateway.add_provider(provider)
             state = ServerState(
                 name=server.name,
                 prefix=server.prefix,
@@ -294,6 +298,8 @@ class MCPRegistry:
                 config=server,
                 client=client,
                 provider=provider,
+                proxy=proxy,
+                catalog_tools=catalog_tools,
             )
             self.states[server.name] = state
             if old and old.provider in self.gateway.providers:
@@ -354,6 +360,87 @@ class MCPRegistry:
             with suppress(Exception, asyncio.CancelledError):
                 await state.client.close()
         self._event("mcp_server_disconnected", {"server": state.name, "prefix": state.prefix})
+
+
+    @staticmethod
+    def _tool_summary(server: ServerState, tool: Any) -> dict[str, Any]:
+        return {
+            "server": server.name,
+            "prefix": server.prefix,
+            "name": tool.name,
+            "title": tool.title,
+            "description": tool.description or "",
+        }
+
+    @staticmethod
+    def _tool_dict(server: ServerState, tool: Any) -> dict[str, Any]:
+        return {
+            **MCPRegistry._tool_summary(server, tool),
+            "inputSchema": tool.parameters,
+            "outputSchema": tool.output_schema,
+        }
+
+    def search_tools(
+        self,
+        query: str | None = None,
+        *,
+        server_name: str | None = None,
+        limit: int = 8,
+        offset: int = 0,
+    ) -> dict[str, Any]:
+        needle = (query or "").casefold().strip()
+        tokens = [token for token in needle.split() if token]
+        matches: list[tuple[int, str, str, dict[str, Any]]] = []
+        for name, state in self.states.items():
+            if server_name and name != server_name:
+                continue
+            if state.status not in {"healthy", "degraded"}:
+                continue
+            for tool in state.catalog_tools.values():
+                tool_name = tool.name.casefold()
+                title = (tool.title or "").casefold()
+                description = (tool.description or "").casefold()
+                haystack = f"{name.casefold()} {state.prefix.casefold()} {tool_name} {title} {description}"
+                if needle and not any(token in haystack for token in tokens):
+                    continue
+                score = 0
+                if needle:
+                    if needle == tool_name:
+                        score += 100
+                    elif needle in tool_name:
+                        score += 60
+                    score += sum(20 for token in tokens if token in tool_name)
+                    score += sum(8 for token in tokens if token in title)
+                    score += sum(2 for token in tokens if token in description)
+                matches.append((score, name, tool.name, self._tool_summary(state, tool)))
+        matches.sort(key=lambda item: (-item[0], item[1], item[2]))
+        start = max(0, offset)
+        size = min(max(1, limit), 100)
+        page = [item[3] for item in matches[start:start + size]]
+        return {"matches": page, "total": len(matches), "has_more": start + size < len(matches)}
+
+    def read_tool(self, server_name: str, tool_name: str) -> dict[str, Any]:
+        state = self.states.get(server_name)
+        if state is None or state.status not in {"healthy", "degraded"}:
+            return {"error": "server_not_available", "server": server_name}
+        tool = state.catalog_tools.get(tool_name)
+        if tool is None:
+            return {"error": "tool_not_found", "server": server_name, "name": tool_name}
+        return self._tool_dict(state, tool)
+
+    async def call_tool(
+        self,
+        server_name: str,
+        tool_name: str,
+        arguments: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        state = self.states.get(server_name)
+        if state is None or state.status not in {"healthy", "degraded"} or state.proxy is None:
+            return {"error": "server_not_available", "server": server_name}
+        if tool_name not in state.catalog_tools:
+            return {"error": "tool_not_found", "server": server_name, "name": tool_name}
+        result = await state.proxy.call_tool(tool_name, arguments or {})
+        return result.model_dump(mode="json", by_alias=True, exclude_none=True)
 
     def list_servers(self) -> list[dict[str, Any]]:
         return [self.states[name].as_dict() for name in sorted(self.states)]

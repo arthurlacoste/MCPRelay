@@ -198,6 +198,15 @@ class MCPProxyManager:
     async def remove_server(self, server_name: str) -> None:
         await self.registry.remove_server(server_name)
 
+    def search_tools(self, query: str | None = None, *, server_name: str | None = None, limit: int = 8, offset: int = 0):
+        return self.registry.search_tools(query, server_name=server_name, limit=limit, offset=offset)
+
+    def read_tool(self, server_name: str, tool_name: str):
+        return self.registry.read_tool(server_name, tool_name)
+
+    async def call_tool(self, server_name: str, tool_name: str, arguments: dict[str, Any] | None = None):
+        return await self.registry.call_tool(server_name, tool_name, arguments)
+
     def list_servers(self) -> list[dict[str, Any]]:
         return self.registry.list_servers()
 

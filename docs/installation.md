@@ -210,6 +210,7 @@ Edit `config/.env`:
 ```dotenv
 MCP_BASE_URL=https://example.ngrok-free.dev
 MCP_SERVERS_CONFIG=config/mcp.json
+MCP_TOOL_EXPOSURE_MODE=discover
 OAUTH_ISSUER=https://example.ngrok-free.dev/oauth
 LOCAL_OAUTH_ISSUER=https://example.ngrok-free.dev/oauth
 OAUTH_AUDIENCE=https://mcp.local
@@ -224,6 +225,30 @@ ENABLE_OAUTH=true
 ```
 
 All three public URL values must use the exact same ngrok domain. Do not append `/mcp` to `MCP_BASE_URL`.
+
+`MCP_TOOL_EXPOSURE_MODE=discover` is the default. Gate keeps downstream MCP servers connected but exposes only a small core tool surface to ChatGPT:
+
+```text
+run_command
+skills_search
+skills_read
+mcp_servers_list
+mcp_tools_search
+mcp_tool_read
+mcp_tool_call
+```
+
+The normal downstream flow is `mcp_tools_search` → `mcp_tool_read` → `mcp_tool_call`. This avoids putting every downstream JSON schema into the initial model context. `mcp_tools_search` searches server names, prefixes, tool names, titles, and descriptions. When the optional command queue is enabled, Gate also exposes the queue polling/control helpers required by `run_command`.
+
+For one launch with the historical eager behavior:
+
+```bash
+gate --tools full
+# or daemon mode
+gate --tools full start
+```
+
+For a persistent override, set `MCP_TOOL_EXPOSURE_MODE=full` in `config/.env`. Use `discover` to return to the default.
 
 Generate the access-secret hash without placing the secret in shell history:
 

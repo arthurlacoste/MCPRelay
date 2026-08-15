@@ -8,6 +8,34 @@ from typing import Any, Callable
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 DEFAULT_CONFIG = BASE_DIR / 'config' / 'tools.toml'
+DISCOVER_CORE_TOOLS = frozenset({
+    'run_command',
+    'skills_search',
+    'skills_read',
+    'mcp_servers_list',
+    'mcp_tools_search',
+    'mcp_tool_read',
+    'mcp_tool_call',
+    # Only registered when the optional command queue is enabled.
+    'get_queue_state',
+    'get_command_state',
+    'stop_command',
+    'get_command_output',
+    'get_command_log',
+    'resolve_command_recovery',
+})
+
+
+def tool_exposure_mode(environ: dict[str, str] | None = None) -> str:
+    env = os.environ if environ is None else environ
+    mode = env.get('MCP_TOOL_EXPOSURE_MODE', 'discover').strip().lower()
+    if mode not in {'discover', 'full'}:
+        raise ValueError(f'unsupported MCP_TOOL_EXPOSURE_MODE: {mode}')
+    return mode
+
+
+def is_tool_exposed(name: str, environ: dict[str, str] | None = None) -> bool:
+    return tool_exposure_mode(environ) == 'full' or name in DISCOVER_CORE_TOOLS
 
 
 @lru_cache(maxsize=1)
@@ -27,7 +55,7 @@ def is_tool_enabled(name: str, config: dict[str, Any] | None = None) -> bool:
 def configurable_tool(mcp, name: str | None = None, **tool_options: Any) -> Callable:
     def decorator(func):
         tool_name = name or func.__name__
-        if not is_tool_enabled(tool_name):
+        if not is_tool_enabled(tool_name) or not is_tool_exposed(tool_name):
             return func
         options = {'name': name, **tool_options} if name else tool_options
         return mcp.tool(**options)(func)
