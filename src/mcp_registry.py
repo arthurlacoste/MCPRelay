@@ -194,6 +194,8 @@ class MCPRegistry:
             return await self._refresh_locked(configured)
 
     def request_refresh(self) -> dict[str, str]:
+        if self._closed:
+            return {"status": "closed"}
         task = self._manual_refresh_task
         if task is not None and not task.done():
             return {"status": "running"}
@@ -492,6 +494,10 @@ class MCPRegistry:
 
     async def close(self) -> None:
         self._closed = True
+        if self._manual_refresh_task and not self._manual_refresh_task.done():
+            self._manual_refresh_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await self._manual_refresh_task
         if self._watch_task:
             self._watch_task.cancel()
             with suppress(asyncio.CancelledError):

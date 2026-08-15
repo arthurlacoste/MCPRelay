@@ -576,3 +576,40 @@ def test_call_tool_stops_after_two_stale_catalog_retries(tmp_path):
     result = asyncio.run(manager.call_tool("demo", "echo"))
 
     assert result == {"error": "catalog_changed", "server": "demo", "name": "echo"}
+
+
+def test_close_cancels_pending_manual_refresh_before_state_cleanup(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    from mcp_proxy import MCPProxyManager
+    from mcp_registry import RegistryDiff
+
+    config = tmp_path / "mcp.json"
+    _write_config(config, {})
+    manager = MCPProxyManager(config, project_root=tmp_path, environ={}, refresh_interval_seconds=0)
+    registry = manager.registry
+    started = asyncio.Event()
+    cancelled = asyncio.Event()
+
+    async def delayed_refresh():
+        started.set()
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            cancelled.set()
+            raise
+        registry.states["late"] = SimpleNamespace()
+        return RegistryDiff()
+
+    monkeypatch.setattr(registry, "refresh", delayed_refresh)
+
+    async def scenario():
+        manager.request_refresh()
+        await started.wait()
+        await manager.close()
+        await asyncio.sleep(0)
+        assert cancelled.is_set()
+        assert registry.states == {}
+        assert registry._manual_refresh_task.done()
+        assert manager.request_refresh() == {"status": "closed"}
+
+    asyncio.run(scenario())
