@@ -25,6 +25,31 @@ def test_gateway_environment_loads_external_env(tmp_path, monkeypatch):
     assert load_gateway_environment(tmp_path / "release")
     assert __import__("os").environ["GATE_EXTERNAL_ENV"] == "yes"
 
+
+def test_gateway_environment_disables_background_catalog_refresh_by_default(tmp_path, monkeypatch):
+    config = tmp_path / "config"
+    config.mkdir()
+    (config / ".env").write_text("GATE_EXTERNAL_ENV=yes\n")
+    monkeypatch.setenv("MCP_CONFIG_ROOT", str(config))
+    monkeypatch.delenv("MCP_DISCOVERY_REFRESH_INTERVAL_SECONDS", raising=False)
+
+    load_gateway_environment(tmp_path / "release")
+
+    assert __import__("os").environ["MCP_DISCOVERY_REFRESH_INTERVAL_SECONDS"] == "0"
+
+
+def test_gateway_environment_preserves_explicit_catalog_refresh_interval(tmp_path, monkeypatch):
+    config = tmp_path / "config"
+    config.mkdir()
+    (config / ".env").write_text("MCP_DISCOVERY_REFRESH_INTERVAL_SECONDS=15\n")
+    monkeypatch.setenv("MCP_CONFIG_ROOT", str(config))
+    monkeypatch.delenv("MCP_DISCOVERY_REFRESH_INTERVAL_SECONDS", raising=False)
+
+    load_gateway_environment(tmp_path / "release")
+
+    assert __import__("os").environ["MCP_DISCOVERY_REFRESH_INTERVAL_SECONDS"] == "15"
+
+
 def test_gateway_and_oauth_modules_use_gateway_paths_helper():
     root = Path(__file__).resolve().parents[1]
     gateway = (root / "src" / "mcp_gateway.py").read_text()
