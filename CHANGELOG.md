@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.1.33](https://github.com/spelcc/gate/compare/v0.1.32...v0.1.33) (2026-08-16)
+
+
+### Added
+
+* **cli:** add `gate connect ts` to prepare Tailscale for Gate ([#87](https://github.com/spelcc/gate/issues/87)) ([1340c53](https://github.com/spelcc/gate/commit/1340c53d04d0a814a3788842fa0688d2b46385cb))
+* **connect:** one-shot Cloudflare connect tunnel CLI ([#86](https://github.com/spelcc/gate/issues/86)) ([2060df6](https://github.com/spelcc/gate/commit/2060df68909aeb046d389ac452eded7034ab9d4c))
+* discover first-party Gate tools ([#85](https://github.com/spelcc/gate/issues/85)) ([aa88ae7](https://github.com/spelcc/gate/commit/aa88ae7349b54168128879ad3812fd839cb421d5))
+
+
+### Fixed
+
+* **connect:** harden Cloudflare connect setup ([#90](https://github.com/spelcc/gate/issues/90)) ([1fd69af](https://github.com/spelcc/gate/commit/1fd69af4c2c5886a2ebdbf6cc06cf3d0a57da8aa))
+* **ui:** use Gate icon and event purpose in page title ([#89](https://github.com/spelcc/gate/issues/89)) ([cc8facb](https://github.com/spelcc/gate/commit/cc8facb4004f6e8cec9f95d62e55d60565017576))
+
+
+### Documentation
+
+* add real-time calls interface screenshot to README ([#84](https://github.com/spelcc/gate/issues/84)) ([c9f5c60](https://github.com/spelcc/gate/commit/c9f5c6035e81cabb5c9313c9e136f44206aa9025))
+
 ## [0.1.32](https://github.com/spelcc/gate/compare/v0.1.31...v0.1.32) (2026-08-16)
 
 
