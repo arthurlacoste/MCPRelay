@@ -45,6 +45,7 @@ def test_authenticated_realtime_page_uses_split_inspector(tmp_path, monkeypatch)
     assert 'id="scroll-bottom"' in response.text
     assert 'id="mobile-buckets"' in response.text
     assert 'id="conversation-drawer"' in response.text
+    assert 'M21 12a9 9 0 1 1-2.64-6.36L21 8' in response.text
 
 
 def test_realtime_assets_are_authenticated(tmp_path, monkeypatch):
