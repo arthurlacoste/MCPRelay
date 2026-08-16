@@ -84,3 +84,37 @@ def test_widget_enables_queue_mode():
     assert snapshot["widget"] is True
     assert snapshot["queue"] is True
     assert "ui://gate/terminal.html" in snapshot["resources"]
+
+
+def test_gateway_monitors_first_party_tool_with_auto_conversation():
+    import asyncio
+    from fastmcp import Client
+    import mcp_gateway as mod
+
+    async def scenario():
+        async with Client(mod.mcp) as client:
+            await client.call_tool('skills_search', {'query': 'realtime-activity-no-match'})
+
+    asyncio.run(scenario())
+
+    calls = [item for item in mod.realtime_store.snapshot()['calls'] if item['tool'] == 'skills_search']
+    assert calls
+    assert calls[0]['kind'] == 'tool'
+    assert calls[0]['status'] == 'success'
+    assert calls[0]['conversation_id'].startswith('conv_auto_')
+    assert calls[0]['session_ref'].startswith('mcp_')
+
+
+def test_run_command_realtime_inherits_auto_conversation_from_mcp_session():
+    snapshot = gateway_snapshot(
+        {"MCP_COMMAND_QUEUE_ENABLED": "false"},
+        """
+        async with Client(mod.mcp) as client:
+            await client.call_tool('run_command', {'command': 'printf realtime-ok'})
+        run_calls = [call for call in mod.realtime_store.snapshot()['calls'] if call['tool'] == 'run_command']
+        print(json.dumps({'calls': run_calls}))
+        """,
+    )
+
+    assert snapshot['calls']
+    assert snapshot['calls'][0]['conversation_id'].startswith('conv_auto_')

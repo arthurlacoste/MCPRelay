@@ -71,6 +71,7 @@ class BlockingCommandRunner:
         cwd: str | Path | None = None,
         timeout_seconds: float = 300,
         purpose: str | None = None,
+        conversation_id: str | None = None,
     ) -> BlockingCommandResult:
         if not isinstance(command, str) or not command.strip():
             raise ValueError("command must be a non-empty string")
@@ -86,6 +87,7 @@ class BlockingCommandRunner:
             "status": "waiting",
             "command": display_command,
             "purpose": purpose,
+            "conversation_id": conversation_id,
             "created_at": created_at,
             "started_at": None,
             "finished_at": None,
