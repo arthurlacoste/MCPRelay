@@ -43,6 +43,11 @@ def test_realtime_assets_are_authenticated(tmp_path, monkeypatch):
     assert ".filter(matches)" in script.text
     assert "const start = timing(left).end" in script.text
     assert '<h3>Timing ›</h3>' in script.text
+    assert '<h3>Fields ›</h3>' in script.text
+    assert "call.payload || call.command" in script.text
+    assert "call.result || resultCache" in script.text
+    assert "function directoryLabel(path)" in script.text
+    assert "call.working_directory" in script.text
     assert 'class="badge-icon"' in script.text
     assert '<span>${formatDuration(range.duration)}</span>' in script.text
 

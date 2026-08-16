@@ -125,7 +125,8 @@ def test_discovery_call_is_displayed_as_real_downstream_tool():
     call = store.snapshot()["calls"][0]
     assert call["tool"] == "chrome-devtools.navigate_page"
     assert call["kind"] == "mcp"
-    assert "https://example.test" not in repr(call)
+    assert '"url": "https://example.test"' in call["payload"]
+    assert call["fields"]["url"] == "https://example.test"
 
 
 def test_command_state_activity_keeps_parent_execution_id():
@@ -148,6 +149,59 @@ def test_command_state_activity_keeps_parent_execution_id():
     call = store.snapshot()["calls"][0]
     assert call["parent_execution_id"] == "exec-parent"
     assert call["preview"] == "exec-parent"
+
+
+def test_tool_activity_keeps_raw_payload_result_and_common_fields():
+    from activity_monitor import GateActivityMiddleware
+
+    store = RealtimeCallStore()
+    mcp = FastMCP("activity-test")
+
+    @mcp.tool
+    def skills_search(query: str, limit: int = 8, offset: int = 0) -> dict:
+        return {"skills": ["irz-editorial"], "total": 1}
+
+    mcp.add_middleware(GateActivityMiddleware(store))
+
+    async def scenario():
+        async with Client(mcp) as client:
+            await client.call_tool("skills_search", {
+                "query": "IRZ editorial workflow article writing research publish",
+                "limit": 8,
+                "offset": 0,
+            })
+
+    asyncio.run(scenario())
+    call = store.snapshot()["calls"][0]
+    assert '"query": "IRZ editorial workflow article writing research publish"' in call["payload"]
+    assert '"irz-editorial"' in call["result"]
+    assert call["fields"] == {
+        "query": "IRZ editorial workflow article writing research publish",
+        "limit": "8",
+        "offset": "0",
+    }
+
+
+def test_tool_activity_extracts_working_directory():
+    from activity_monitor import GateActivityMiddleware
+
+    store = RealtimeCallStore()
+    mcp = FastMCP("activity-test")
+
+    @mcp.tool
+    def inspect(workdir: str) -> str:
+        return "ok"
+
+    mcp.add_middleware(GateActivityMiddleware(store))
+
+    async def scenario():
+        async with Client(mcp) as client:
+            await client.call_tool("inspect", {"workdir": "/projects/irz"})
+
+    asyncio.run(scenario())
+    call = store.snapshot()["calls"][0]
+    assert call["working_directory"] == "/projects/irz"
+    assert call["fields"]["workdir"] == "/projects/irz"
 
 
 def test_resources_and_prompts_are_monitored_as_semantic_activity():

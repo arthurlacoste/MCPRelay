@@ -63,6 +63,23 @@ def test_store_masks_secrets_and_terminal_controls_in_display_fields():
     assert "\x1b" not in item["purpose"]
 
 
+def test_store_redacts_and_bounds_generic_payload_and_result():
+    redactor = SecretRedactor(("top-secret-value",))
+    store = RealtimeCallStore(redact_text=redactor.redact_text)
+    activity_id = store.start_activity(
+        tool="skills_search",
+        payload={"query": "top-secret-value", "extra": "x" * 40_000},
+        fields={"query": "top-secret-value"},
+    )
+    store.finish_activity(activity_id, result={"token": "top-secret-value", "ok": True})
+
+    item = store.snapshot()["calls"][0]
+    assert "top-secret-value" not in item["payload"]
+    assert "top-secret-value" not in item["result"]
+    assert "top-secret-value" not in repr(item["fields"])
+    assert len(item["payload"]) == 32_000
+
+
 def test_recent_buffer_is_bounded_but_active_calls_remain():
     store = RealtimeCallStore(max_entries=2)
     now = datetime.now(UTC).isoformat()
@@ -155,6 +172,7 @@ def test_store_keeps_generic_activity_context_without_leaking_session_id():
         "conversation_id": "conv_auto_abc123",
         "session_ref": "mcp_123456789abc",
         "request_id": "req-42",
+        "cwd": "/projects/irz",
     })
 
     item = store.snapshot()["calls"][0]
@@ -162,6 +180,7 @@ def test_store_keeps_generic_activity_context_without_leaking_session_id():
     assert item["conversation_id"] == "conv_auto_abc123"
     assert item["session_ref"] == "mcp_123456789abc"
     assert item["request_id"] == "req-42"
+    assert item["working_directory"] == "/projects/irz"
 
 
 def test_activity_lifecycle_records_running_then_terminal_state():
