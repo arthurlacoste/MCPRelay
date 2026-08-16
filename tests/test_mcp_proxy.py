@@ -624,6 +624,8 @@ def test_mcp_servers_list_can_schedule_registry_refresh(monkeypatch):
     )
     monkeypatch.setattr(mcp_gateway.proxy_manager, "list_servers", lambda: [{"name": "new", "status": "healthy"}])
 
+    monkeypatch.setattr(mcp_gateway.proxy_manager, "refresh_status", lambda: {"status": "scheduled"})
+
     result = asyncio.run(mcp_gateway.mcp_servers_list(refresh=True))
 
     assert events == ["refresh"]
@@ -670,3 +672,20 @@ def test_gateway_invalid_exposure_mode_falls_back_to_discover(tmp_path):
         "skills_search",
     ]
     assert "falling back to 'discover'" in result.stderr
+
+
+def test_mcp_servers_list_surfaces_last_refresh_failure(monkeypatch):
+    import mcp_gateway
+
+    monkeypatch.setattr(mcp_gateway.proxy_manager, "list_servers", lambda: [])
+    monkeypatch.setattr(
+        mcp_gateway.proxy_manager,
+        "refresh_status",
+        lambda: {"status": "failed", "error": "JSONDecodeError reading config/mcp.json", "finished_at": "2026-08-16T05:00:00Z"},
+    )
+
+    result = asyncio.run(mcp_gateway.mcp_servers_list())
+
+    assert result["servers"] == []
+    assert result["refresh"]["status"] == "failed"
+    assert "JSONDecodeError" in result["refresh"]["error"]

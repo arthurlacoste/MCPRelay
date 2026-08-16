@@ -613,3 +613,43 @@ def test_close_cancels_pending_manual_refresh_before_state_cleanup(tmp_path, mon
         assert manager.request_refresh() == {"status": "closed"}
 
     asyncio.run(scenario())
+
+
+def test_registry_reads_tool_exposure_mode_from_environ_when_not_explicit(tmp_path):
+    from mcp_proxy import MCPProxyManager
+
+    config = tmp_path / "mcp.json"
+    _write_config(config, {})
+    manager = MCPProxyManager(
+        config,
+        project_root=tmp_path,
+        environ={"MCP_TOOL_EXPOSURE_MODE": "full"},
+        refresh_interval_seconds=0,
+    )
+
+    assert manager.registry.tool_exposure_mode == "full"
+
+
+def test_manual_refresh_status_records_global_config_failure(tmp_path):
+    from mcp_proxy import MCPProxyManager
+
+    config = tmp_path / "mcp.json"
+    _write_config(config, {})
+    manager = MCPProxyManager(config, project_root=tmp_path, environ={}, refresh_interval_seconds=0)
+
+    async def scenario():
+        gateway = FastMCP("gateway")
+        await manager.start(gateway)
+        config.write_text('{"mcpServers": ')
+        scheduled = manager.request_refresh()
+        await manager.registry._manual_refresh_task
+        status = manager.refresh_status()
+        await manager.close()
+        return scheduled, status
+
+    scheduled, status = asyncio.run(scenario())
+
+    assert scheduled == {"status": "scheduled"}
+    assert status["status"] == "failed"
+    assert "JSONDecodeError" in status["error"]
+    assert status["finished_at"].endswith("Z")

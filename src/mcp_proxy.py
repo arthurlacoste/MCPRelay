@@ -195,6 +195,9 @@ class MCPProxyManager:
     def request_refresh(self):
         return self.registry.request_refresh()
 
+    def refresh_status(self):
+        return self.registry.refresh_status()
+
     async def reload_server(self, server_name: str):
         return await self.registry.reload_server(server_name)
 

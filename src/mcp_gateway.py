@@ -360,10 +360,12 @@ def skills_create(
 
 @configurable_tool(mcp, title='List MCP servers', description='List configured MCP subservers and their health state. Set refresh=true to schedule a registry re-read.')
 async def mcp_servers_list(refresh: bool = False) -> dict:
-    result = {'servers': proxy_manager.list_servers()}
     if refresh:
-        result['refresh'] = proxy_manager.request_refresh()
-    return result
+        proxy_manager.request_refresh()
+    return {
+        'servers': proxy_manager.list_servers(),
+        'refresh': proxy_manager.refresh_status(),
+    }
 
 
 register_mcp_discovery_tools(mcp, proxy_manager)

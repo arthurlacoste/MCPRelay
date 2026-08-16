@@ -111,7 +111,7 @@ class MCPRegistry:
         refresh_interval_seconds: float | None = None,
         retry_initial_seconds: float | None = None,
         retry_max_seconds: float | None = None,
-        tool_exposure_mode: str = "discover",
+        tool_exposure_mode: str | None = None,
     ) -> None:
         self.project_root = Path(project_root)
         candidate = Path(config_path)
@@ -131,14 +131,21 @@ class MCPRegistry:
             retry_max_seconds if retry_max_seconds is not None
             else self.environ.get("MCP_DISCOVERY_RETRY_MAX_SECONDS", 300)
         )
+        configured_exposure_mode = (
+            tool_exposure_mode
+            if tool_exposure_mode is not None
+            else self.environ.get("MCP_TOOL_EXPOSURE_MODE")
+        )
         self.tool_exposure_mode = normalize_tool_exposure_mode(
-            tool_exposure_mode, source="MCPRegistry.tool_exposure_mode"
+            configured_exposure_mode, source="MCPRegistry.tool_exposure_mode"
         )
         self.gateway: FastMCP | None = None
         self.states: dict[str, ServerState] = {}
         self._lock = asyncio.Lock()
         self._watch_task: asyncio.Task | None = None
         self._manual_refresh_task: asyncio.Task[RegistryDiff] | None = None
+        self._manual_refresh_status: dict[str, Any] = {"status": "idle"}
+        self._last_refresh_error: str | None = None
         self._closed = False
 
     def _event(self, action: str, payload: dict[str, Any]) -> None:
@@ -186,12 +193,15 @@ class MCPRegistry:
             try:
                 configured = await self._load_configured()
             except ProxyConfigUnavailable as exc:
+                self._last_refresh_error = str(exc)
                 self._event("mcp_registry_refresh_skipped", {
                     "reason": str(exc),
                     "config_path": str(self.config_path),
                 })
                 return RegistryDiff()
-            return await self._refresh_locked(configured)
+            diff = await self._refresh_locked(configured)
+            self._last_refresh_error = None
+            return diff
 
     def request_refresh(self) -> dict[str, str]:
         if self._closed:
@@ -199,19 +209,52 @@ class MCPRegistry:
         task = self._manual_refresh_task
         if task is not None and not task.done():
             return {"status": "running"}
-        task = asyncio.create_task(self.refresh(), name="mcp-registry-manual-refresh")
-        task.add_done_callback(self._manual_refresh_done)
-        self._manual_refresh_task = task
+        self._manual_refresh_status = {
+            "status": "scheduled",
+            "requested_at": _iso(_utcnow()),
+        }
+        self._manual_refresh_task = asyncio.create_task(
+            self._run_manual_refresh(), name="mcp-registry-manual-refresh"
+        )
         return {"status": "scheduled"}
 
-    @staticmethod
-    def _manual_refresh_done(task: asyncio.Task[RegistryDiff]) -> None:
+    async def _run_manual_refresh(self) -> RegistryDiff:
+        self._manual_refresh_status = {
+            "status": "running",
+            "started_at": _iso(_utcnow()),
+        }
         try:
-            task.result()
+            diff = await self.refresh()
         except asyncio.CancelledError:
-            return
-        except Exception:
+            self._manual_refresh_status = {
+                "status": "cancelled",
+                "finished_at": _iso(_utcnow()),
+            }
+            raise
+        except Exception as exc:
             logger.exception("Manual MCP registry refresh failed")
+            self._manual_refresh_status = {
+                "status": "failed",
+                "error": f"{type(exc).__name__}: {exc}",
+                "finished_at": _iso(_utcnow()),
+            }
+            return RegistryDiff()
+        if self._last_refresh_error:
+            self._manual_refresh_status = {
+                "status": "failed",
+                "error": self._last_refresh_error,
+                "finished_at": _iso(_utcnow()),
+            }
+        else:
+            self._manual_refresh_status = {
+                "status": "completed",
+                "changed": diff.changed,
+                "finished_at": _iso(_utcnow()),
+            }
+        return diff
+
+    def refresh_status(self) -> dict[str, Any]:
+        return dict(self._manual_refresh_status)
 
     async def _refresh_locked(self, configured: dict[str, ProxyServerConfig]) -> RegistryDiff:
         diff = RegistryDiff()
