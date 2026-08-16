@@ -1,5 +1,6 @@
 const assert = require('node:assert/strict')
 const {
+  activityAgeMs,
   allocateDurationLevels,
   extendRunCommandsThroughStateCalls,
   focusMobileSearch,
@@ -11,6 +12,12 @@ const {
 } = require('../src/realtime_ui/trajectory.js')
 
 const at = milliseconds => new Date(Date.UTC(2026, 0, 1) + milliseconds).toISOString()
+
+const activityNow = Date.UTC(2026, 0, 1) + 60000
+assert.equal(activityAgeMs(activityNow - 5000, activityNow), 5000)
+assert.equal(activityAgeMs(activityNow - 60000, activityNow), 60000)
+assert.equal(activityAgeMs(activityNow - 90000, activityNow), 60000)
+assert.equal(activityAgeMs(activityNow + 1000, activityNow), 0)
 const call = (tool, id, start, end, extra = {}) => ({
   tool, execution_id: id, conversation_id: 'turn-1', kind: 'tool', status: 'success',
   started_at: at(start), finished_at: at(end), duration_ms: end - start, ...extra,

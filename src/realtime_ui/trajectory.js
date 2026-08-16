@@ -1,5 +1,6 @@
 const $ = selector => document.querySelector(selector)
 const THINKING_MIN_MS = 250
+const ACTIVITY_FADE_MS = 60000
 const BOTTOM_THRESHOLD_PX = 32
 const state = {
   calls: [], mode: 'duration', compact: false, showStates: false, showThinking: true,
@@ -13,6 +14,10 @@ function escapeHtml(value) {
   return String(value ?? '').replace(/[&<>"']/g, char => (
     { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]
   ))
+}
+
+function activityAgeMs(latest, now = Date.now()) {
+  return Math.min(ACTIVITY_FADE_MS, Math.max(0, now - latest))
 }
 
 function timestamp(value) {
@@ -234,9 +239,12 @@ function renderConversations() {
     const heading = directory !== previousDirectory
       ? `<div class="directory" title="${escapeHtml(directory)}">${escapeHtml(directoryLabel(directory))}</div>` : ''
     previousDirectory = directory
-    return [heading, `<button class="conversation ${state.conversation === model.key ? 'active' : ''}"
+    const activityAge = activityAgeMs(model.latest)
+    const activity = activityAge < ACTIVITY_FADE_MS
+      ? `<span class="conversation-activity" style="--activity-delay:-${activityAge}ms" aria-hidden="true"></span>` : ''
+    return [heading, `<div class="conversation-row">${activity}<button class="conversation ${state.conversation === model.key ? 'active' : ''}"
       data-key="${escapeHtml(model.key)}" title="${escapeHtml(model.purpose)}">${escapeHtml(model.purpose)}
-      <small>${escapeHtml(model.key)} · ${model.count} calls · ${formatTime(model.latest)}</small></button>`]
+      <small>${escapeHtml(model.key)} · ${model.count} calls · ${formatTime(model.latest)}</small></button></div>`]
   })
   $('#conversations').innerHTML = [
     `<button class="conversation ${state.conversation === null ? 'active' : ''}" data-key="">All calls<small>${state.calls.length} calls</small></button>`,
@@ -624,7 +632,7 @@ setInterval(() => { if (state.calls.some(call => ['running', 'starting'].include
 }
 
 if (typeof module !== 'undefined') module.exports = {
-  allocateDurationLevels, extendRunCommandsThroughStateCalls, focusMobileSearch, handleDrawerKeydown,
+  activityAgeMs, allocateDurationLevels, extendRunCommandsThroughStateCalls, focusMobileSearch, handleDrawerKeydown,
   organizeLedgerCalls, resolveStateParent, runParentContext, syntheticThinking,
   syncConversationDrawerA11y, timing, toggleConversationDrawer,
 }

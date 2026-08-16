@@ -20,6 +20,11 @@ button { color: inherit; }
 .drawer-head button { display: none; }
 #conversations { display: grid; gap: 4px; }
 .directory { margin: 14px 12px 2px; overflow: hidden; color: var(--caption); font-size: 10px; font-weight: 700; letter-spacing: .06em; text-overflow: ellipsis; text-transform: uppercase; white-space: nowrap; }
+.conversation-row { position: relative; min-width: 0; }
+.conversation-activity { position: absolute; z-index: 2; top: 50%; left: -7px; width: 9px; height: 9px; border-radius: 50%; background: #39b54a; pointer-events: none; transform: translateY(-50%); animation: conversation-activity-fade 60s linear both; animation-delay: var(--activity-delay); }
+.conversation-activity::after { position: absolute; inset: -5px; border-radius: 50%; background: rgb(57 181 74 / 24%); content: ""; animation: conversation-activity-halo 60s linear both; animation-delay: var(--activity-delay); }
+@keyframes conversation-activity-fade { from { opacity: 1; } to { opacity: 0; } }
+@keyframes conversation-activity-halo { from { opacity: 1; transform: scale(1); } to { opacity: 0; transform: scale(1.8); } }
 .conversation { width: 100%; padding: 10px 12px; overflow: hidden; border: 0; border-radius: 8px; background: transparent; cursor: pointer; text-align: left; text-overflow: ellipsis; white-space: nowrap; }
 .conversation:hover { background: #eef0f3; }
 .conversation.active { background: #e6e8ec; }
