@@ -17,6 +17,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from environment_config import gateway_paths, load_gateway_environment
 from oauth_access_gate import OAuthAccessGate, client_address, login_page, trusted_proxy_networks
 from http_activity_monitor import OAuthActivityMiddleware, set_activity_observer
+from request_body_limit import RequestBodyLimitMiddleware
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 load_gateway_environment(BASE_DIR)
@@ -38,38 +39,12 @@ TRUSTED_PROXY_NETWORKS = trusted_proxy_networks(os.getenv("OAUTH_TRUSTED_PROXY_N
 
 MAX_AUTHORIZATION_BODY_BYTES = 4096
 
-
-
-class AuthorizationBodyLimitMiddleware:
-    def __init__(self, application):
-        self.application = application
-
-    async def __call__(self, scope, receive, send):
-        if scope["type"] != "http" or scope["method"] != "POST" or scope["path"] != "/oauth/authorize":
-            return await self.application(scope, receive, send)
-        body = bytearray()
-        more_body = True
-        while more_body:
-            message = await receive()
-            body.extend(message.get("body", b""))
-            if len(body) > MAX_AUTHORIZATION_BODY_BYTES:
-                response = JSONResponse({"error": "request_too_large"}, status_code=413)
-                return await response(scope, receive, send)
-            more_body = message.get("more_body", False)
-        sent = False
-
-        async def replay():
-            nonlocal sent
-            if sent:
-                return {"type": "http.request", "body": b"", "more_body": False}
-            sent = True
-            return {"type": "http.request", "body": bytes(body), "more_body": False}
-
-        return await self.application(scope, replay, send)
-
-
 app = FastAPI(title="Lightweight MCP OAuth Server")
-app.add_middleware(AuthorizationBodyLimitMiddleware)
+app.add_middleware(
+    RequestBodyLimitMiddleware,
+    path="/oauth/authorize",
+    max_bytes=MAX_AUTHORIZATION_BODY_BYTES,
+)
 app.add_middleware(OAuthActivityMiddleware)
 access_gate = OAuthAccessGate()
 

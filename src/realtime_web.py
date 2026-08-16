@@ -10,42 +10,11 @@ from fastapi import Form, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 
 from realtime_calls import RealtimeCallStore, read_call_log
+from request_body_limit import RequestBodyLimitMiddleware
 
 SESSION_COOKIE = "gate_rt_session"
 UI_DIR = Path(__file__).resolve().parent / "realtime_ui"
 MAX_LOGIN_BODY_BYTES = 4096
-
-
-class RealtimeLoginBodyLimitMiddleware:
-    def __init__(self, application):
-        self.application = application
-
-    async def __call__(self, scope, receive, send):
-        if (
-            scope["type"] != "http"
-            or scope["method"] != "POST"
-            or scope["path"] != "/rt/login"
-        ):
-            return await self.application(scope, receive, send)
-        body = bytearray()
-        more_body = True
-        while more_body:
-            message = await receive()
-            body.extend(message.get("body", b""))
-            if len(body) > MAX_LOGIN_BODY_BYTES:
-                response = JSONResponse({"error": "request_too_large"}, status_code=413)
-                return await response(scope, receive, send)
-            more_body = message.get("more_body", False)
-        sent = False
-
-        async def replay():
-            nonlocal sent
-            if sent:
-                return {"type": "http.request", "body": b"", "more_body": False}
-            sent = True
-            return {"type": "http.request", "body": bytes(body), "more_body": False}
-
-        return await self.application(scope, replay, send)
 
 
 def _token_from_request(request: Request) -> str | None:
@@ -94,7 +63,11 @@ def _login_page(error: str = "") -> str:
 
 
 def register_realtime_routes(app, store: RealtimeCallStore, logs_dir: Path) -> None:
-    app.add_middleware(RealtimeLoginBodyLimitMiddleware)
+    app.add_middleware(
+        RequestBodyLimitMiddleware,
+        path="/rt/login",
+        max_bytes=MAX_LOGIN_BODY_BYTES,
+    )
 
     @app.get("/rt")
     def realtime_page(request: Request):
