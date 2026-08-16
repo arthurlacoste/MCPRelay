@@ -30,6 +30,9 @@ os.environ["OAUTH_ACCESS_SECRET_HASH"] = PasswordHasher().hash("correct horse ba
 os.environ["OAUTH_LOGIN_MAX_ATTEMPTS"] = "5"
 os.environ["MCP_COMMAND_QUEUE_ENABLED"] = "true"
 os.environ["MCP_WIDGET_ENABLED"] = "false"
+# Legacy feature tests exercise the historical eager surface explicitly.
+# Dedicated discovery tests verify the production default with this override removed.
+os.environ["MCP_TOOL_EXPOSURE_MODE"] = "full"
 
 # Test commands can be launched from a running Gate instance, including
 # the MJ reviewer itself. Never inherit its live tunnel/runtime state.

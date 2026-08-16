@@ -134,11 +134,15 @@ def test_update_command_uses_lifecycle_helpers(monkeypatch, tmp_path, capsys):
     events = []
     monkeypatch.setattr(main_module, "gate_is_running", lambda: True)
     monkeypatch.setattr(main_module, "confirm_default_yes", lambda prompt: events.append("confirm") or True)
-    monkeypatch.setattr(main_module, "delegate_run_script", lambda command=None: events.append(command or "interactive") or 0)
+    monkeypatch.setattr(
+        main_module,
+        "delegate_run_script",
+        lambda command=None, **kwargs: events.append((command or "interactive", kwargs.get("tools"))) or 0,
+    )
     monkeypatch.setattr(main_module, "perform_gate_update", lambda edge, target_version=None: ("0.2.0", True, "- New CLI"))
 
-    assert main_module.main(["update"]) == 0
-    assert events == ["confirm", "stop", "start"]
+    assert main_module.main(["--tools", "full", "update"]) == 0
+    assert events == ["confirm", ("stop", None), ("start", "full")]
     assert "New CLI" in capsys.readouterr().out
 
 def test_status_reports_running_when_pid_is_alive(monkeypatch, tmp_path, capsys):
@@ -171,11 +175,15 @@ def test_rollback_running_gate_prompts_stop_and_restart(monkeypatch, tmp_path):
     events = []
     monkeypatch.setattr(main_module, "gate_is_running", lambda: True)
     monkeypatch.setattr(main_module, "confirm_default_yes", lambda prompt: events.append("confirm") or True)
-    monkeypatch.setattr(main_module, "delegate_run_script", lambda command=None: events.append(command) or 0)
+    monkeypatch.setattr(
+        main_module,
+        "delegate_run_script",
+        lambda command=None, **kwargs: events.append((command, kwargs.get("tools"))) or 0,
+    )
     monkeypatch.setattr("gate_cli.updater.rollback_release", lambda paths: GateState(active_version="0.1.0"))
 
-    assert main_module.main(["rollback"]) == 0
-    assert events == ["confirm", "stop", "start"]
+    assert main_module.main(["--tools", "full", "rollback"]) == 0
+    assert events == ["confirm", ("stop", None), ("start", "full")]
 
 def test_delegate_run_script_swallows_keyboard_interrupt(monkeypatch, tmp_path, capsys):
     import gate_cli.main as main_module
@@ -269,3 +277,73 @@ def test_log_command_renders_sanitized_realtime_snapshot(monkeypatch, tmp_path, 
     assert "RUNNING" in output
     assert "Run project tests" in output
     assert "[REDACTED]" in output
+
+
+def test_tools_mode_propagates_to_restart(monkeypatch):
+    import gate_cli.main as main_module
+
+    events = []
+    monkeypatch.setattr(
+        main_module,
+        "delegate_run_script",
+        lambda command=None, **kwargs: events.append((command, kwargs.get("tools"))) or 0,
+    )
+
+    assert main_module.main(["--tools", "full", "restart"]) == 0
+    assert events == [("stop", None), ("start", "full")]
+
+
+def test_tools_mode_propagates_to_rollback_recovery_restart(monkeypatch):
+    import pytest
+    import gate_cli.main as main_module
+
+    events = []
+    monkeypatch.setattr(main_module, "gate_is_running", lambda: True)
+    monkeypatch.setattr(main_module, "confirm_default_yes", lambda prompt: True)
+    monkeypatch.setattr(
+        main_module,
+        "delegate_run_script",
+        lambda command=None, **kwargs: events.append((command, kwargs.get("tools"))) or 0,
+    )
+    monkeypatch.setattr(
+        "gate_cli.updater.rollback_release",
+        lambda paths: (_ for _ in ()).throw(RuntimeError("rollback failed")),
+    )
+
+    with pytest.raises(RuntimeError, match="rollback failed"):
+        main_module.main(["--tools", "full", "rollback"])
+    assert events == [("stop", None), ("start", "full")]
+
+
+def test_launch_run_script_rejects_unknown_tool_mode():
+    import pytest
+    import gate_cli.main as main_module
+
+    with pytest.raises(ValueError, match="unsupported tool exposure mode"):
+        main_module.launch_run_script("start", tools="ful")
+
+
+def test_tools_mode_is_transient_and_defaults_to_discover(monkeypatch, tmp_path):
+    import gate_cli.main as main_module
+
+    project = tmp_path / "project"
+    project.mkdir()
+    script = project / "run.sh"
+    script.write_text("#!/usr/bin/env bash\n")
+    script.chmod(0o755)
+    captured = []
+    monkeypatch.setattr(main_module, "project_dir", lambda: project)
+    monkeypatch.setattr(
+        main_module.subprocess,
+        "run",
+        lambda *a, **k: captured.append(k["env"].get("MCP_TOOL_EXPOSURE_MODE")) or type("R", (), {"returncode": 0})(),
+    )
+
+    monkeypatch.delenv("MCP_TOOL_EXPOSURE_MODE", raising=False)
+    assert main_module.main(["start"]) == 0
+    assert main_module.main(["--tools", "full", "start"]) == 0
+    assert main_module.main(["--tools", "discover", "start"]) == 0
+    assert main_module.main(["start"]) == 0
+
+    assert captured == [None, "full", "discover", None]
+    assert "MCP_TOOL_EXPOSURE_MODE" not in os.environ

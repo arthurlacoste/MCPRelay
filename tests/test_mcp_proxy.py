@@ -124,21 +124,27 @@ def test_manager_exposes_enabled_stdio_tools_with_namespace(tmp_path):
         }
     }))
     gateway = FastMCP("gateway")
-    manager = MCPProxyManager(config_path, project_root=tmp_path, environ={})
+    manager = MCPProxyManager(config_path, project_root=tmp_path, environ={}, tool_exposure_mode="full")
 
     async def scenario():
         await manager.start(gateway)
         try:
             tools = await gateway.list_tools()
             result = await gateway.call_tool("fixture_server_echo", {"text": "hello"})
-            return tools, result
+            hidden_search = manager.search_tools("hidden")
+            hidden_read = manager.read_tool("fixture-server", "hidden")
+            hidden_call = await manager.call_tool("fixture-server", "hidden")
+            return tools, result, hidden_search, hidden_read, hidden_call
         finally:
             await manager.close()
 
-    tools, result = asyncio.run(scenario())
+    tools, result, hidden_search, hidden_read, hidden_call = asyncio.run(scenario())
 
     assert [tool.name for tool in tools] == ["fixture_server_echo"]
     assert result.content[0].text == "hello"
+    assert hidden_search["total"] == 0
+    assert hidden_read["error"] == "tool_not_found"
+    assert hidden_call["error"] == "tool_not_found"
 
 
 def test_unavailable_server_is_omitted_without_blocking_native_tools(tmp_path, caplog):
@@ -154,7 +160,7 @@ def test_unavailable_server_is_omitted_without_blocking_native_tools(tmp_path, c
     def native() -> str:
         return "ok"
 
-    manager = MCPProxyManager(config_path, project_root=tmp_path, environ={})
+    manager = MCPProxyManager(config_path, project_root=tmp_path, environ={}, tool_exposure_mode="full")
 
     async def scenario():
         await manager.start(gateway)
@@ -191,6 +197,7 @@ def test_proxied_calls_emit_technical_log_without_arguments(tmp_path):
         project_root=tmp_path,
         environ={},
         event_logger=lambda action, payload: events.append((action, payload)),
+        tool_exposure_mode="full",
     )
 
     async def scenario():
@@ -230,7 +237,7 @@ def test_proxy_namespaces_resources_templates_and_prompts(tmp_path):
         "mcpServers": {"components": {"command": sys.executable, "args": [str(server_script)]}}
     }))
     gateway = FastMCP("gateway")
-    manager = MCPProxyManager(config_path, project_root=tmp_path, environ={})
+    manager = MCPProxyManager(config_path, project_root=tmp_path, environ={}, tool_exposure_mode="full")
 
     async def scenario():
         await manager.start(gateway)
@@ -272,6 +279,7 @@ def test_proxied_failures_emit_error_log(tmp_path):
         project_root=tmp_path,
         environ={},
         event_logger=lambda action, payload: events.append((action, payload)),
+        tool_exposure_mode="full",
     )
 
     async def scenario():
@@ -305,7 +313,7 @@ def test_initialization_timeout_omits_stalled_server_quickly(tmp_path):
         }
     }))
     gateway = FastMCP("gateway")
-    manager = MCPProxyManager(config_path, project_root=tmp_path, environ={})
+    manager = MCPProxyManager(config_path, project_root=tmp_path, environ={}, tool_exposure_mode="full")
 
     started = monotonic()
     asyncio.run(manager.start(gateway))
@@ -333,7 +341,7 @@ def test_namespace_collision_keeps_first_server(tmp_path, caplog):
         "mcpServers": {"same-name": entry, "same_name": entry}
     }))
     gateway = FastMCP("gateway")
-    manager = MCPProxyManager(config_path, project_root=tmp_path, environ={})
+    manager = MCPProxyManager(config_path, project_root=tmp_path, environ={}, tool_exposure_mode="full")
 
     async def scenario():
         await manager.start(gateway)
@@ -377,7 +385,7 @@ def test_http_proxy_uses_configured_headers_without_forwarding_gateway_authoriza
             }
         }
     }))
-    manager = MCPProxyManager(config_path, project_root=tmp_path, environ={})
+    manager = MCPProxyManager(config_path, project_root=tmp_path, environ={}, tool_exposure_mode="full")
 
     async def wait_for_port(port: int) -> None:
         for _ in range(100):
@@ -509,7 +517,7 @@ def test_proxy_reuses_single_initialized_stdio_session(tmp_path):
         }
     }))
     gateway = FastMCP("gateway")
-    manager = MCPProxyManager(config_path, project_root=tmp_path, environ={})
+    manager = MCPProxyManager(config_path, project_root=tmp_path, environ={}, tool_exposure_mode="full")
 
     async def scenario():
         await manager.start(gateway)
@@ -524,3 +532,160 @@ def test_proxy_reuses_single_initialized_stdio_session(tmp_path):
 
     assert [tool.name for tool in tools] == ["strict_echo"]
     assert result.content[0].text == "ok"
+
+
+def test_gateway_defaults_to_seven_discovery_tools(tmp_path):
+    import os
+    import subprocess
+    from pathlib import Path
+
+    config = tmp_path / "mcp.json"
+    config.write_text('{"mcpServers": {}}')
+    env = os.environ.copy()
+    env["PYTHONPATH"] = str(Path(__file__).resolve().parents[1] / "src")
+    empty_config = tmp_path / "empty-config"
+    empty_config.mkdir()
+    env["MCP_CONFIG_ROOT"] = str(empty_config)
+    env["MCP_SERVERS_CONFIG"] = str(config)
+    env["ENABLE_OAUTH"] = "false"
+    env["MCP_COMMAND_QUEUE_ENABLED"] = "false"
+    env.pop("MCP_TOOL_EXPOSURE_MODE", None)
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "import asyncio,json,mcp_gateway; print(json.dumps(sorted(t.name for t in asyncio.run(mcp_gateway.mcp.list_tools()))))",
+        ],
+        env=env,
+        text=True,
+        capture_output=True,
+        check=True,
+    )
+
+    assert json.loads(result.stdout.strip().splitlines()[-1]) == [
+        "mcp_servers_list",
+        "mcp_tool_call",
+        "mcp_tool_read",
+        "mcp_tools_search",
+        "run_command",
+        "skills_read",
+        "skills_search",
+    ]
+
+
+def test_discover_mode_keeps_queue_helpers_when_queue_is_enabled(tmp_path):
+    import os
+    import subprocess
+    from pathlib import Path
+
+    config = tmp_path / "mcp.json"
+    config.write_text('{"mcpServers": {}}')
+    env = os.environ.copy()
+    env["PYTHONPATH"] = str(Path(__file__).resolve().parents[1] / "src")
+    empty_config = tmp_path / "empty-config"
+    empty_config.mkdir()
+    env["MCP_CONFIG_ROOT"] = str(empty_config)
+    env["MCP_SERVERS_CONFIG"] = str(config)
+    env["ENABLE_OAUTH"] = "false"
+    env["MCP_TOOL_EXPOSURE_MODE"] = "discover"
+    env["MCP_COMMAND_QUEUE_ENABLED"] = "true"
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "import asyncio,json,mcp_gateway; print(json.dumps(sorted(t.name for t in asyncio.run(mcp_gateway.mcp.list_tools()))))",
+        ],
+        env=env,
+        text=True,
+        capture_output=True,
+        check=True,
+    )
+    names = set(json.loads(result.stdout.strip().splitlines()[-1]))
+
+    assert {
+        "run_command",
+        "get_queue_state",
+        "get_command_state",
+        "get_command_output",
+        "get_command_log",
+        "stop_command",
+        "resolve_command_recovery",
+    } <= names
+
+
+def test_mcp_servers_list_can_schedule_registry_refresh(monkeypatch):
+    import mcp_gateway
+
+    events = []
+    monkeypatch.setattr(
+        mcp_gateway.proxy_manager,
+        "request_refresh",
+        lambda: events.append("refresh") or {"status": "scheduled"},
+    )
+    monkeypatch.setattr(mcp_gateway.proxy_manager, "list_servers", lambda: [{"name": "new", "status": "healthy"}])
+
+    monkeypatch.setattr(mcp_gateway.proxy_manager, "refresh_status", lambda: {"status": "scheduled"})
+
+    result = asyncio.run(mcp_gateway.mcp_servers_list(refresh=True))
+
+    assert events == ["refresh"]
+    assert result["servers"] == [{"name": "new", "status": "healthy"}]
+    assert result["refresh"] == {"status": "scheduled"}
+
+
+def test_gateway_invalid_exposure_mode_falls_back_to_discover(tmp_path):
+    import os
+    import subprocess
+    from pathlib import Path
+
+    config = tmp_path / "mcp.json"
+    config.write_text('{"mcpServers": {}}')
+    empty_config = tmp_path / "empty-config"
+    empty_config.mkdir()
+    env = os.environ.copy()
+    env["PYTHONPATH"] = str(Path(__file__).resolve().parents[1] / "src")
+    env["MCP_CONFIG_ROOT"] = str(empty_config)
+    env["MCP_SERVERS_CONFIG"] = str(config)
+    env["ENABLE_OAUTH"] = "false"
+    env["MCP_COMMAND_QUEUE_ENABLED"] = "false"
+    env["MCP_TOOL_EXPOSURE_MODE"] = "ful"
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "import asyncio,json,mcp_gateway; print(json.dumps(sorted(t.name for t in asyncio.run(mcp_gateway.mcp.list_tools()))))",
+        ],
+        env=env,
+        text=True,
+        capture_output=True,
+        check=True,
+    )
+
+    names = json.loads(result.stdout.strip().splitlines()[-1])
+    assert names == [
+        "mcp_servers_list",
+        "mcp_tool_call",
+        "mcp_tool_read",
+        "mcp_tools_search",
+        "run_command",
+        "skills_read",
+        "skills_search",
+    ]
+    assert "falling back to 'discover'" in result.stderr
+
+
+def test_mcp_servers_list_surfaces_last_refresh_failure(monkeypatch):
+    import mcp_gateway
+
+    monkeypatch.setattr(mcp_gateway.proxy_manager, "list_servers", lambda: [])
+    monkeypatch.setattr(
+        mcp_gateway.proxy_manager,
+        "refresh_status",
+        lambda: {"status": "failed", "error": "JSONDecodeError reading config/mcp.json", "finished_at": "2026-08-16T05:00:00Z"},
+    )
+
+    result = asyncio.run(mcp_gateway.mcp_servers_list())
+
+    assert result["servers"] == []
+    assert result["refresh"]["status"] == "failed"
+    assert "JSONDecodeError" in result["refresh"]["error"]

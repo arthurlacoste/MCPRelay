@@ -24,19 +24,31 @@ See the **[installation and usage guide](docs/installation.md)**, if you want to
 
 ## 🛠️ Available MCP Tools
 
+Gate starts in **discover mode**. Only seven tools are exposed by default:
+
+| Tool | Description |
+| --- | --- |
+| `run_command` | Execute a local shell command |
+| `skills_search` | Search the local Agent Skills catalogue |
+| `skills_read` | Read a selected Agent Skill |
+| `mcp_servers_list` | List downstream MCP servers, or refresh their registry |
+| `mcp_tools_search` | Search tools across downstream MCP servers |
+| `mcp_tool_read` | Load the schema for one discovered MCP tool |
+| `mcp_tool_call` | Invoke one discovered MCP tool |
+
+Additional first-party tools and runtime-specific helpers may be available outside this default surface. See the [installation and usage guide](docs/installation.md#configure-the-gateway) for exposure modes and configuration.
+
 ### 💻 Commands
 
-| Tool          | Description                            |
-| ------------- | -------------------------------------- |
-| `run_command` | Execute a shell command with streaming |
+`run_command` stays directly exposed because it is Gate's primary local execution tool.
 
-### 🔐 Authentication
+### 🔐 Authentication (`full` mode)
 
 | Tool          | Description                              |
 | ------------- | ---------------------------------------- |
 | `auth_status` | OAuth status: issuer, audience, base_url |
 
-### 📁 File Sharing
+### 📁 File Sharing (`full` mode)
 
 | Tool                 | Description                   |
 | -------------------- | ----------------------------- |
@@ -46,7 +58,9 @@ See the **[installation and usage guide](docs/installation.md)**, if you want to
 
 ### 🔌 Configurable MCP subservers
 
-Servers from `config/mcp.json` are exposed through Gate with namespaced tools. The included example configures Computer Use as `computer_use_*`.
+Gate uses **discovery mode by default** so large downstream MCP catalogues do not flood ChatGPT's initial tool context.
+
+Downstream tools from `config/mcp.json` remain connected and searchable. Use `mcp_tools_search` to find one, including by its former `prefix_tool` public name, `mcp_tool_read` to load its schema, then `mcp_tool_call` to invoke it. Detailed exposure-mode and queue behavior lives in the [installation guide](docs/installation.md#configure-the-gateway).
 
 [See more about the MCP implementation and subserver configuration.](docs/installation.md#configure-mcp-subservers)
 

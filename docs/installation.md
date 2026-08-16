@@ -210,6 +210,7 @@ Edit `config/.env`:
 ```dotenv
 MCP_BASE_URL=https://example.ngrok-free.dev
 MCP_SERVERS_CONFIG=config/mcp.json
+MCP_TOOL_EXPOSURE_MODE=discover
 OAUTH_ISSUER=https://example.ngrok-free.dev/oauth
 LOCAL_OAUTH_ISSUER=https://example.ngrok-free.dev/oauth
 OAUTH_AUDIENCE=https://mcp.local
@@ -224,6 +225,32 @@ ENABLE_OAUTH=true
 ```
 
 All three public URL values must use the exact same ngrok domain. Do not append `/mcp` to `MCP_BASE_URL`.
+
+`MCP_TOOL_EXPOSURE_MODE=discover` is the default. Gate keeps downstream MCP servers connected but exposes only a small core tool surface to ChatGPT:
+
+```text
+run_command
+skills_search
+skills_read
+mcp_servers_list
+mcp_tools_search
+mcp_tool_read
+mcp_tool_call
+```
+
+The normal downstream flow is `mcp_tools_search` → `mcp_tool_read` → `mcp_tool_call`. This avoids putting every downstream JSON schema into the initial model context. `mcp_tools_search` searches server names, prefixes, tool names, historical `prefix_tool` public names, titles, and descriptions. When the optional command queue is enabled, Gate also exposes the queue polling/control helpers required by `run_command`.
+
+Discover mode intentionally hides the other first-party Gate tools, including `skills_create`, `conversation_start`, `conversation_note`, `auth_status`, `public_file_share`, `public_file_list`, `public_file_revoke`, `mcp_server_status`, `mcp_server_reload`, and `mcp_registry_refresh`. Use `full` mode when those direct tools are needed. Normal command calls can still create their conversation log automatically when a `conversation_id` is supplied. To reconcile edits to `config/mcp.json` without switching to full mode or restarting Gate, call `mcp_servers_list` with `refresh=true`. Gate schedules one registry refresh and returns the current server state immediately; repeated refresh requests are coalesced while that refresh is running. The response always includes a `refresh` state (`idle`, `scheduled`, `running`, `completed`, `failed`, or `cancelled`); failed manual refreshes include the configuration error. Call `mcp_servers_list` again to inspect the updated state and refresh result.
+
+For one launch with the historical eager behavior:
+
+```bash
+gate --tools full
+# or daemon mode
+gate --tools full start
+```
+
+For a persistent override, set `MCP_TOOL_EXPOSURE_MODE=full` in `config/.env`. Use `discover` to return to the default.
 
 Generate the access-secret hash without placing the secret in shell history:
 
