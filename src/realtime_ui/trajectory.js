@@ -210,16 +210,24 @@ function renderTimeline() {
     return
   }
   const ranges = calls.map(timing)
+  const domainStart = Math.min(...ranges.map(range => range.start))
+  const domainEnd = Math.max(...ranges.map(range => range.end))
+  const domain = Math.max(1, domainEnd - domainStart)
   const levels = calls.map(() => 0)
   const laneLevels = [1, 1, 1]
   if (state.mode === 'duration') {
     const occupiedUntil = [[], [], []]
+    const timelineWidth = Math.max(1, host.clientWidth)
     calls.forEach((call, index) => {
       const callLane = lane(call)
       const range = ranges[index]
-      let level = occupiedUntil[callLane].findIndex(end => end <= range.start)
+      const gap = call.kind === 'thinking' ? 2 : 1
+      const renderedStart = (range.start - domainStart) / domain * timelineWidth + gap
+      const renderedWidth = Math.max(1, range.duration / domain * timelineWidth - gap * 2)
+      const renderedEnd = renderedStart + renderedWidth
+      let level = occupiedUntil[callLane].findIndex(end => end <= renderedStart)
       if (level < 0) level = occupiedUntil[callLane].length
-      occupiedUntil[callLane][level] = range.end
+      occupiedUntil[callLane][level] = renderedEnd
       levels[index] = level
       laneLevels[callLane] = Math.max(laneLevels[callLane], level + 1)
     })
@@ -229,9 +237,6 @@ function renderTimeline() {
   $('.timeline').style.height = `${Math.max(58, contentHeight + 16)}px`
   host.style.height = `${contentHeight}px`
   laneOffsets.forEach((top, index) => { labels[index].style.top = `${top + 9}px` })
-  const domainStart = Math.min(...ranges.map(range => range.start))
-  const domainEnd = Math.max(...ranges.map(range => range.end))
-  const domain = Math.max(1, domainEnd - domainStart)
   let previousTurn = null
   host.innerHTML = calls.map((call, index) => {
     const range = ranges[index]
@@ -264,7 +269,7 @@ function renderLedger() {
   const lastRunByTurn = new Map()
   const calls = []
   for (const call of ordered) {
-    if (call.tool === 'run_command') lastRunByTurn.set(turnKey(call), call.execution_id)
+    if (isRunCommand(call)) lastRunByTurn.set(turnKey(call), call.execution_id)
     if (!state.showStates && isStateCall(call)) {
       const parent = call.parent_execution_id || lastRunByTurn.get(turnKey(call))
       if (parent) {

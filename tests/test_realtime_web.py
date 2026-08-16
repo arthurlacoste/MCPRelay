@@ -69,7 +69,9 @@ def test_realtime_assets_are_authenticated(tmp_path, monkeypatch):
     assert "call.working_directory" in script.text
     assert "let coveredUntil = timing(coveredBy).end" in script.text
     assert "const occupiedUntil = [[], [], []]" in script.text
-    assert "occupiedUntil[callLane].findIndex" in script.text
+    assert "const timelineWidth = Math.max(1, host.clientWidth)" in script.text
+    assert "const renderedWidth = Math.max(1" in script.text
+    assert "occupiedUntil[callLane].findIndex(end => end <= renderedStart)" in script.text
     assert "call.kind === 'thinking' ? 2 : 1" in script.text
     assert "width:max(1px" in script.text
     assert 'class="badge-icon"' in script.text
