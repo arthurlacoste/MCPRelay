@@ -10,6 +10,16 @@ from gate_cli.state import GateState, load_state, save_state
 from gate_cli.updater import _extract_safely, activate_release, rollback_release
 
 
+# The Python 3.12+ data filter raises tarfile.FilterError subclasses; the
+# hand-rolled 3.10/3.11 fallback raises RuntimeError.
+def _extract_errors() -> tuple[type[Exception], ...]:
+    errors: list[type[Exception]] = [RuntimeError]
+    filter_error = getattr(tarfile, "FilterError", None)
+    if filter_error:
+        errors.append(filter_error)
+    return tuple(errors)
+
+
 def _tar_from(tmp_path: Path, members: dict[str, bytes], *, link: tuple[str, str] | None = None) -> Path:
     archive = tmp_path / "test.tar.gz"
     with tarfile.open(archive, "w:gz") as handle:
@@ -28,7 +38,7 @@ def _tar_from(tmp_path: Path, members: dict[str, bytes], *, link: tuple[str, str
 def test_extract_safely_rejects_members_escaping_staging(tmp_path):
     archive = _tar_from(tmp_path, {"ok/file.txt": b"hi"}, link=("ok/evil", "../../outside"))
     with tarfile.open(archive, "r:gz") as handle:
-        with pytest.raises(RuntimeError, match="escapes the staging directory"):
+        with pytest.raises(_extract_errors(), match="(?i)(escape|outside)"):
             _extract_safely(handle, tmp_path / "dest")
 
 
@@ -43,7 +53,7 @@ def test_extract_safely_accepts_wellformed_archive(tmp_path):
 def test_extract_safely_rejects_absolute_path_members(tmp_path):
     archive = _tar_from(tmp_path, {"/etc/evil": b"boom"})
     with tarfile.open(archive, "r:gz") as handle:
-        with pytest.raises(RuntimeError, match="escapes the staging directory"):
+        with pytest.raises(_extract_errors(), match="(?i)(escape|absolute|outside)"):
             _extract_safely(handle, tmp_path / "dest")
 
 
