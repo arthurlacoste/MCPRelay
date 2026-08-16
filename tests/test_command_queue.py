@@ -245,3 +245,19 @@ def test_restart_can_clear_waiting_queue(tmp_path):
     restarted.resolve_recovery('clear')
     assert restarted.get_state(job['execution_id'])['status'] == 'cancelled'
     restarted.close()
+
+
+def test_realtime_observer_receives_conversation_id(tmp_path):
+    states = []
+    queue = CommandQueue(
+        tmp_path / 'queue.sqlite3',
+        tmp_path / 'logs',
+        worker_limit=0,
+        state_observer=states.append,
+    )
+
+    queue.enqueue('echo hello', conversation_id='conv-queued', purpose='Say hello')
+
+    assert states
+    assert states[-1]['conversation_id'] == 'conv-queued'
+    queue.close()

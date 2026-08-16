@@ -97,3 +97,25 @@ def test_follow_snapshot_patches_interactive_rows_without_reclearing(tmp_path, m
     output = stream.getvalue()
     assert output.count("\x1b[2J\x1b[H") == 1
     assert "\x1b[2;1H\x1b[2KRUNNING 2s" in output
+
+
+def test_render_snapshot_shows_conversation_id(tmp_path):
+    snapshot = tmp_path / "realtime_calls.json"
+    write_snapshot(snapshot, [{
+        "execution_id": "activity-1",
+        "status": "success",
+        "created_at": "2026-08-16T08:00:00+00:00",
+        "started_at": "2026-08-16T08:00:00+00:00",
+        "finished_at": "2026-08-16T08:00:01+00:00",
+        "duration_ms": 1000,
+        "tool": "skills_search",
+        "kind": "tool",
+        "purpose": "Call skills_search",
+        "conversation_id": "conv_auto_deadbeef",
+        "preview": "",
+    }])
+
+    output = render_snapshot(snapshot, width=140, height=20)
+
+    assert "CONVERSATION" in output
+    assert "conv_auto_deadbeef" in output

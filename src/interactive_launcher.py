@@ -22,6 +22,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from dotenv import dotenv_values
+from changelog_parser import changelog_section
 from ngrok_target import gateway_health_url, resolve_ngrok_target
 from terminal_rendering import TerminalFrameRenderer, restore_terminal_output
 
@@ -145,13 +146,9 @@ def latest_changelog(version: str | None = None) -> str:
         text = CHANGELOG_FILE.read_text(encoding="utf-8")
     except OSError:
         return "Changelog unavailable."
-    marker = f"## {current}"
-    start = text.find(marker)
-    if start < 0:
+    section = changelog_section(text, current)
+    if section is None:
         return "No changelog entry found."
-    start += len(marker)
-    end = text.find("\n## ", start)
-    section = text[start:end if end >= 0 else None].strip()
     return section or "No changes listed."
 
 
@@ -211,6 +208,7 @@ def connection_detail_lines() -> list[str]:
     return [
         f"Public MCP:      {public_url}/mcp",
         f"Public OAuth:    {public_url}/oauth",
+        f"Public realtime: {public_url}/rt",
         f"Local MCP:       http://127.0.0.1:{NGROK_PORT}/mcp",
         f"Local OAuth:     http://127.0.0.1:{NGROK_PORT}/oauth",
         f"OAuth health:    http://127.0.0.1:{NGROK_PORT}/oauth/health",
@@ -313,39 +311,54 @@ def build_realtime_panel(
         call = calls[selected]
         lines.extend([
             f"Status:   {call.get('status', '').upper()}",
+            f"Kind:     {call.get('kind', 'tool')}",
             f"Tool:     {call.get('tool', 'run_command')}",
             f"Purpose:  {call.get('purpose', 'No purpose')}",
+            f"Conversation: {call.get('conversation_id') or '-'}",
+            f"Session:  {call.get('session_ref') or '-'}",
+            f"Request:  {call.get('request_id') or '-'}",
+            f"Client:   {call.get('client_id') or '-'}",
+            f"HTTP:     {call.get('http_status') if call.get('http_status') is not None else '-'}",
             f"Started:  {_start_time(call)}",
             f"Age:      {format_age(call)}",
             f"Exit:     {call.get('exit_code')}",
-            "Command:",
         ])
-        command = sanitize_command(call.get("command") or call.get("preview", "") or "(unavailable)")
-        lines.extend(command.splitlines() or [""])
-        if call.get("command_truncated"):
-            lines.append("[command truncated at 8000 characters]")
-        log = read_call_log(resolve_realtime_log(call.get("log_ref")), 0)
-        log_lines = log["text"].splitlines()
-        command_lines = max(1, len(command.splitlines()))
-        truncation_lines = 1 if call.get("command_truncated") else 0
-        visible = max(1, height - 14 - command_lines - truncation_lines)
-        shown = log_lines[-visible:] if follow_tail else log_lines[detail_offset:detail_offset + visible]
-        lines.extend(["", "Terminal log" + (" (following)" if follow_tail else "") + ":"])
-        lines.extend(shown or ["(log unavailable or empty)" if log["rotated"] else "(log empty)"])
-        lines.extend(["", "[Enter] Back  [q/Esc] Exit  [↑/↓] Scroll  [f] Follow tail"])
+        has_terminal = bool(call.get("command") or call.get("preview") or call.get("log_ref"))
+        if has_terminal:
+            lines.append("Command:")
+            command = sanitize_command(call.get("command") or call.get("preview", "") or "(unavailable)")
+            lines.extend(command.splitlines() or [""])
+            if call.get("command_truncated"):
+                lines.append("[command truncated at 8000 characters]")
+            log = read_call_log(resolve_realtime_log(call.get("log_ref")), 0)
+            log_lines = log["text"].splitlines()
+            command_lines = max(1, len(command.splitlines()))
+            truncation_lines = 1 if call.get("command_truncated") else 0
+            visible = max(1, height - 20 - command_lines - truncation_lines)
+            shown = log_lines[-visible:] if follow_tail else log_lines[detail_offset:detail_offset + visible]
+            lines.extend(["", "Terminal log" + (" (following)" if follow_tail else "") + ":"])
+            lines.extend(shown or ["(log unavailable or empty)" if log["rotated"] else "(log empty)"])
+            controls = "[Enter] Back  [q/Esc] Exit  [↑/↓] Scroll  [f] Follow tail"
+        else:
+            controls = "[Enter] Back  [q/Esc] Exit"
+        lines.extend(["", controls])
         return lines
 
     lines.extend([
-        "STATUS    START     AGE      TOOL                  PURPOSE",
-        "=" * min(width, 100),
+        "STATUS    START     AGE      TOOL                  CONVERSATION         PURPOSE",
+        "=" * min(width, 120),
     ])
     visible = max(1, (height - 9) // 2)
     for index, call in enumerate(calls[:visible]):
         marker = ">" if index == selected else " "
         status = call.get("status", "").upper()[:8]
         tool = shorten(call.get("tool", "run_command"), 20)
-        purpose = shorten(call.get("purpose", "No purpose"), max(8, width - 55))
-        lines.append(f"{marker}{status:<9} {_start_time(call):<9} {format_age(call):<8} {tool:<21} {purpose}")
+        conversation = shorten(call.get("conversation_id") or "-", 18)
+        purpose = shorten(call.get("purpose", "No purpose"), max(8, width - 75))
+        lines.append(
+            f"{marker}{status:<9} {_start_time(call):<9} {format_age(call):<8} "
+            f"{tool:<21} {conversation:<20} {purpose}"
+        )
         preview = call.get("preview", "")
         if preview:
             lines.append(f"  {shorten(preview, max(8, width - 2))}")

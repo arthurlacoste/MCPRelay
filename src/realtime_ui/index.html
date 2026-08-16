@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Gate · Real-time calls</title>
+  <link rel="stylesheet" href="/rt/assets/trajectory.css?v=__ASSET_VERSION__">
+</head>
+<body>
+  <aside class="sidebar">
+    <button class="brand" id="all-calls" aria-label="Show all calls" title="All calls">
+      <img src="/rt/assets/gate.svg" alt=""><span>gate</span>
+    </button>
+    <button class="session" id="refresh" title="Refresh">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 12a9 9 0 1 1-2.64-6.36L21 8"/><path d="M21 3v5h-5"/></svg><span>Refresh</span>
+    </button>
+    <button class="rail-action" id="mobile-buckets" aria-label="Conversations" aria-expanded="false" aria-controls="conversation-drawer" title="Conversations">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3.5 6.5h6l2 2h9v10h-17z"/></svg>
+    </button>
+    <button class="rail-action" id="mobile-search" aria-label="Search calls" title="Search calls">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m15.5 15.5 5 5"/></svg>
+    </button>
+    <div class="conversation-drawer" id="conversation-drawer">
+      <div class="drawer-head"><span>Conversations</span><button id="close-conversations" aria-label="Close conversations">×</button></div>
+      <nav id="conversations" aria-label="Conversation filter"></nav>
+    </div>
+  </aside>
+  <main class="app">
+    <header class="header">
+      <div class="view-title">Real-time calls</div>
+    </header>
+    <div class="toolbar">
+      <div class="modes" role="group" aria-label="Timeline projection">
+        <button id="duration" class="pressed" aria-pressed="true"><svg class="mode-icon" viewBox="0 0 18 18" aria-hidden="true"><circle cx="9" cy="9" r="6.2"/><path d="M9 5.3V9l2.7 1.6"/></svg><span>Duration</span></button>
+        <button id="turns" aria-pressed="false"><svg class="mode-icon" viewBox="0 0 18 18" aria-hidden="true"><rect x="3" y="3" width="12" height="12" rx="1"/><path d="M7 3v12M11 3v12"/></svg><span>Turn</span></button>
+        <button id="calls-toggle" aria-pressed="false"><svg class="mode-icon" viewBox="0 0 18 18" aria-hidden="true"><rect x="3" y="4" width="8" height="8" rx="1"/><path d="M7 7h8v8H7z"/></svg><span>Call</span></button>
+        <button id="state-toggle" aria-pressed="false"><svg class="mode-icon" viewBox="0 0 18 18" aria-hidden="true"><path d="M4 3h10v12H4zM7 3v12"/></svg><span>State</span></button>
+        <button id="thinking-toggle" class="pressed" aria-pressed="true"><svg class="mode-icon sparkle" viewBox="0 0 18 18" aria-hidden="true"><path d="M9 2.5c.7 3.7 2 5 5.5 6.5-3.5 1.5-4.8 2.8-5.5 6.5C8.3 11.8 7 10.5 3.5 9 7 7.5 8.3 6.2 9 2.5Z"/></svg><span>Thinking</span></button>
+      </div>
+      <label class="search">
+        <svg class="search-icon" viewBox="0 0 20 20" aria-hidden="true"><circle cx="8.5" cy="8.5" r="5.5"/><path d="m12.5 12.5 4 4"/></svg>
+        <input id="search" type="search" placeholder="Search">
+      </label>
+    </div>
+    <section class="timeline" aria-label="Trajectory timeline">
+      <div class="lane-labels"><span>Input</span><span>Model</span><span>Tools</span></div>
+      <div class="track" id="track"><div id="spans"></div></div>
+    </section>
+    <div class="split" id="split">
+      <div class="ledger-shell">
+        <section class="ledger" id="ledger" aria-live="polite"></section>
+        <button class="scroll-bottom" id="scroll-bottom" aria-label="Go to latest calls" title="Go to latest calls" hidden>
+          <svg viewBox="0 0 18 18" aria-hidden="true"><path d="m4 7 5 5 5-5"/></svg>
+        </button>
+      </div>
+      <aside class="inspector" id="inspector" hidden>
+        <div class="inspector-head">
+          <span class="badge" id="detail-kind">TOOL</span>
+          <span id="detail-location"></span><button id="close">×</button>
+        </div>
+        <div class="detail-tabs" role="tablist">
+          <button class="active" data-tab="summary">Summary</button>
+          <button data-tab="payload">Payload</button>
+          <button data-tab="result">Result</button>
+          <button data-tab="timing">Timing</button>
+        </div>
+        <div class="detail-body" id="detail-body"></div>
+      </aside>
+    </div>
+  </main>
+  <script src="/rt/assets/trajectory.js?v=__ASSET_VERSION__"></script>
+</body>
+</html>

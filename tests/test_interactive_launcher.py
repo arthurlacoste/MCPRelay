@@ -4,6 +4,20 @@ from unittest.mock import Mock
 from src import interactive_launcher, tunnel_provider
 
 
+def test_connection_details_include_public_realtime_url(tmp_path, monkeypatch):
+    config = tmp_path / ".env"
+    config.write_text(
+        "MCP_BASE_URL=https://gate.example\nOAUTH_ACCESS_SECRET=secret\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(interactive_launcher, "CONFIG_FILE", config)
+
+    assert (
+        "Public realtime: https://gate.example/rt"
+        in interactive_launcher.connection_detail_lines()
+    )
+
+
 def test_log_tail_returns_only_last_lines(tmp_path):
     log = tmp_path / "launcher.log"
     log.write_text("one\ntwo\nthree\nfour\n", encoding="utf-8")
@@ -209,6 +223,24 @@ def test_latest_changelog_returns_current_version_section(monkeypatch, tmp_path)
     assert interactive_launcher.latest_changelog("0.1.7") == "### Added\n\n- New menu."
 
 
+def test_latest_changelog_reads_release_please_heading(monkeypatch, tmp_path):
+    changelog = tmp_path / "CHANGELOG.md"
+    changelog.write_text(
+        "# Changelog\n\n"
+        "## [0.1.26](https://github.com/spelcc/gate/compare/v0.1.25...v0.1.26) (2026-08-16)\n\n"
+        "### Added\n\n"
+        "* add discover-first MCP tool exposure\n\n"
+        "## [0.1.25](https://example.test/previous) (2026-08-15)\n\n"
+        "* Previous.\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(interactive_launcher, "CHANGELOG_FILE", changelog)
+
+    assert interactive_launcher.latest_changelog("0.1.26") == (
+        "### Added\n\n* add discover-first MCP tool exposure"
+    )
+
+
 def test_controls_are_aligned_in_one_key_column():
     lines = interactive_launcher.control_lines("0.1.8")
 
@@ -357,3 +389,31 @@ def test_main_handles_sighup_when_available(monkeypatch):
 
     assert interactive_launcher.main() == 0
     assert (interactive_launcher.signal.SIGHUP, interactive_launcher.request_shutdown) in installed
+
+
+def test_realtime_detail_shows_activity_correlation_fields(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(interactive_launcher, "REALTIME_CALLS_FILE", tmp_path / "calls.json")
+    (tmp_path / "calls.json").write_text(
+        __import__("json").dumps({"calls": [{
+            "status": "success",
+            "tool": "oauth.token",
+            "kind": "oauth",
+            "purpose": "POST /oauth/token",
+            "conversation_id": "conv_auto_deadbeef",
+            "session_ref": "mcp_deadbeef",
+            "request_id": "req-123",
+            "http_status": 200,
+        }]}),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(interactive_launcher, "clear_terminal", lambda: None)
+    monkeypatch.setattr(interactive_launcher.shutil, "get_terminal_size", lambda _: (120, 30))
+
+    interactive_launcher.render_realtime_panel(details=True)
+
+    output = capsys.readouterr().out
+    assert "Kind:     oauth" in output
+    assert "Conversation: conv_auto_deadbeef" in output
+    assert "Session:  mcp_deadbeef" in output
+    assert "Request:  req-123" in output
+    assert "HTTP:     200" in output
