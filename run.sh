@@ -706,6 +706,10 @@ start_daemon() {
     elif [ "$provider" = tailscale ] && [ -n "${GATE_EXISTING_TAILSCALE_PID:-}" ] && kill -0 "$GATE_EXISTING_TAILSCALE_PID" 2>/dev/null; then
         TUNNEL_PID="$GATE_EXISTING_TAILSCALE_PID"
         KEEP_AWAKE_LABEL="onboarding tunnel reused"
+    elif [ "$provider" = tailscale ] && [ -n "$(active_tailscale_funnel_url)" ]; then
+        # An untracked Funnel already serves our port; Gate must not start a
+        # second one ("listener already exists"). Nothing to manage or kill.
+        KEEP_AWAKE_LABEL="existing funnel reused"
     elif [ "$provider" = cloudflare ] && [ -n "${GATE_EXISTING_CLOUDFLARED_PID:-}" ] && kill -0 "$GATE_EXISTING_CLOUDFLARED_PID" 2>/dev/null; then
         TUNNEL_PID="$GATE_EXISTING_CLOUDFLARED_PID"
         KEEP_AWAKE_LABEL="onboarding tunnel reused"
@@ -845,6 +849,8 @@ status() {
     elif [ -n "$TUNNEL_PID" ] && kill -0 "$TUNNEL_PID" 2>/dev/null; then
         echo "✓ ${TUNNEL_PROVIDER_PID:-ngrok} tunnel     (PID $TUNNEL_PID)"
         [ "${TUNNEL_PROVIDER_PID:-ngrok}" != ngrok ] || show_ngrok_inspector
+    elif [ "${TUNNEL_PROVIDER_PID:-ngrok}" = tailscale ] && [ -n "$(active_tailscale_funnel_url)" ]; then
+        echo "✓ tailscale tunnel (existing funnel reused)"
     else
         echo "✗ tunnel not running"
     fi
