@@ -127,6 +127,8 @@ def test_discovery_call_is_displayed_as_real_downstream_tool():
     assert call["kind"] == "mcp"
     assert '"url": "https://example.test"' in call["payload"]
     assert call["fields"]["url"] == "https://example.test"
+    assert call["fields"]["server_name"] == "chrome-devtools"
+    assert call["fields"]["tool_name"] == "navigate_page"
 
 
 def test_command_state_activity_keeps_parent_execution_id():

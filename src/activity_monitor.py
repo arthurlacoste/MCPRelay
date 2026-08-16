@@ -17,8 +17,14 @@ COMMON_ARGUMENT_FIELDS = (
 
 def _common_fields(arguments: dict[str, Any]) -> dict[str, Any]:
     nested = arguments.get("arguments")
-    source = nested if isinstance(nested, dict) else arguments
-    return {key: source[key] for key in COMMON_ARGUMENT_FIELDS if key in source}
+    sources = (nested, arguments) if isinstance(nested, dict) else (arguments,)
+    fields = {}
+    for key in COMMON_ARGUMENT_FIELDS:
+        for source in sources:
+            if key in source:
+                fields[key] = source[key]
+                break
+    return fields
 
 
 def _working_directory(arguments: dict[str, Any]) -> str | None:

@@ -20,6 +20,7 @@ MAX_TOOL_CHARS = 80
 MAX_COMMAND_CHARS = 8_000
 MAX_RAW_DATA_CHARS = 32_000
 MAX_FIELD_CHARS = 1_000
+DETAIL_FIELDS = {"command", "payload", "result", "fields"}
 SNAPSHOT_DEBOUNCE_SECONDS = 0.05
 _ANSI_RE = re.compile(r"\x1b(?:\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1b\\))")
 LOGGER = logging.getLogger(__name__)
@@ -147,10 +148,12 @@ class RealtimeCallStore:
         max_entries: int = 200,
         snapshot_path: Path | None = None,
         redact_text: Callable[[str], str] | None = None,
+        capture_raw_data: bool = True,
     ) -> None:
         self.max_entries = max(1, int(max_entries))
         self.snapshot_path = Path(snapshot_path) if snapshot_path else None
         self.redact_text = redact_text or (lambda value: value)
+        self.capture_raw_data = bool(capture_raw_data)
         self._active: dict[str, dict] = {}
         self._recent: deque[dict] = deque(maxlen=self.max_entries)
         self._lock = threading.RLock()
@@ -263,8 +266,26 @@ class RealtimeCallStore:
             calls.sort(key=sort_key)
             return {
                 "updated_at": datetime.now(UTC).isoformat(),
-                "calls": calls,
+                "calls": [dict(call) for call in calls],
             }
+
+    def summary_snapshot(self) -> dict:
+        snapshot = self.snapshot()
+        snapshot["calls"] = [
+            {key: value for key, value in call.items() if key not in DETAIL_FIELDS}
+            for call in snapshot["calls"]
+        ]
+        return snapshot
+
+    def get_call(self, execution_id: str) -> dict | None:
+        with self._lock:
+            item = self._active.get(execution_id)
+            if item is None:
+                item = next(
+                    (call for call in self._recent if call["execution_id"] == execution_id),
+                    None,
+                )
+            return dict(item) if item is not None else None
 
     def _sanitize(self, call: dict) -> dict:
         command = sanitize_command(self.redact_text(str(call.get("command") or "")))
@@ -273,16 +294,18 @@ class RealtimeCallStore:
         raw_preview = call.get("preview") if call.get("preview") is not None else command
         preview = self.redact_text(single_line(str(raw_preview or "")))
         purpose = self.redact_text(single_line(call.get("purpose"))) or infer_purpose(command)
-        payload = self._json_text(call.get("payload"))
-        result = self._json_text(call.get("result"))
-        fields = {
-            shorten(single_line(str(key)), 80): shorten(
-                self.redact_text(single_line(self._json_text(value))),
-                MAX_FIELD_CHARS,
-            )
-            for key, value in (call.get("fields") or {}).items()
-            if single_line(str(key))
-        }
+        payload = self._json_text(call.get("payload")) if self.capture_raw_data else ""
+        result = self._json_text(call.get("result")) if self.capture_raw_data else ""
+        fields = {}
+        if self.capture_raw_data:
+            fields = {
+                shorten(single_line(str(key)), 80): shorten(
+                    self.redact_text(single_line(self._json_text(value))),
+                    MAX_FIELD_CHARS,
+                )
+                for key, value in (call.get("fields") or {}).items()
+                if single_line(str(key))
+            }
         return {
             "execution_id": str(call["execution_id"]),
             "status": str(call.get("status") or "queued"),

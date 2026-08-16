@@ -84,6 +84,9 @@ Gate can expose a trusted local catalogue of [Agent Skills](https://agentskills.
 - OAuth tokens are signed with a local RSA key (generated in `data/oauth_private_key.pem`)
 - Files shared via `public_file_share` are accessible without authentication
 - Command logs contain all input/output — do not expose logs
+- The authenticated `/rt` inspector captures redacted tool details by default. Set
+  `GATE_REALTIME_CAPTURE_RAW_DATA=false` for metadata-only monitoring when calls
+  may contain secrets Gate cannot identify automatically
 
 ### 🛡️ Optional advanced safeguard
 
