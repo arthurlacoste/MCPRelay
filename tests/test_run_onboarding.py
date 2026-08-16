@@ -317,6 +317,12 @@ def test_onboarding_persists_url_secret_and_hash():
     assert 'chmod 600 "$CONFIG_FILE"' in content
 
 
+def test_connection_details_include_public_realtime_url():
+    content = RUN_SCRIPT.read_text()
+
+    assert "printf 'Public realtime: %s/rt\\n' \"$public_url\"" in content
+
+
 def test_onboarding_reuses_complete_configuration():
     content = RUN_SCRIPT.read_text()
 

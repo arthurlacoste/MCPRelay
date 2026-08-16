@@ -245,6 +245,7 @@ show_connection_details() {
     info "Connection details"
     printf 'Public MCP:      %s/mcp\n' "$public_url"
     printf 'Public OAuth:    %s/oauth\n' "$public_url"
+    printf 'Public realtime: %s/rt\n' "$public_url"
     printf 'Local MCP:       http://127.0.0.1:%s/mcp\n' "$NGROK_PORT"
     printf 'Local OAuth:     http://127.0.0.1:%s/oauth\n' "$NGROK_PORT"
     printf 'OAuth health:    http://127.0.0.1:%s/oauth/health\n' "$NGROK_PORT"
