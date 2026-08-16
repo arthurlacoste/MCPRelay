@@ -134,6 +134,39 @@ def test_tailscale_public_url_rejects_missing_url():
         tailscale_public_url(run=lambda *args, **kwargs: completed(stdout="no funnel"))
 
 
+def _foreground_funnel_json(proxy="http://127.0.0.1:8761"):
+    return json.dumps({
+        "Foreground": {
+            "node": {
+                "TCP": {"443": {"HTTPS": True}},
+                "Web": {
+                    "mj-1.taildc7e9e.ts.net:443": {
+                        "Handlers": {"/": {"Proxy": proxy}}
+                    }
+                },
+            }
+        }
+    })
+
+
+def test_tailscale_public_url_reads_json_funnel_config():
+    run = lambda *args, **kwargs: completed(stdout=_foreground_funnel_json())
+    assert tailscale_public_url(run=run) == "https://mj-1.taildc7e9e.ts.net"
+
+
+def test_tailscale_public_url_filters_json_funnel_by_proxy_port():
+    run = lambda *args, **kwargs: completed(stdout=_foreground_funnel_json())
+    assert tailscale_public_url(run=run, port=8761) == "https://mj-1.taildc7e9e.ts.net"
+    with pytest.raises(TunnelConfigurationError, match="Could not detect"):
+        tailscale_public_url(run=run, port=3000)
+
+
+def test_tailscale_public_url_rejects_json_without_active_funnel():
+    run = lambda *args, **kwargs: completed(stdout=json.dumps({"serve": {}}))
+    with pytest.raises(TunnelConfigurationError, match="Could not detect"):
+        tailscale_public_url(run=run)
+
+
 def test_tailscale_status_timeout_is_actionable():
     def timed_out(*args, **kwargs):
         raise subprocess.TimeoutExpired(args[0], kwargs.get("timeout", 10))

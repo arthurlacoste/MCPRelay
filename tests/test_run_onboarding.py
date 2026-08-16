@@ -366,6 +366,44 @@ def test_connect_command_is_available_through_launcher():
     assert "connect {cf|ts}" in content
 
 
+def test_tailscale_onboarding_reuses_active_funnel_and_recovers():
+    content = RUN_SCRIPT.read_text()
+
+    assert "active_tailscale_funnel_url" in content
+    assert "kill_stale_tailscale_funnels" in content
+    assert "Reusing the active Tailscale Funnel" in content
+    assert "Clearing stale Funnel processes and retrying" in content
+
+
+def test_onboarding_reuses_active_tailscale_funnel(tmp_path):
+    script, env = _sandbox(tmp_path, "TUNNEL_PROVIDER=tailscale\n")
+    fake_bin = tmp_path / "bin"
+    _write_executable(
+        fake_bin / "tailscale",
+        "#!/usr/bin/env bash\n"
+        'case "$1" in\n'
+        "  status) echo '{\"BackendState\":\"Running\"}' ;;\n"
+        "  funnel) echo '{\"Foreground\":{\"n\":{\"Web\":{\"mj-1.taildc7e9e.ts.net:443\":{\"Handlers\":{\"/\":{\"Proxy\":\"http://127.0.0.1:8761\"}}}}}}}' ;;\n"
+        "esac\n"
+        "exit 0\n",
+    )
+
+    result = subprocess.run(
+        [str(script), "setup"],
+        cwd=tmp_path,
+        env=env,
+        text=True,
+        capture_output=True,
+        timeout=30,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "Reusing the active Tailscale Funnel" in result.stdout
+    env_file = tmp_path / "config" / ".env"
+    assert "MCP_BASE_URL=https://mj-1.taildc7e9e.ts.net" in env_file.read_text()
+
+
 def test_connect_ts_runs_through_launcher_with_fake_tailscale(tmp_path):
     script, env = _sandbox(tmp_path, "")
     shutil.copytree(RUN_SCRIPT.parent / "src", tmp_path / "src")

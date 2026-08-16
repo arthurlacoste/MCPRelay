@@ -193,6 +193,22 @@ class ExistingProcess:
         return 0
 
 
+class ExistingFunnel:
+    """A tunnel Gate did not start (e.g. an already-active Tailscale Funnel).
+
+    Behaves like a process that is always running so the monitor keeps the
+    session alive without ever signalling a PID Gate does not own.
+    """
+
+    pid: int | None = None
+
+    def poll(self):
+        return None
+
+    def wait(self, timeout=None):
+        return None
+
+
 
 def request_shutdown(*_args) -> None:
     global STOP_REQUESTED
@@ -401,7 +417,8 @@ def render_screen(services, tunnel, keep_awake: str, update_version: str | None,
     print(f"\033[1;32m✓ Gateway running (PID {services.pid})\033[0m")
     provider = configured_tunnel_provider()
     if tunnel is not None:
-        print(f"\033[1;32m✓ {provider} running (PID {tunnel.pid}) [{keep_awake}]\033[0m")
+        label = f" (PID {tunnel.pid})" if getattr(tunnel, "pid", None) else ""
+        print(f"\033[1;32m✓ {provider} running{label} [{keep_awake}]\033[0m")
     else:
         print("\033[1;32m✓ external tunnel managed by user\033[0m")
     if provider == "ngrok":
@@ -519,8 +536,10 @@ def wait_for_ngrok_ready(process: subprocess.Popen | ExistingProcess, timeout: f
     raise StartupError("ngrok did not become ready within timeout.")
 
 
-def terminate_group(process: subprocess.Popen | ExistingProcess | None) -> None:
-    if process is None or process.poll() is not None:
+def terminate_group(process: subprocess.Popen | ExistingProcess | ExistingFunnel | None) -> None:
+    if process is None or isinstance(process, ExistingFunnel) or process.poll() is not None:
+        # Gate does not own reused tunnels (e.g. an active Tailscale Funnel), so
+        # they must survive a shutdown.
         return
     try:
         if isinstance(process, ExistingProcess):
@@ -554,7 +573,7 @@ def wait_for_tailscale_ready(process: subprocess.Popen | ExistingProcess, timeou
         if code is not None:
             raise StartupError(startup_failure_message("tailscale", code))
         try:
-            if tailscale_public_url():
+            if tailscale_public_url(port=NGROK_PORT):
                 return
         except TunnelConfigurationError:
             pass
@@ -587,12 +606,13 @@ def start_services() -> subprocess.Popen:
         )
 
 
-def start_tunnel() -> tuple[subprocess.Popen | ExistingProcess | None, str]:
+def start_tunnel() -> tuple[subprocess.Popen | ExistingProcess | ExistingFunnel | None, str]:
     provider = configured_tunnel_provider()
     if provider == "external":
         return None, "user managed"
     existing_env = {
         "ngrok": "GATE_EXISTING_NGROK_PID",
+        "tailscale": "GATE_EXISTING_TAILSCALE_PID",
         "cloudflare": "GATE_EXISTING_CLOUDFLARED_PID",
     }.get(provider)
     existing = os.environ.get(existing_env, "") if existing_env else ""
@@ -600,6 +620,12 @@ def start_tunnel() -> tuple[subprocess.Popen | ExistingProcess | None, str]:
         process = ExistingProcess(int(existing))
         if process.poll() is None:
             return process, "onboarding tunnel reused"
+    if provider == "tailscale":
+        try:
+            if tailscale_public_url(port=NGROK_PORT):
+                return ExistingFunnel(), "existing funnel reused"
+        except TunnelConfigurationError:
+            pass
     spec = build_tunnel_spec(
         provider,
         NGROK_PORT,

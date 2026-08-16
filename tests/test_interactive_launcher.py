@@ -133,6 +133,96 @@ def test_start_ngrok_uses_resolved_target(monkeypatch, tmp_path):
     ]
     popen.call_args.kwargs["stdout"].close()
 
+class _AlwaysAliveProcess:
+    def __init__(self, pid):
+        self.pid = pid
+
+    def poll(self):
+        return None
+
+
+def test_start_tailscale_reuses_existing_active_funnel(monkeypatch, tmp_path):
+    monkeypatch.setenv("TUNNEL_PROVIDER", "tailscale")
+    monkeypatch.setattr(interactive_launcher, "CONFIG_FILE", tmp_path / ".env")
+    monkeypatch.delenv("GATE_EXISTING_TAILSCALE_PID", raising=False)
+    monkeypatch.setattr(
+        interactive_launcher, "tailscale_public_url", lambda port=None: "https://mj-1.taildc7e9e.ts.net"
+    )
+    popen = Mock()
+    monkeypatch.setattr(interactive_launcher.subprocess, "Popen", popen)
+
+    returned, label = interactive_launcher.start_tunnel()
+
+    assert isinstance(returned, interactive_launcher.ExistingFunnel)
+    assert label == "existing funnel reused"
+    popen.assert_not_called()
+
+
+def test_start_tailscale_reuses_onboarding_process(monkeypatch, tmp_path):
+    monkeypatch.setenv("TUNNEL_PROVIDER", "tailscale")
+    monkeypatch.setenv("GATE_EXISTING_TAILSCALE_PID", "4242")
+    monkeypatch.setattr(interactive_launcher, "ExistingProcess", _AlwaysAliveProcess)
+    monkeypatch.setattr(interactive_launcher, "build_tunnel_spec", Mock())
+
+    returned, label = interactive_launcher.start_tunnel()
+
+    assert returned.pid == 4242
+    assert label == "onboarding tunnel reused"
+    interactive_launcher.build_tunnel_spec.assert_not_called()
+
+
+def test_start_tailscale_starts_new_funnel_when_none_active(monkeypatch, tmp_path):
+    process = Mock()
+    popen = Mock(return_value=process)
+    monkeypatch.setenv("TUNNEL_PROVIDER", "tailscale")
+    monkeypatch.setattr(interactive_launcher, "CONFIG_FILE", tmp_path / ".env")
+    monkeypatch.delenv("GATE_EXISTING_TAILSCALE_PID", raising=False)
+    monkeypatch.setattr(
+        interactive_launcher, "tailscale_public_url", Mock(side_effect=interactive_launcher.TunnelConfigurationError)
+    )
+    monkeypatch.setattr(
+        interactive_launcher.shutil,
+        "which",
+        lambda name: "/usr/bin/tailscale" if name == "tailscale" else None,
+    )
+    monkeypatch.setattr(tunnel_provider, "validate_tailscale_session", lambda: None)
+    monkeypatch.setattr(interactive_launcher.subprocess, "Popen", popen)
+
+    returned, label = interactive_launcher.start_tunnel()
+
+    assert returned is process
+    assert label == "sleep inhibition inactive"
+    assert popen.call_args.args[0] == ["tailscale", "funnel", "--bg=false", "8761"]
+    popen.call_args.kwargs["stdout"].close()
+
+
+def test_terminate_group_leaves_reused_funnel_alone(monkeypatch):
+    funnel = interactive_launcher.ExistingFunnel()
+    signals = []
+    monkeypatch.setattr(interactive_launcher.os, "killpg", lambda *args: signals.append(args))
+    monkeypatch.setattr(interactive_launcher.os, "kill", lambda *args: signals.append(args))
+
+    interactive_launcher.terminate_group(funnel)
+
+    assert signals == []
+
+
+def test_wait_for_tailscale_ready_checks_proxy_port(monkeypatch):
+    seen = {}
+    monkeypatch.setattr(
+        interactive_launcher,
+        "tailscale_public_url",
+        lambda port=None: seen.setdefault("port", port) or "https://mj-1.taildc7e9e.ts.net",
+    )
+    monkeypatch.setattr(interactive_launcher, "STOP_REQUESTED", False)
+
+    class Alive:
+        def poll(self):
+            return None
+
+    interactive_launcher.wait_for_tailscale_ready(Alive())
+    assert seen["port"] == interactive_launcher.NGROK_PORT
+
 
 def test_start_cloudflared_uses_loopback_url(monkeypatch, tmp_path):
     process = Mock()
