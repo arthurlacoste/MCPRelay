@@ -401,7 +401,15 @@ setup_cloudflared_connect() {
     fi
     cf_hostname="$(printf '%s' "$cf_hostname" | sed -E 's#^https?://##; s#/.*$##')"
     [ -n "$cf_hostname" ] || die "A public hostname is required for a Cloudflare connect tunnel."
-    cloudflared tunnel route dns "$tunnel_name" "$cf_hostname" || die "Could not route DNS for '$cf_hostname'. Confirm the domain is on your Cloudflare account."
+    # A completed 'gate connect cf' already routed this hostname and stored
+    # CLOUDFLARED_TUNNEL_NAME + MCP_BASE_URL. Re-running setup to finish OAuth
+    # must not route DNS again: the CNAME already exists and Cloudflare rejects
+    # a second provisioning of the same hostname.
+    if [ -n "$(env_value CLOUDFLARED_TUNNEL_NAME)" ] && [ -n "$(env_value MCP_BASE_URL)" ]; then
+        info "Reusing already-configured Cloudflare connect hostname '$cf_hostname'."
+    else
+        cloudflared tunnel route dns "$tunnel_name" "$cf_hostname" || die "Could not route DNS for '$cf_hostname'. Confirm the domain is on your Cloudflare account."
+    fi
     ONBOARDING_PUBLIC_URL="https://$cf_hostname"
 }
 

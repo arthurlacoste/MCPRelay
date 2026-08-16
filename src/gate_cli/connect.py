@@ -82,17 +82,42 @@ def _run(command: list[str], **kwargs) -> subprocess.CompletedProcess:
     return subprocess.run(command, check=False, **kwargs)
 
 
+def _linux_cloudflared_arch() -> str:
+    machine = platform.machine().lower()
+    if machine in ("x86_64", "amd64"):
+        return "amd64"
+    if machine in ("aarch64", "arm64"):
+        return "arm64"
+    if machine.startswith("armv"):
+        return "armhf"
+    return ""
+
+
 def install_cloudflared() -> bool:
     system = platform.system()
     if system == "Darwin":
         return _run(["brew", "install", "cloudflared"]).returncode == 0
     if system == "Windows":
         return _run(["winget", "install", "--id", "Cloudflare.cloudflared"]).returncode == 0
-    script = (
-        "curl -L https://github.com/cloudflare/cloudflared/releases/latest/download/"
-        "cloudflared-linux-amd64 -o /usr/local/bin/cloudflared && chmod +x /usr/local/bin/cloudflared"
+    arch = _linux_cloudflared_arch()
+    if not arch:
+        print(f"Unsupported Linux architecture for automatic cloudflared installation: {platform.machine()}.")
+        return False
+    bin_dir = Path(os.environ.get("GATE_ROOT", str(Path.home() / ".gate"))) / "runtime" / "bin"
+    bin_dir.mkdir(parents=True, exist_ok=True)
+    destination = bin_dir / "cloudflared"
+    temporary = destination.with_suffix(".download")
+    url = (
+        "https://github.com/cloudflare/cloudflared/releases/latest/download/"
+        f"cloudflared-linux-{arch}"
     )
-    return _run(["sh", "-c", script]).returncode == 0
+    if _run(["curl", "-fsSL", url, "-o", str(temporary)]).returncode != 0:
+        print("cloudflared download failed.")
+        return False
+    temporary.chmod(0o755)
+    temporary.replace(destination)
+    os.environ["PATH"] = f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}"
+    return True
 
 
 def cloudflared_logged_in() -> bool:
@@ -100,8 +125,19 @@ def cloudflared_logged_in() -> bool:
 
 
 def tunnel_exists(name: str) -> bool:
-    result = _run(["cloudflared", "tunnel", "list"], capture_output=True, text=True)
-    return result.returncode == 0 and name in (result.stdout or "")
+    for args in (
+        ["cloudflared", "tunnel", "list", "--name", name, "--output", "json"],
+        ["cloudflared", "tunnel", "list", "--output", "json"],
+    ):
+        result = _run(args, capture_output=True, text=True)
+        if result.returncode != 0:
+            continue
+        try:
+            tunnels = json.loads(result.stdout or "[]")
+        except json.JSONDecodeError:
+            return False
+        return any(str(item.get("name")) == name for item in tunnels)
+    return False
 
 
 def cloudflared_login() -> bool:
@@ -191,8 +227,10 @@ def command_connect(
 
     if not hostname:
         configured = read_env(env_file).get("MCP_BASE_URL", "")
-        derived = derive_connect_hostname(configured) if configured else None
         zone = ""
+        derived = None
+        if configured and current_provider in ("", "cloudflare", "cf"):
+            derived = derive_connect_hostname(configured)
         if configured and derived is None:
             print(f"ℹ {configured} belongs to another tunnel provider; it will not be reused.")
             print("  Pick a fresh hostname on your Cloudflare domain (e.g. mcp.example.com).")

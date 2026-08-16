@@ -1,5 +1,8 @@
 from pathlib import Path
 
+import os
+import subprocess
+
 import pytest
 
 from gate_cli import connect
@@ -156,3 +159,96 @@ def test_connect_fails_cleanly_when_dns_route_fails(monkeypatch, tmp_path, capsy
 
     assert connect.command_connect("cf", hostname="mcp.example.com") == 1
     assert "Could not route DNS" in capsys.readouterr().out
+
+
+def test_tunnel_exists_matches_exact_name(monkeypatch):
+    def run(command, **kwargs):
+        stdout = '[{"name": "gate", "id": "1"}]' if "--name" in command else "[]"
+        return subprocess.CompletedProcess(command, 0, stdout=stdout)
+
+    monkeypatch.setattr(connect, "_run", run)
+    assert connect.tunnel_exists("gate") is True
+
+
+def test_tunnel_exists_ignores_longer_names(monkeypatch):
+    def run(command, **kwargs):
+        if "--name" in command:
+            return subprocess.CompletedProcess(command, 1, stdout="")
+        return subprocess.CompletedProcess(command, 0, stdout='[{"name": "gate-prod"}]')
+
+    monkeypatch.setattr(connect, "_run", run)
+    assert connect.tunnel_exists("gate") is False
+
+
+def test_connect_never_reuses_url_from_other_provider(monkeypatch, tmp_path, capsys):
+    env_file = _patch(monkeypatch, tmp_path)
+    env_file.parent.mkdir(parents=True, exist_ok=True)
+    env_file.write_text("TUNNEL_PROVIDER=external\nMCP_BASE_URL=https://mcp.example.com\n")
+    routed = []
+    monkeypatch.setattr(connect, "route_dns", lambda name, hostname: routed.append(hostname) or True)
+
+    assert connect.command_connect("cf", input_func=lambda _: "api.example.com") == 0
+    assert routed == ["api.example.com"]
+    out = capsys.readouterr().out
+    assert "Switching tunnel provider from external to cloudflare" in out
+    assert "belongs to another tunnel provider; it will not be reused" in out
+    written = env_file.read_text()
+    assert "MCP_BASE_URL=https://api.example.com" in written
+
+
+def test_install_cloudflared_linux_amd64(monkeypatch, tmp_path):
+    calls = []
+
+    def run(command, **kwargs):
+        calls.append(command)
+        if command[:2] == ["curl", "-fsSL"]:
+            Path(command[4]).write_bytes(b"#!cloudflared\n")
+        return subprocess.CompletedProcess(command, 0)
+
+    monkeypatch.setattr(connect.platform, "system", lambda: "Linux")
+    monkeypatch.setattr(connect.platform, "machine", lambda: "x86_64")
+    monkeypatch.setattr(connect, "_run", run)
+    monkeypatch.setenv("GATE_ROOT", str(tmp_path))
+    old_path = os.environ.get("PATH", "")
+    try:
+        assert connect.install_cloudflared() is True
+        assert str(tmp_path / "runtime" / "bin") in os.environ["PATH"]
+    finally:
+        os.environ["PATH"] = old_path
+
+    url = next(c for c in calls if c[:2] == ["curl", "-fsSL"])[2]
+    assert url.endswith("cloudflared-linux-amd64")
+    binary = tmp_path / "runtime" / "bin" / "cloudflared"
+    assert binary.exists()
+    assert binary.stat().st_mode & 0o111
+
+
+def test_install_cloudflared_linux_arm64(monkeypatch, tmp_path):
+    calls = []
+
+    def run(command, **kwargs):
+        calls.append(command)
+        if command[:2] == ["curl", "-fsSL"]:
+            Path(command[4]).write_bytes(b"#!cloudflared\n")
+        return subprocess.CompletedProcess(command, 0)
+
+    monkeypatch.setattr(connect.platform, "system", lambda: "Linux")
+    monkeypatch.setattr(connect.platform, "machine", lambda: "aarch64")
+    monkeypatch.setattr(connect, "_run", run)
+    monkeypatch.setenv("GATE_ROOT", str(tmp_path))
+    old_path = os.environ.get("PATH", "")
+    try:
+        assert connect.install_cloudflared() is True
+    finally:
+        os.environ["PATH"] = old_path
+
+    url = next(c for c in calls if c[:2] == ["curl", "-fsSL"])[2]
+    assert url.endswith("cloudflared-linux-arm64")
+
+
+def test_install_cloudflared_linux_unsupported_arch(monkeypatch, tmp_path, capsys):
+    monkeypatch.setattr(connect.platform, "system", lambda: "Linux")
+    monkeypatch.setattr(connect.platform, "machine", lambda: "mips64")
+    monkeypatch.setenv("GATE_ROOT", str(tmp_path))
+    assert connect.install_cloudflared() is False
+    assert "Unsupported Linux architecture" in capsys.readouterr().out

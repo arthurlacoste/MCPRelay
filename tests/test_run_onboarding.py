@@ -574,6 +574,61 @@ def test_onboarding_cloudflare_connect_uses_named_tunnel(tmp_path):
     assert "CLOUDFLARED_TUNNEL_NAME=gate" in config
     assert "OAUTH_ACCESS_SECRET=" in config
 
+
+def test_connect_then_setup_routes_dns_once(tmp_path):
+    script, env = _sandbox(tmp_path, "OAUTH_ACCESS_SECRET_HASH=$argon2id$old\n")
+    shutil.copytree(RUN_SCRIPT.parent / "src", tmp_path / "src", ignore=shutil.ignore_patterns("__pycache__"))
+    calls_log = tmp_path / "cloudflared_calls.log"
+    fake_bin = tmp_path / "bin"
+    _write_executable(
+        fake_bin / "cloudflared",
+        "#!/usr/bin/env bash\n"
+        'log="${CLOUDFLARED_CALLS_LOG:?}"\n'
+        'case "$*" in\n'
+        '  "tunnel list --name gate --output json") printf \'[{"name": "gate", "id": "fake"}]\'; echo "$*" >> "$log"; exit 0 ;;\n'
+        '  "tunnel list --output json") printf \'[{"name": "gate", "id": "fake"}]\'; echo "$*" >> "$log"; exit 0 ;;\n'
+        '  "tunnel list") printf "gate\\n"; echo "$*" >> "$log"; exit 0 ;;\n'
+        '  "tunnel create gate") echo "$*" >> "$log"; exit 0 ;;\n'
+        '  "tunnel route dns gate mcp.example.com")\n'
+        '    if [ -s "$log" ] && grep -q "tunnel route dns gate mcp.example.com" "$log"; then exit 1; fi\n'
+        '    echo "$*" >> "$log"; exit 0 ;;\n'
+        '  "tunnel login") echo "$*" >> "$log"; exit 0 ;;\n'
+        "esac\n"
+        'echo "unexpected cloudflared call: $*" >&2; exit 9\n',
+    )
+    env["PATH"] = f"{fake_bin}:{env['PATH']}"
+    env["HOME"] = str(tmp_path)
+    env["CLOUDFLARED_CALLS_LOG"] = str(calls_log)
+
+    result = subprocess.run(
+        [str(script), "connect", "cf", "--name", "gate", "--hostname", "mcp.example.com", "--yes"],
+        cwd=tmp_path,
+        env=env,
+        text=True,
+        capture_output=True,
+        timeout=30,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    route_line = "tunnel route dns gate mcp.example.com"
+    assert calls_log.read_text().count(route_line) == 1
+
+    result = subprocess.run(
+        [str(script), "setup"],
+        cwd=tmp_path,
+        env=env,
+        text=True,
+        capture_output=True,
+        timeout=30,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert calls_log.read_text().count(route_line) == 1
+    config = (tmp_path / "config" / ".env").read_text()
+    assert "MCP_BASE_URL=https://mcp.example.com" in config
+    assert "CLOUDFLARED_TUNNEL_NAME=gate" in config
+    assert "OAUTH_ACCESS_SECRET=" in config
+
 def test_onboarding_copies_generated_secret_when_clipboard_exists():
     content = RUN_SCRIPT.read_text()
     assert "copy_access_secret" in content

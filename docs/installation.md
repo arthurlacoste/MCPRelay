@@ -131,10 +131,10 @@ Install `cloudflared`:
 # macOS
 brew install cloudflared
 
-# Debian/Ubuntu
+# Debian/Ubuntu (x86_64; use cloudflared-linux-arm64 on ARM64)
 curl -L https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 \
-  -o /usr/local/bin/cloudflared
-chmod +x /usr/local/bin/cloudflared
+  -o ~/.local/bin/cloudflared
+chmod +x ~/.local/bin/cloudflared
 
 # Windows
 winget install --id Cloudflare.cloudflared
@@ -171,7 +171,7 @@ gate connect cf
 gate connect cf --name gate --hostname mcp.example.com
 ```
 
-`gate connect cf` installs `cloudflared` when missing (after a prompt unless `--yes`), logs in only when not already logged in, creates the tunnel if it does not exist, routes DNS, and writes `TUNNEL_PROVIDER=cloudflare`, `CLOUDFLARED_TUNNEL_NAME`, `MCP_BASE_URL`, and the OAuth issuer values to `config/.env`. It does not complete OAuth; when the required secrets are still missing it tells you to run `gate setup`. `gate connect cloudflare` is accepted as an alias.
+`gate connect cf` installs `cloudflared` when missing (after a prompt unless `--yes`; macOS uses Homebrew, Windows uses winget, and Linux downloads the correct `cloudflared-linux-<arch>` binary for your machine into `~/.gate/runtime/bin` — no `sudo` needed), logs in only when not already logged in, creates the tunnel if it does not exist, routes DNS, and writes `TUNNEL_PROVIDER=cloudflare`, `CLOUDFLARED_TUNNEL_NAME`, `MCP_BASE_URL`, and the OAuth issuer values to `config/.env`. It does not complete OAuth; when the required secrets are still missing it tells you to run `gate setup`. `gate setup` then reuses the hostname you configured and does not re-run DNS provisioning. `gate connect cloudflare` is accepted as an alias.
 
 The hostname you type is the full public subdomain on your Cloudflare domain. For example, with `mcp.example.com`, `cloudflared tunnel route dns gate mcp.example.com` creates a CNAME on your zone (`example.com`) pointing the `mcp` subdomain at the tunnel, and Gate stores `MCP_BASE_URL=https://mcp.example.com`. When no hostname is given, `gate connect cf` prompts for one with the default `mcp.<zone>` (the zone is read from `~/.cloudflared/cert.pem`); press Enter to accept it or type another subdomain — a single label like `mcp` is completed to `mcp.<zone>`. If an existing `MCP_BASE_URL` from another provider (ngrok, Tailscale, quick tunnel) is present, `gate connect cf` refuses to reuse it and prompts for a fresh hostname instead — it never mixes a foreign URL into your Cloudflare domain.
 
