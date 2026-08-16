@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import shutil
 import subprocess
+import sys
 import tarfile
 import tempfile
 from dataclasses import replace
@@ -62,7 +63,7 @@ def install_archive_release(paths: GatePaths, archive: Path, tag: str, *, valida
     staging = Path(tempfile.mkdtemp(prefix=f"gate-{version}-", dir=paths.cache))
     try:
         with tarfile.open(archive, "r:gz") as handle:
-            handle.extractall(staging, filter="data")
+            _extract_safely(handle, staging)
         roots = [entry for entry in staging.iterdir() if entry.is_dir()]
         if len(roots) != 1:
             raise RuntimeError("Gate archive must contain exactly one root directory.")
@@ -78,6 +79,31 @@ def install_archive_release(paths: GatePaths, archive: Path, tag: str, *, valida
         return activate_release(paths, release, version, channel=channel, commit=commit)
     finally:
         shutil.rmtree(staging, ignore_errors=True)
+
+
+def _extract_safely(handle: tarfile.TarFile, destination: Path) -> None:
+    """Extract a release archive with path-traversal protection.
+
+    Python >= 3.12 ships the `data` filter, which also blocks links that point
+    outside the destination. Older Pythons (3.10/3.11, still supported by the
+    installer) get an equivalent pre-check: every member is resolved against
+    the destination and rejected if it escapes it.
+    """
+    destination = destination.resolve()
+    if sys.version_info >= (3, 12):
+        handle.extractall(destination, filter="data")
+        return
+    for member in handle.getmembers():
+        target = (destination / member.name).resolve()
+        if target != destination and destination not in target.parents:
+            raise RuntimeError(f"Archive member escapes the staging directory: {member.name}")
+        if member.issym() or member.islnk():
+            link = Path(member.linkname)
+            if not link.is_absolute():
+                resolved = (destination / member.name).resolve().parent / member.linkname
+                if destination not in resolved.resolve().parents:
+                    raise RuntimeError(f"Archive link escapes the staging directory: {member.name}")
+    handle.extractall(destination)
 
 
 def validate_release(release: Path, *, runner=subprocess.run, uv: str | None = None) -> None:
