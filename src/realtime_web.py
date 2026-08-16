@@ -130,13 +130,22 @@ def register_realtime_routes(app, store: RealtimeCallStore, logs_dir: Path) -> N
     def realtime_calls(request: Request):
         if not _authenticated(request):
             return JSONResponse({"error": "unauthorized"}, status_code=401, headers={"WWW-Authenticate": "Bearer"})
-        return store.snapshot()
+        return store.summary_snapshot()
+
+    @app.get("/rt/api/calls/{execution_id}")
+    def realtime_call(execution_id: str, request: Request):
+        if not _authenticated(request):
+            return JSONResponse({"error": "unauthorized"}, status_code=401)
+        item = store.get_call(execution_id)
+        if item is None:
+            return JSONResponse({"error": "not_found"}, status_code=404)
+        return item
 
     @app.get("/rt/api/calls/{execution_id}/log")
     def realtime_log(execution_id: str, request: Request, offset: int = 0, limit: int = 262144):
         if not _authenticated(request):
             return JSONResponse({"error": "unauthorized"}, status_code=401)
-        item = next((call for call in store.snapshot()["calls"] if call["execution_id"] == execution_id), None)
+        item = store.get_call(execution_id)
         if not item or not item.get("log_ref"):
             return JSONResponse({"error": "not_found"}, status_code=404)
         return JSONResponse(read_call_log(logs_dir / Path(item["log_ref"]).name, offset, min(limit, 262144)))

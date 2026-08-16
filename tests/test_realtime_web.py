@@ -58,8 +58,9 @@ def test_realtime_assets_are_authenticated(tmp_path, monkeypatch):
     assert "const start = timing(left).end" in script.text
     assert '<h3>Timing ›</h3>' in script.text
     assert '<h3>Fields ›</h3>' in script.text
-    assert "call.payload || call.command" in script.text
-    assert "call.result || resultCache" in script.text
+    assert "detailValue(call, 'payload'" in script.text
+    assert "detailCache = new Map()" in script.text
+    assert "async function loadDetail(call)" in script.text
     assert "function directoryLabel(path)" in script.text
     assert "call.working_directory" in script.text
     assert "let coveredUntil = timing(coveredBy).end" in script.text
@@ -139,10 +140,23 @@ def test_realtime_login_rejects_oversized_body_before_form_parsing(tmp_path):
 
 def test_realtime_api_returns_trajectory_snapshot_when_authenticated(tmp_path, monkeypatch):
     store = RealtimeCallStore()
-    store.update({"execution_id": "x1", "status": "success", "tool": "read", "command": "echo ok"})
+    store.update({
+        "execution_id": "x1", "status": "success", "tool": "read", "command": "echo ok",
+        "payload": {"query": "test"}, "result": {"ok": True}, "fields": {"query": "test"},
+    })
     app = FastAPI()
     realtime_web.register_realtime_routes(app, store, tmp_path)
     monkeypatch.setattr(realtime_web, "_authenticated", lambda request: True)
     response = TestClient(app).get("/rt/api/calls")
     assert response.status_code == 200
-    assert response.json()["calls"][0]["execution_id"] == "x1"
+    summary = response.json()["calls"][0]
+    assert summary["execution_id"] == "x1"
+    assert {"command", "payload", "result", "fields"}.isdisjoint(summary)
+
+    detail = TestClient(app).get("/rt/api/calls/x1")
+    assert detail.status_code == 200
+    assert detail.json()["command"] == "echo ok"
+    assert '"query": "test"' in detail.json()["payload"]
+
+    missing = TestClient(app).get("/rt/api/calls/missing")
+    assert missing.status_code == 404

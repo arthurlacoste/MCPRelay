@@ -6,6 +6,8 @@ const state = {
   query: '', conversation: null, selected: null, tab: 'summary', pendingBottomScroll: true,
 }
 const resultCache = new Map()
+const detailCache = new Map()
+const detailPending = new Set()
 
 function escapeHtml(value) {
   return String(value ?? '').replace(/[&<>"']/g, char => (
@@ -303,6 +305,16 @@ function currentCall() {
   return projectedCalls().find(call => call.execution_id === state.selected) || null
 }
 
+function detailedCall(call) {
+  return call ? { ...call, ...(detailCache.get(call.execution_id) || {}) } : null
+}
+
+function detailValue(call, name, fallback) {
+  if (call[name]) return call[name]
+  if (!call.synthetic && !detailCache.has(call.execution_id)) return 'Loading…'
+  return fallback
+}
+
 function summaryHtml(call) {
   const range = timing(call)
   const fields = Object.entries(call.fields || {})
@@ -316,8 +328,8 @@ function summaryHtml(call) {
     <dt>Duration</dt><dd>${formatDuration(range.duration)}</dd>
   </dl>
   ${fieldsSection}
-  <section class="section"><h3>Payload ›</h3><pre>${escapeHtml(call.payload || call.command || call.preview || 'No payload')}</pre></section>
-  <section class="section"><h3>Result ›</h3><pre id="summary-result">${escapeHtml(call.result || resultCache.get(call.execution_id) || 'Loading…')}</pre></section>
+  <section class="section"><h3>Payload ›</h3><pre>${escapeHtml(detailValue(call, 'payload', call.command || call.preview || 'No payload'))}</pre></section>
+  <section class="section"><h3>Result ›</h3><pre id="summary-result">${escapeHtml(call.result || resultCache.get(call.execution_id) || detailValue(call, 'result', 'No output log available.'))}</pre></section>
   <section class="section"><h3>Timing ›</h3><dl class="overview compact-overview">
     <dt>Started</dt><dd>${formatTime(range.start)}</dd><dt>Finished</dt><dd>${call.finished_at ? formatTime(range.end) : 'Running'}</dd>
     <dt>Duration</dt><dd>${formatDuration(range.duration)}</dd><dt>Source</dt><dd>${call.synthetic ? 'Previous tool result → next tool call' : 'Gate timestamps'}</dd>
@@ -326,8 +338,8 @@ function summaryHtml(call) {
 
 function detailHtml(call) {
   const range = timing(call)
-  if (state.tab === 'payload') return `<pre>${escapeHtml(call.payload || call.command || call.preview || 'No payload')}</pre>`
-  if (state.tab === 'result') return `<pre>${escapeHtml(call.result || resultCache.get(call.execution_id) || 'Loading…')}</pre>`
+  if (state.tab === 'payload') return `<pre>${escapeHtml(detailValue(call, 'payload', call.command || call.preview || 'No payload'))}</pre>`
+  if (state.tab === 'result') return `<pre>${escapeHtml(call.result || resultCache.get(call.execution_id) || detailValue(call, 'result', 'No output log available.'))}</pre>`
   if (state.tab === 'timing') return `<dl class="overview">
     <dt>Started</dt><dd>${formatTime(range.start)}</dd><dt>Finished</dt><dd>${call.finished_at ? formatTime(range.end) : 'Running'}</dd>
     <dt>Duration</dt><dd>${formatDuration(range.duration)}</dd><dt>Source</dt><dd>${call.synthetic ? 'Previous tool result → next tool call' : 'Gate timestamps'}</dd>
@@ -352,8 +364,23 @@ async function loadResult(call) {
   renderDetail()
 }
 
+async function loadDetail(call) {
+  if (call.synthetic || detailCache.has(call.execution_id) || detailPending.has(call.execution_id)) return
+  detailPending.add(call.execution_id)
+  try {
+    const response = await fetch(`/rt/api/calls/${encodeURIComponent(call.execution_id)}`)
+    detailCache.set(call.execution_id, response.ok ? await response.json() : {})
+  } catch {
+    detailCache.set(call.execution_id, {})
+  } finally {
+    detailPending.delete(call.execution_id)
+  }
+  if (state.selected === call.execution_id) renderDetail()
+}
+
 function renderDetail() {
-  const call = currentCall()
+  const summary = currentCall()
+  const call = detailedCall(summary)
   const inspector = $('#inspector')
   inspector.hidden = !call
   if (!call) return
@@ -363,7 +390,8 @@ function renderDetail() {
   document.querySelectorAll('.detail-tabs button').forEach(button => {
     button.classList.toggle('active', button.dataset.tab === state.tab)
   })
-  loadResult(call)
+  if (!call.synthetic && !detailCache.has(call.execution_id)) loadDetail(call)
+  else loadResult(call)
 }
 
 function selectCall(id) {
@@ -384,6 +412,16 @@ async function load() {
   if (response.status === 401) { location.reload(); return }
   const payload = await response.json()
   state.calls = payload.calls || []
+  const knownIds = new Set(state.calls.map(call => call.execution_id))
+  for (const call of state.calls) {
+    const cached = detailCache.get(call.execution_id)
+    if (cached && (
+      cached.status !== call.status || cached.finished_at !== call.finished_at
+      || cached.duration_ms !== call.duration_ms
+    )) detailCache.delete(call.execution_id)
+  }
+  for (const id of detailCache.keys()) if (!knownIds.has(id)) detailCache.delete(id)
+  for (const id of resultCache.keys()) if (!knownIds.has(id) && !id.startsWith('thinking:')) resultCache.delete(id)
   if (state.conversation && !state.calls.some(call => turnKey(call) === state.conversation)) {
     state.conversation = null
     state.pendingBottomScroll = true

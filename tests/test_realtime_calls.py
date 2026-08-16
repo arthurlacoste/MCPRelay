@@ -81,6 +81,38 @@ def test_store_redacts_and_bounds_generic_payload_and_result():
     assert len(item["payload"]) == 32_000
 
 
+def test_metadata_only_store_drops_raw_payload_result_and_common_fields():
+    store = RealtimeCallStore(capture_raw_data=False)
+    activity_id = store.start_activity(
+        tool="skills_search",
+        payload={"query": "inline-secret"},
+        fields={"query": "inline-secret"},
+    )
+    store.finish_activity(activity_id, result={"token": "inline-secret"})
+
+    item = store.snapshot()["calls"][0]
+    assert item["payload"] == ""
+    assert item["result"] == ""
+    assert item["fields"] == {}
+
+
+def test_summary_snapshot_omits_heavy_detail_fields_and_get_call_keeps_them():
+    store = RealtimeCallStore()
+    store.update({
+        **call("detail", "success", datetime.now(UTC).isoformat(), command="echo detailed"),
+        "payload": {"query": "large"},
+        "result": {"ok": True},
+        "fields": {"query": "large"},
+    })
+
+    summary = store.summary_snapshot()["calls"][0]
+    detail = store.get_call("detail")
+    assert {"command", "payload", "result", "fields"}.isdisjoint(summary)
+    assert detail["command"] == "echo detailed"
+    assert '"query": "large"' in detail["payload"]
+    assert store.get_call("missing") is None
+
+
 def test_unserializable_activity_data_does_not_break_store(caplog):
     class BrokenPayload:
         def model_dump(self, *, mode):
