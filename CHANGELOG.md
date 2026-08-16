@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.29](https://github.com/spelcc/gate/compare/v0.1.28...v0.1.29) (2026-08-16)
+
+
+### Added
+
+* **rt:** add realtime call trajectory UI ([#72](https://github.com/spelcc/gate/issues/72)) ([d3cfd01](https://github.com/spelcc/gate/commit/d3cfd013d07c44e17078992bfc8b2f735599b2b2))
+
 ## [0.1.28](https://github.com/spelcc/gate/compare/v0.1.27...v0.1.28) (2026-08-16)
 
 
