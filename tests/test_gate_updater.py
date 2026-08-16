@@ -50,11 +50,18 @@ def test_extract_safely_accepts_wellformed_archive(tmp_path):
     assert (destination / "release" / "VERSION").read_text() == "0.2.0"
 
 
-def test_extract_safely_rejects_absolute_path_members(tmp_path):
+def test_extract_safely_never_writes_outside_for_absolute_members(tmp_path):
+    # The 3.10/3.11 fallback rejects absolute names outright; Python 3.12+
+    # sanitizes them before the data filter, so nothing escapes either way.
     archive = _tar_from(tmp_path, {"/etc/evil": b"boom"})
+    destination = tmp_path / "dest"
     with tarfile.open(archive, "r:gz") as handle:
-        with pytest.raises(_extract_errors(), match="(?i)(escape|absolute|outside)"):
-            _extract_safely(handle, tmp_path / "dest")
+        if sys.version_info >= (3, 12):
+            _extract_safely(handle, destination)
+        else:
+            with pytest.raises(RuntimeError, match="(?i)escape"):
+                _extract_safely(handle, destination)
+    assert not Path("/etc/evil").exists()
 
 
 def test_extract_safely_uses_data_filter_on_new_python(tmp_path, monkeypatch):
