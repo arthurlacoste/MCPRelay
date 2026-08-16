@@ -143,8 +143,11 @@ ensure_tunnel_provider() {
             if [ -n "$tunnel_name" ]; then
                 cloudflared tunnel list >/dev/null 2>&1 \
                     || die "cloudflared is not logged in to Cloudflare. Run 'cloudflared tunnel login', then retry."
-                cloudflared tunnel list 2>/dev/null | grep -qw "$tunnel_name" \
-                    || die "Cloudflare tunnel '$tunnel_name' does not exist. Run 'cloudflared tunnel create $tunnel_name' or './run.sh setup'."
+                local tunnel_list_json
+                tunnel_list_json="$(cloudflared tunnel list --output json 2>/dev/null || echo '[]')"
+                if ! printf '%s' "$tunnel_list_json" | python3 -c "import sys,json; tunnels=json.load(sys.stdin); sys.exit(0 if any(t.get('name')=='$tunnel_name' for t in tunnels) else 1)"; then
+                    die "Cloudflare tunnel '$tunnel_name' does not exist. Run 'cloudflared tunnel create $tunnel_name' or './run.sh setup'."
+                fi
             fi
             ;;
         external) ;;
@@ -390,7 +393,9 @@ setup_cloudflared_connect() {
         info "Log in to Cloudflare (a browser window will open)."
         cloudflared tunnel login || die "Cloudflare login failed. Run 'cloudflared tunnel login' manually, then retry."
     fi
-    if ! cloudflared tunnel list 2>/dev/null | grep -qw "$tunnel_name"; then
+    local tunnel_list_json
+    tunnel_list_json="$(cloudflared tunnel list --output json 2>/dev/null || echo '[]')"
+    if ! printf '%s' "$tunnel_list_json" | python3 -c "import sys,json; tunnels=json.load(sys.stdin); sys.exit(0 if any(t.get('name')=='$tunnel_name' for t in tunnels) else 1)"; then
         cloudflared tunnel create "$tunnel_name" || die "Could not create Cloudflare tunnel '$tunnel_name'."
     fi
     cf_hostname="${MCP_BASE_URL:-$(env_value MCP_BASE_URL)}"
@@ -401,6 +406,10 @@ setup_cloudflared_connect() {
     fi
     cf_hostname="$(printf '%s' "$cf_hostname" | sed -E 's#^https?://##; s#/.*$##')"
     [ -n "$cf_hostname" ] || die "A public hostname is required for a Cloudflare connect tunnel."
+    # Reject foreign provider hostnames (ngrok, Tailscale, quick tunnel, etc.)
+    if printf '%s' "$cf_hostname" | grep -qiE '(ngrok-free\.dev|ngrok\.app|ngrok\.io|trycloudflare\.com|localtunnel\.me|serveo\.net|\.ts\.net|nip\.io)'; then
+        die "Hostname '$cf_hostname' belongs to another tunnel provider. Use a hostname on your Cloudflare domain instead."
+    fi
     # A completed 'gate connect cf' already routed this hostname and stored
     # CLOUDFLARED_TUNNEL_NAME + MCP_BASE_URL. Re-running setup to finish OAuth
     # must not route DNS again: the CNAME already exists and Cloudflare rejects
@@ -813,7 +822,7 @@ if [ "${1:-}" = "connect" ]; then
     shift
     ensure_python_environment
     export GATE_PROJECT_DIR="${GATE_PROJECT_DIR:-$PROJECT_DIR}"
-    export PYTHONPATH="${PYTHONPATH:-$PROJECT_DIR/src}"
+    export PYTHONPATH="$PROJECT_DIR/src${PYTHONPATH:+:$PYTHONPATH}"
     exec "$PROJECT_DIR/.venv/bin/python" -m gate_cli connect "$@"
 fi
 

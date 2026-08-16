@@ -225,9 +225,9 @@ def command_connect(
             print(f"Could not create Cloudflare tunnel '{name}'.")
             return 1
 
+    zone = ""
     if not hostname:
         configured = read_env(env_file).get("MCP_BASE_URL", "")
-        zone = ""
         derived = None
         if configured and current_provider in ("", "cloudflare", "cf"):
             derived = derive_connect_hostname(configured)

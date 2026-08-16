@@ -124,6 +124,15 @@ def test_connect_appends_zone_to_single_label_input(monkeypatch, tmp_path, capsy
     assert "MCP_BASE_URL=https://mcp.irz.fr" in written
 
 
+def test_connect_appends_zone_to_hostname_parameter(monkeypatch, tmp_path):
+    env_file = _patch(monkeypatch, tmp_path)
+    monkeypatch.setattr(connect, "cloudflare_zone", lambda: "irz.fr")
+
+    assert connect.command_connect("cf", hostname="mcp") == 0
+    written = env_file.read_text()
+    assert "MCP_BASE_URL=https://mcp.irz.fr" in written
+
+
 def test_cloudflare_zone_returns_empty_when_no_cert(monkeypatch, tmp_path):
     monkeypatch.setattr(connect.Path, "home", classmethod(lambda cls: tmp_path))
     assert connect.cloudflare_zone() == ""

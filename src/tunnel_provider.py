@@ -51,9 +51,7 @@ def require_cli(provider: str, which=None) -> str:
     if provider == "cloudflare":
         raise TunnelConfigurationError(
             "cloudflared was not found. Install it (macOS: 'brew install cloudflared', "
-            "Linux: 'curl -L https://github.com/cloudflare/cloudflared/releases/latest/download/"
-            "cloudflared-linux-amd64 -o /usr/local/bin/cloudflared && chmod +x /usr/local/bin/cloudflared', "
-            "Windows: 'winget install --id Cloudflare.cloudflared'), then retry."
+            "Linux/Windows: run 'gate connect cf' which installs it automatically), then retry."
         )
     raise TunnelConfigurationError(
         "ngrok was not found. Install ngrok and configure its authtoken, then retry."
