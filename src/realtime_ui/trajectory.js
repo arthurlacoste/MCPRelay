@@ -89,18 +89,21 @@ function syntheticThinking(left, right) {
 function projectedCalls() {
   const real = orderedCalls()
   if (!state.showThinking) return real
-  const byConversation = new Map()
-  for (const call of real.filter(isToolActivity)) {
-    const key = turnKey(call)
-    const group = byConversation.get(key) || []
-    group.push(call)
-    byConversation.set(key, group)
-  }
+  const tools = real.filter(isToolActivity).sort((left, right) => timing(left).start - timing(right).start)
   const thinking = []
-  for (const group of byConversation.values()) {
-    for (let index = 1; index < group.length; index += 1) {
-      const item = syntheticThinking(group[index - 1], group[index])
-      if (item) thinking.push(item)
+  if (tools.length) {
+    let coveredBy = tools[0]
+    let coveredUntil = timing(coveredBy).end
+    for (let index = 1; index < tools.length; index += 1) {
+      const next = tools[index]
+      if (timing(next).start > coveredUntil) {
+        const item = syntheticThinking(coveredBy, next)
+        if (item) thinking.push(item)
+      }
+      if (timing(next).end >= coveredUntil) {
+        coveredBy = next
+        coveredUntil = timing(next).end
+      }
     }
   }
   return [...real, ...thinking].sort((left, right) => timing(left).start - timing(right).start)
@@ -166,8 +169,33 @@ function renderConversations() {
 function renderTimeline() {
   const calls = visibleTimelineCalls()
   const host = $('#spans')
-  if (!calls.length) { host.innerHTML = ''; return }
+  const labels = document.querySelectorAll('.lane-labels span')
+  if (!calls.length) {
+    host.innerHTML = ''
+    $('.timeline').style.height = '58px'
+    ;[9, 25, 41].forEach((top, index) => { labels[index].style.top = `${top}px` })
+    return
+  }
   const ranges = calls.map(timing)
+  const levels = calls.map(() => 0)
+  const laneLevels = [1, 1, 1]
+  if (state.mode === 'duration') {
+    const occupiedUntil = [[], [], []]
+    calls.forEach((call, index) => {
+      const callLane = lane(call)
+      const range = ranges[index]
+      let level = occupiedUntil[callLane].findIndex(end => end <= range.start)
+      if (level < 0) level = occupiedUntil[callLane].length
+      occupiedUntil[callLane][level] = range.end
+      levels[index] = level
+      laneLevels[callLane] = Math.max(laneLevels[callLane], level + 1)
+    })
+  }
+  const laneOffsets = [0, laneLevels[0] * 12 + 4, (laneLevels[0] + laneLevels[1]) * 12 + 8]
+  const contentHeight = laneLevels.reduce((sum, count) => sum + count * 12, 0) + 8
+  $('.timeline').style.height = `${Math.max(58, contentHeight + 16)}px`
+  host.style.height = `${contentHeight}px`
+  laneOffsets.forEach((top, index) => { labels[index].style.top = `${top + 9}px` })
   const domainStart = Math.min(...ranges.map(range => range.start))
   const domainEnd = Math.max(...ranges.map(range => range.end))
   const domain = Math.max(1, domainEnd - domainStart)
@@ -185,9 +213,9 @@ function renderTimeline() {
       'span', call.status === 'failed' ? 'error' : '',
       call.execution_id === state.selected ? 'selected' : '', matches(call) ? '' : 'filtered',
     ].filter(Boolean).join(' ')
-    const gap = sequential ? 1 : 0
+    const gap = call.kind === 'thinking' ? 2 : 1
     return `${boundary}<button class="${classes}" data-id="${escapeHtml(call.execution_id)}"
-      data-lane="${lane(call)}" style="left:calc(${left}% + ${gap}px);width:max(2px,calc(${width}% - ${gap * 2}px))"
+      data-lane="${lane(call)}" style="top:${laneOffsets[lane(call)] + levels[index] * 12}px;left:calc(${left}% + ${gap}px);width:max(1px,calc(${width}% - ${gap * 2}px))"
       title="${escapeHtml(call.tool)} · ${formatDuration(range.duration)}"></button>`
   }).join('')
   host.querySelectorAll('.span').forEach(span => {
