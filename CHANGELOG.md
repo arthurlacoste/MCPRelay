@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.31](https://github.com/spelcc/gate/compare/v0.1.30...v0.1.31) (2026-08-16)
+
+
+### Fixed
+
+* **rt:** place thinking after command completion ([#79](https://github.com/spelcc/gate/issues/79)) ([ad89c0c](https://github.com/spelcc/gate/commit/ad89c0c881c7f921e91f659aa4bf09b537a164e6))
+
 ## [0.1.30](https://github.com/spelcc/gate/compare/v0.1.29...v0.1.30) (2026-08-16)
 
 
