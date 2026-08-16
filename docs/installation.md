@@ -161,7 +161,7 @@ The setup flow:
 3. Asks for a public hostname (for example `mcp.example.com`) and routes it: `cloudflared tunnel route dns gate mcp.example.com`. The domain must be on the same Cloudflare account.
 4. Stores `CLOUDFLARED_TUNNEL_NAME=gate` and `MCP_BASE_URL=https://mcp.example.com` in `config/.env`.
 
-Gate then launches `cloudflared tunnel run --url http://127.0.0.1:8761 gate` on every start, reusing the same hostname. To choose the mode again, set `CLOUDFLARED_TUNNEL_NAME` (or remove it) in `config/.env` before re-running setup.
+Gate then launches `cloudflared tunnel run --url http://127.0.0.1:8761 gate` on every start, reusing the same hostname. The `--url` flag provides the single-origin ingress rule for a CLI-created tunnel (without any ingress, cloudflared answers 503). If you keep a `~/.cloudflared/config.yml` with **multiple** ingress rules, `cloudflared` rejects the `--url` flag with "You can't set the --url flag … when using multiple-origin ingress rules"; remove or simplify that file, or run the tunnel with its own ingress configuration. To choose the mode again, set `CLOUDFLARED_TUNNEL_NAME` (or remove it) in `config/.env` before re-running setup.
 
 The same flow is available as a one-shot CLI command, without running the interactive `./run.sh setup`:
 

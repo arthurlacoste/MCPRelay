@@ -562,6 +562,22 @@ def wait_for_tailscale_ready(process: subprocess.Popen | ExistingProcess, timeou
     raise StartupError(f"Tailscale Funnel did not become ready. Check {TAILSCALE_LOG}.")
 
 
+def _cloudflared_failure_hint(log_path: Path) -> str:
+    """Actionable hint when cloudflared exits with a known configuration issue."""
+    try:
+        tail = log_path.read_text(encoding="utf-8", errors="replace")[-4000:].lower()
+    except OSError:
+        return ""
+    if "multiple-origin ingress" in tail or "can't set the --url flag" in tail:
+        return (
+            " A ~/.cloudflared/config.yml with multiple ingress rules conflicts with the --url "
+            "flag Gate passes; remove or simplify it (or run the tunnel with its own ingress)."
+        )
+    if "invalid or missing tunnel credentials" in tail:
+        return " Tunnel credentials are missing; run 'cloudflared tunnel login' then 'gate connect cf' again."
+    return ""
+
+
 def wait_for_cloudflared_ready(process: subprocess.Popen | ExistingProcess, timeout: float = 20.0) -> None:
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
@@ -569,7 +585,7 @@ def wait_for_cloudflared_ready(process: subprocess.Popen | ExistingProcess, time
             raise ShutdownRequested
         code = process.poll()
         if code is not None and not isinstance(process, ExistingProcess):
-            raise StartupError(startup_failure_message("cloudflare", code))
+            raise StartupError(startup_failure_message("cloudflare", code) + _cloudflared_failure_hint(CLOUDFLARED_LOG))
         if cloudflared_public_url(CLOUDFLARED_LOG) or cloudflared_registered(CLOUDFLARED_LOG):
             return
         time.sleep(0.2)

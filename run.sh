@@ -384,7 +384,7 @@ open_temporary_cloudflared() {
 }
 
 setup_cloudflared_connect() {
-    local tunnel_name="$1" cf_hostname="" raw
+    local tunnel_name="$1" cf_hostname="" raw route_output
     info "Setting up your Cloudflare connect tunnel '$tunnel_name'"
     if ! cloudflared tunnel list >/dev/null 2>&1; then
         info "Log in to Cloudflare (a browser window will open)."
@@ -408,7 +408,15 @@ setup_cloudflared_connect() {
     if [ -n "$(env_value CLOUDFLARED_TUNNEL_NAME)" ] && [ -n "$(env_value MCP_BASE_URL)" ]; then
         info "Reusing already-configured Cloudflare connect hostname '$cf_hostname'."
     else
-        cloudflared tunnel route dns "$tunnel_name" "$cf_hostname" || die "Could not route DNS for '$cf_hostname'. Confirm the domain is on your Cloudflare account."
+        route_output="$(cloudflared tunnel route dns "$tunnel_name" "$cf_hostname" 2>&1)"
+        if [ $? -ne 0 ]; then
+            if printf '%s' "$route_output" | grep -qiE "already exists|duplicate|record exists"; then
+                warn "DNS record for '$cf_hostname' already exists; reusing it."
+            else
+                printf '%s\n' "$route_output" >&2
+                die "Could not route DNS for '$cf_hostname'. Confirm the domain is on your Cloudflare account."
+            fi
+        fi
     fi
     ONBOARDING_PUBLIC_URL="https://$cf_hostname"
 }

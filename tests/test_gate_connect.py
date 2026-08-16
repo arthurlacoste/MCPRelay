@@ -124,6 +124,40 @@ def test_connect_appends_zone_to_single_label_input(monkeypatch, tmp_path, capsy
     assert "MCP_BASE_URL=https://mcp.irz.fr" in written
 
 
+def test_connect_appends_zone_to_direct_hostname(monkeypatch, tmp_path, capsys):
+    env_file = _patch(monkeypatch, tmp_path)
+    monkeypatch.setattr(connect, "cloudflare_zone", lambda: "irz.fr")
+
+    # A single-label hostname passed directly (--hostname mcp) must not raise
+    # UnboundLocalError on the zone lookup.
+    assert connect.command_connect("cf", hostname="mcp") == 0
+
+    written = env_file.read_text()
+    assert "MCP_BASE_URL=https://mcp.irz.fr" in written
+
+
+def test_route_dns_tolerates_existing_record(monkeypatch):
+    monkeypatch.setattr(
+        connect,
+        "_run",
+        lambda cmd, **kwargs: subprocess.CompletedProcess(
+            cmd, 1, stdout="", stderr="A record already exists for 'mcp.example.com'"
+        ),
+    )
+
+    assert connect.route_dns("gate", "mcp.example.com") is True
+
+
+def test_route_dns_fails_on_unrelated_errors(monkeypatch):
+    monkeypatch.setattr(
+        connect,
+        "_run",
+        lambda cmd, **kwargs: subprocess.CompletedProcess(cmd, 1, stdout="", stderr="zone not found"),
+    )
+
+    assert connect.route_dns("gate", "mcp.example.com") is False
+
+
 def test_cloudflare_zone_returns_empty_when_no_cert(monkeypatch, tmp_path):
     monkeypatch.setattr(connect.Path, "home", classmethod(lambda cls: tmp_path))
     assert connect.cloudflare_zone() == ""
