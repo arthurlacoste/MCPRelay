@@ -30,7 +30,8 @@ function latestEventPurpose(calls) {
   let latestAt = -Infinity
   let latestPurpose = ''
   for (const call of calls || []) {
-    const purpose = String(call?.purpose || call?.tool || '').trim()
+    const purpose = String(call?.purpose || '').trim()
+      || String(call?.tool || '').trim()
     if (!purpose) continue
     const eventAt = timestamp(call?.started_at) ?? timestamp(call?.created_at)
     if (eventAt === null) {
