@@ -78,6 +78,8 @@ def test_realtime_assets_are_authenticated(tmp_path, monkeypatch):
     assert "detailCache = new Map()" in script.text
     assert "async function loadDetail(call)" in script.text
     assert "function directoryLabel(path)" in script.text
+    assert "ACTIVITY_FADE_MS = 60000" in script.text
+    assert "class=\"conversation-activity\"" in script.text
     assert "call.working_directory" in script.text
     assert "let coveredUntil = timing(coveredBy).end" in script.text
     assert "function allocateDurationLevels(calls, ranges, timelineWidth)" in script.text
@@ -112,6 +114,8 @@ def test_realtime_assets_are_authenticated(tmp_path, monkeypatch):
     assert ".ledger.compact .row { grid-template-columns: 26px minmax(120px, 1fr) 72px" in stylesheet.text
     assert ".sidebar { position: relative; z-index: 20; display: flex; flex: 0 0 58px" in stylesheet.text
     assert ".sidebar.drawer-open .conversation-drawer { transform: translateX(0); }" in stylesheet.text
+    assert ".conversation-activity" in stylesheet.text
+    assert "conversation-activity-fade 60s linear both" in stylesheet.text
 
 
 def test_realtime_ui_behavior_with_node():
