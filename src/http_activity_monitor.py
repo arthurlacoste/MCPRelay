@@ -3,6 +3,16 @@ from __future__ import annotations
 from urllib.parse import parse_qs
 
 
+
+OAUTH_METADATA_PATHS = frozenset({
+    "/.well-known/oauth-authorization-server/oauth",
+    "/.well-known/openid-configuration/oauth",
+    "/oauth/.well-known/oauth-authorization-server",
+    "/oauth/.well-known/openid-configuration",
+    "/.well-known/oauth-authorization-server",
+    "/.well-known/openid-configuration",
+})
+
 _activity_observer = None
 
 
@@ -22,7 +32,7 @@ def _activity_name(method: str, path: str) -> tuple[str, str] | None:
         return "oauth.token", "oauth"
     if path == "/oauth/jwks.json" and method == "GET":
         return "oauth.jwks", "oauth"
-    if "well-known" in path and method == "GET":
+    if path in OAUTH_METADATA_PATHS and method == "GET":
         return "oauth.metadata", "oauth"
     if path.startswith("/public-files/") and method == "GET":
         return "public_file.download", "http"
@@ -49,10 +59,11 @@ class OAuthActivityMiddleware:
             query = parse_qs(scope.get("query_string", b"").decode("utf-8", errors="ignore"))
             values = query.get("client_id")
             client_id = values[0] if values else None
+        purpose = "Download public file" if tool == "public_file.download" else f"{method} {path}"
         activity_id = observer.start_activity(
             tool=tool,
             kind=kind,
-            purpose=f"{method} {path}",
+            purpose=purpose,
             client_id=client_id,
         )
         status_code = 500

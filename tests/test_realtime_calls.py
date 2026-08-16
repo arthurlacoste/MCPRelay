@@ -1,4 +1,5 @@
 import os
+from pathlib import Path
 from datetime import UTC, datetime, timedelta
 
 from src.realtime_calls import RealtimeCallStore, format_age, read_call_log, shorten
@@ -200,3 +201,19 @@ def test_auto_conversation_id_is_stable_opaque_and_session_scoped():
     assert "raw-session-id-123" not in first
     assert realtime_calls.session_ref("raw-session-id-123").startswith("mcp_")
     assert "raw-session-id-123" not in realtime_calls.session_ref("raw-session-id-123")
+
+
+def test_snapshot_write_failure_does_not_break_activity(monkeypatch, tmp_path, caplog):
+    path = tmp_path / "realtime_calls.json"
+    store = RealtimeCallStore(snapshot_path=path)
+
+    def fail_write(_self, *_args, **_kwargs):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(Path, "write_text", fail_write)
+
+    activity_id = store.start_activity(tool="skills_search", purpose="Search skills")
+
+    assert activity_id.startswith("activity_")
+    assert store.snapshot()["calls"][0]["tool"] == "skills_search"
+    assert "snapshot" in caplog.text.lower()

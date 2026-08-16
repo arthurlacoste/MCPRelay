@@ -21,16 +21,21 @@ class GateActivityMiddleware(Middleware):
         if ctx is None:
             return {"conversation_id": None, "session_ref": None, "request_id": None, "client_id": None}
 
-        raw_session_id = ctx.session_id
         explicit = arguments.get("conversation_id")
         conversation_id = explicit if isinstance(explicit, str) and explicit.strip() else None
-        if conversation_id:
-            await ctx.set_state(CONVERSATION_STATE_KEY, conversation_id)
-        else:
-            conversation_id = await ctx.get_state(CONVERSATION_STATE_KEY)
-            if not isinstance(conversation_id, str) or not conversation_id:
-                conversation_id = auto_conversation_id(raw_session_id)
+        try:
+            raw_session_id = ctx.session_id
+        except RuntimeError:
+            raw_session_id = None
+
+        if raw_session_id is not None:
+            if conversation_id:
                 await ctx.set_state(CONVERSATION_STATE_KEY, conversation_id)
+            else:
+                conversation_id = await ctx.get_state(CONVERSATION_STATE_KEY)
+                if not isinstance(conversation_id, str) or not conversation_id:
+                    conversation_id = auto_conversation_id(raw_session_id)
+                    await ctx.set_state(CONVERSATION_STATE_KEY, conversation_id)
 
         try:
             request_id = str(ctx.request_id)
@@ -43,7 +48,7 @@ class GateActivityMiddleware(Middleware):
 
         return {
             "conversation_id": conversation_id,
-            "session_ref": session_ref(raw_session_id),
+            "session_ref": session_ref(raw_session_id) if raw_session_id is not None else None,
             "request_id": request_id,
             "client_id": client_id,
         }
@@ -91,8 +96,9 @@ class GateActivityMiddleware(Middleware):
             candidate = structured.get("conversation_id")
             if isinstance(candidate, str) and candidate.strip():
                 result_conversation_id = candidate
-        if result_conversation_id and context.fastmcp_context is not None:
-            await context.fastmcp_context.set_state(CONVERSATION_STATE_KEY, result_conversation_id)
+        if result_conversation_id:
+            if context.fastmcp_context is not None and activity_context.get("session_ref"):
+                await context.fastmcp_context.set_state(CONVERSATION_STATE_KEY, result_conversation_id)
             activity_context["conversation_id"] = result_conversation_id
 
         self.store.finish_activity(activity_id, status="success", **activity_context)

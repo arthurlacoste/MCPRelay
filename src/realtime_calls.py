@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import threading
 import re
 import secrets
@@ -17,6 +18,7 @@ MAX_PURPOSE_CHARS = 240
 MAX_TOOL_CHARS = 80
 MAX_COMMAND_CHARS = 8_000
 _ANSI_RE = re.compile(r"\x1b(?:\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1b\\))")
+LOGGER = logging.getLogger(__name__)
 
 
 def _opaque_session_digest(session_id: str) -> str:
@@ -272,14 +274,21 @@ class RealtimeCallStore:
     def _write_snapshot(self) -> None:
         if not self.snapshot_path:
             return
-        self.snapshot_path.parent.mkdir(parents=True, exist_ok=True)
         temp = self.snapshot_path.with_suffix(self.snapshot_path.suffix + ".tmp")
-        temp.write_text(json.dumps(self.snapshot(), ensure_ascii=False), encoding="utf-8")
         try:
-            temp.chmod(0o600)
-        except OSError:
-            pass
-        temp.replace(self.snapshot_path)
+            self.snapshot_path.parent.mkdir(parents=True, exist_ok=True)
+            temp.write_text(json.dumps(self.snapshot(), ensure_ascii=False), encoding="utf-8")
+            try:
+                temp.chmod(0o600)
+            except OSError:
+                pass
+            temp.replace(self.snapshot_path)
+        except OSError as exc:
+            LOGGER.warning("Could not write realtime activity snapshot: %s", exc)
+            try:
+                temp.unlink(missing_ok=True)
+            except OSError:
+                pass
 
 
 def load_snapshot(path: Path) -> dict:

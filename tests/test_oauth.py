@@ -675,3 +675,59 @@ def test_oauth_authorize_and_failed_token_are_correlated_without_secret_leak(oau
     assert token_call["http_status"] == 400
     assert registered["client_secret"] not in repr(calls)
     assert "invalid-code" not in repr(calls)
+
+
+def test_oauth_metadata_monitor_matches_only_known_well_known_paths():
+    from http_activity_monitor import _activity_name
+
+    known = {
+        "/.well-known/oauth-authorization-server/oauth",
+        "/.well-known/openid-configuration/oauth",
+        "/oauth/.well-known/oauth-authorization-server",
+        "/oauth/.well-known/openid-configuration",
+        "/.well-known/oauth-authorization-server",
+        "/.well-known/openid-configuration",
+    }
+    assert all(_activity_name("GET", path) == ("oauth.metadata", "oauth") for path in known)
+    assert _activity_name("GET", "/assets/well-known-logo.svg") is None
+    assert _activity_name("GET", "/other/.well-known/service") is None
+
+
+def test_public_file_activity_does_not_persist_share_token():
+    import asyncio
+
+    from http_activity_monitor import OAuthActivityMiddleware, set_activity_observer
+    from realtime_calls import RealtimeCallStore
+
+    store = RealtimeCallStore()
+    secret_share_id = "share-super-secret-token"
+
+    async def application(_scope, _receive, send):
+        await send({"type": "http.response.start", "status": 200, "headers": []})
+        await send({"type": "http.response.body", "body": b"ok"})
+
+    async def receive():
+        return {"type": "http.request", "body": b"", "more_body": False}
+
+    async def send(_message):
+        return None
+
+    previous = set_activity_observer(store)
+    try:
+        asyncio.run(OAuthActivityMiddleware(application)(
+            {
+                "type": "http",
+                "method": "GET",
+                "path": f"/public-files/{secret_share_id}",
+                "query_string": b"",
+            },
+            receive,
+            send,
+        ))
+    finally:
+        set_activity_observer(previous)
+
+    call = store.snapshot()["calls"][0]
+    assert call["tool"] == "public_file.download"
+    assert secret_share_id not in call["purpose"]
+    assert secret_share_id not in repr(call)

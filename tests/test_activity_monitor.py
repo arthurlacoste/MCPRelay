@@ -211,3 +211,40 @@ def test_cancelled_tool_activity_is_marked_cancelled():
     assert call["tool"] == "cancel_me"
     assert call["status"] == "cancelled"
     assert call["finished_at"] is not None
+
+
+def test_missing_mcp_session_does_not_break_tool_activity():
+    from types import SimpleNamespace
+
+    from activity_monitor import GateActivityMiddleware
+
+    class NoSessionContext:
+        @property
+        def session_id(self):
+            raise RuntimeError("no session")
+
+        @property
+        def request_id(self):
+            raise RuntimeError("no request")
+
+        @property
+        def client_id(self):
+            return None
+
+    store = RealtimeCallStore()
+    middleware = GateActivityMiddleware(store)
+    context = SimpleNamespace(
+        message=SimpleNamespace(name="skills_search", arguments={}),
+        fastmcp_context=NoSessionContext(),
+    )
+
+    async def call_next(_context):
+        return SimpleNamespace(structured_content=None)
+
+    asyncio.run(middleware.on_call_tool(context, call_next))
+
+    call = store.snapshot()["calls"][0]
+    assert call["status"] == "success"
+    assert call["conversation_id"] is None
+    assert call["session_ref"] is None
+    assert call["request_id"] is None
