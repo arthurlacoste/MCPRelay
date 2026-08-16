@@ -24,6 +24,8 @@ Public endpoints:
 - `<public-url>/oauth` — OAuth discovery and authorization
 - `<public-url>/rt` — authenticated real-time calls interface
 
+![Gate real-time calls interface](docs/assets/realtime-calls.webp)
+
 See the **[installation and usage guide](docs/installation.md)**, if you want to do it the hard way.
 
 ---
