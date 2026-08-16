@@ -5,6 +5,7 @@ const {
   extendRunCommandsThroughStateCalls,
   focusMobileSearch,
   handleDrawerKeydown,
+  hasActiveTextSelection,
   organizeLedgerCalls,
   syntheticThinking,
   syncConversationDrawerA11y,
@@ -22,6 +23,11 @@ const call = (tool, id, start, end, extra = {}) => ({
   tool, execution_id: id, conversation_id: 'turn-1', kind: 'tool', status: 'success',
   started_at: at(start), finished_at: at(end), duration_ms: end - start, ...extra,
 })
+
+assert.equal(hasActiveTextSelection({ isCollapsed: false, toString: () => 'copy me' }), true)
+assert.equal(hasActiveTextSelection({ isCollapsed: true, toString: () => 'copy me' }), false)
+assert.equal(hasActiveTextSelection({ isCollapsed: false, toString: () => '' }), false)
+assert.equal(hasActiveTextSelection(null), false)
 
 const interleaved = extendRunCommandsThroughStateCalls([
   call('run_command', 'run-a', 0, 100),
