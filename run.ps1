@@ -43,6 +43,7 @@ $Python = if (Get-Command py -ErrorAction SilentlyContinue) {
 if ($ConnectTs) {
     $SrcDir = Join-Path $ProjectDir "src"
     if ($env:PYTHONPATH) { $env:PYTHONPATH = "$SrcDir;$env:PYTHONPATH" } else { $env:PYTHONPATH = $SrcDir }
+    if (-not $env:GATE_PROJECT_DIR) { $env:GATE_PROJECT_DIR = $ProjectDir }
     & $Python -m gate_cli connect ts
     exit $LASTEXITCODE
 }

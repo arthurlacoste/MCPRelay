@@ -197,13 +197,26 @@ class ExistingFunnel:
     """A tunnel Gate did not start (e.g. an already-active Tailscale Funnel).
 
     Behaves like a process that is always running so the monitor keeps the
-    session alive without ever signalling a PID Gate does not own.
+    session alive without ever signalling a PID Gate does not own. A throttled
+    liveness re-check reports when the externally owned Funnel disappears, so
+    Gate does not claim a public URL that is dead.
     """
 
     pid: int | None = None
 
+    def __init__(self, min_check_interval: float = 10.0):
+        self._min_check_interval = min_check_interval
+        self._last_check = 0.0
+
     def poll(self):
-        return None
+        now = time.monotonic()
+        if now - self._last_check < self._min_check_interval:
+            return None
+        self._last_check = now
+        try:
+            return None if tailscale_public_url(port=NGROK_PORT) else 1
+        except TunnelConfigurationError:
+            return 1
 
     def wait(self, timeout=None):
         return None
@@ -566,9 +579,11 @@ def terminate_group(process: subprocess.Popen | ExistingProcess | ExistingFunnel
 
 
 
-def wait_for_tailscale_ready(process: subprocess.Popen | ExistingProcess, timeout: float = 10.0) -> None:
+def wait_for_tailscale_ready(process: subprocess.Popen | ExistingProcess | ExistingFunnel, timeout: float = 10.0) -> None:
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
+        if STOP_REQUESTED:
+            raise ShutdownRequested
         code = process.poll()
         if code is not None:
             raise StartupError(startup_failure_message("tailscale", code))

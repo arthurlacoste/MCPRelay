@@ -338,7 +338,7 @@ open_temporary_ngrok() {
 
 tailscale_funnel_url_from_json() {
     # Extract the public HTTPS URL from `tailscale funnel status --json`.
-    python3 -c 'import json,sys
+    "$PROJECT_DIR/.venv/bin/python" -c 'import json,sys
 try:
     data = json.load(sys.stdin)
 except Exception:
@@ -395,7 +395,8 @@ kill_stale_tailscale_funnels() {
     if [ "$(id -u)" = "0" ]; then
         printf '%s\n' "$pids" | xargs kill 2>/dev/null || true
     else
-        sudo kill $pids 2>/dev/null || printf '%s\n' "$pids" | xargs kill 2>/dev/null || true
+        printf '%s\n' "$pids" | xargs sudo -n kill 2>/dev/null \
+            || printf '%s\n' "$pids" | xargs kill 2>/dev/null || true
     fi
     for _ in $(seq 1 10); do
         remaining="$(pgrep -f "tailscale[[:space:]]+funnel[[:space:]]+--bg=false[[:space:]]+${NGROK_PORT}" 2>/dev/null || true)"
@@ -864,27 +865,21 @@ status() {
 
 parse_runtime_args() {
     RUNTIME_COMMAND=""
-    RUNTIME_CONNECT_PROVIDER=""
     local widget=false queue=false arg
     for arg in "$@"; do
         case "$arg" in
             --widget) widget=true ;;
             --queue|--realtime) queue=true ;;
-            start|stop|status|setup|renew-secret|connect)
+            start|stop|status|setup|renew-secret)
                 [ -z "$RUNTIME_COMMAND" ] || die "Only one command may be specified."
                 RUNTIME_COMMAND="$arg"
-                ;;
-            ts|ngrok)
-                [ "$RUNTIME_COMMAND" = connect ] || die "Tunnel provider '$arg' is only valid with: $0 connect <provider>"
-                [ -z "$RUNTIME_CONNECT_PROVIDER" ] || die "Only one tunnel provider may be specified."
-                RUNTIME_CONNECT_PROVIDER="$arg"
                 ;;
             *) die "Unknown option or command: $arg" ;;
         esac
     done
 
     case "$RUNTIME_COMMAND" in
-        stop|status|setup|renew-secret|connect)
+        stop|status|setup|renew-secret)
             if [ "$widget" = true ] || [ "$queue" = true ]; then
                 die "Runtime flags are only valid when starting Gate."
             fi
@@ -904,7 +899,7 @@ if [ "${1:-}" = "connect" ]; then
     shift
     ensure_python_environment
     export GATE_PROJECT_DIR="${GATE_PROJECT_DIR:-$PROJECT_DIR}"
-    export PYTHONPATH="${PYTHONPATH:-$PROJECT_DIR/src}"
+    export PYTHONPATH="$PROJECT_DIR/src${PYTHONPATH:+:$PYTHONPATH}"
     exec "$PROJECT_DIR/.venv/bin/python" -m gate_cli connect "$@"
 fi
 
@@ -921,11 +916,6 @@ case "${1:-}" in
     status)  status       ;;
     setup)   ensure_python_environment; ensure_onboarding ;;
     renew-secret) ensure_python_environment; ensure_onboarding true ;;
-    connect)
-        ensure_python_environment
-        [ -n "$RUNTIME_CONNECT_PROVIDER" ] || die "Usage: $0 connect {ts|ngrok}"
-        PYTHONPATH="$PROJECT_DIR/src" "$PROJECT_DIR/.venv/bin/python" -m gate_cli connect "$RUNTIME_CONNECT_PROVIDER"
-        ;;
     *)
         if [ $# -gt 0 ]; then
         echo "Usage: $0 [start] [--queue] [--widget]"

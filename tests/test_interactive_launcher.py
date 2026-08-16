@@ -196,6 +196,34 @@ def test_start_tailscale_starts_new_funnel_when_none_active(monkeypatch, tmp_pat
     popen.call_args.kwargs["stdout"].close()
 
 
+def test_existing_funnel_poll_detects_dead_funnel(monkeypatch):
+    times = iter([0.0, 100.0])
+    monkeypatch.setattr(interactive_launcher.time, "monotonic", lambda: next(times))
+    monkeypatch.setattr(
+        interactive_launcher,
+        "tailscale_public_url",
+        Mock(side_effect=interactive_launcher.TunnelConfigurationError),
+    )
+
+    funnel = interactive_launcher.ExistingFunnel()
+    assert funnel.poll() is None  # throttled: within the check interval
+    assert funnel.poll() == 1     # re-check: the Funnel is gone
+
+
+def test_existing_funnel_poll_keeps_none_while_active(monkeypatch):
+    times = iter([0.0, 100.0])
+    monkeypatch.setattr(interactive_launcher.time, "monotonic", lambda: next(times))
+    monkeypatch.setattr(
+        interactive_launcher,
+        "tailscale_public_url",
+        lambda port=None: "https://mj-1.taildc7e9e.ts.net",
+    )
+
+    funnel = interactive_launcher.ExistingFunnel()
+    assert funnel.poll() is None
+    assert funnel.poll() is None
+
+
 def test_terminate_group_leaves_reused_funnel_alone(monkeypatch):
     funnel = interactive_launcher.ExistingFunnel()
     signals = []

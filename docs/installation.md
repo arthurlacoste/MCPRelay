@@ -30,6 +30,7 @@ gate rollback
 gate uninstall
 gate uninstall --purge
 gate connect cf
+gate connect ts
 ```
 
 `gate log` attaches to the redacted realtime activity snapshot of a running daemon. It includes Gate tool calls, discovered/downstream MCP calls, resource reads, prompt renders, and semantic OAuth/public-file HTTP activity. `run_command` keeps its richer terminal command/log fields. In a terminal it refreshes continuously until `Ctrl+C`; when piped, it prints one snapshot. It does not restart Gate or require the legacy `--realtime` startup flag.

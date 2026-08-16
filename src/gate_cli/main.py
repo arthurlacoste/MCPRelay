@@ -222,6 +222,8 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "connect":
         if args.provider in ("cf", "cloudflare"):
             return command_connect(args.provider, args.name, args.hostname, yes=args.yes)
+        if args.name or args.hostname or args.yes:
+            print("--name, --hostname and --yes apply only to 'gate connect cf'; ignoring them.")
         return command_connect_ts()
     if args.command == "uninstall": return command_uninstall(purge=args.purge)
     if args.command == "update":

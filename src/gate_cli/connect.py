@@ -445,7 +445,7 @@ def funnel_summary(run=subprocess.run, timeout: float = TAILSCALE_TIMEOUT_SECOND
     combined = f"{result.stdout}\n{result.stderr}".strip()
     if result.returncode != 0:
         lowered = combined.lower()
-        if "funnel is not enabled" in lowered or "funnel" in lowered and "not enabled" in lowered:
+        if "funnel" in lowered and "not enabled" in lowered:
             return (
                 "Funnel is not enabled for this node. Enable it in the Tailscale admin console "
                 f"({FUNNEL_ADMIN_URL}, Machine settings → Enable Funnel), then retry."
@@ -473,8 +473,9 @@ def ensure_tailscale(
 
     Returns (ready, diagnostic). Each step is skipped when already satisfied.
     """
+    system = platform or platform_name()
     if tailscale_bin(which) is None:
-        script = tailscale_install_script(platform)
+        script = tailscale_install_script(system)
         print_fn("Tailscale CLI is not installed.")
         if not _ask(f"Install it now with:\n  {script}\nProceed?", input_fn=input_fn):
             return False, "Tailscale is required for TUNNEL_PROVIDER=tailscale. Install it and retry."
@@ -493,7 +494,7 @@ def ensure_tailscale(
         if not logged_in:
             return False, detail
 
-    if platform_name() not in {"windows"}:
+    if system != "windows":
         allowed, diagnostic = operator_allows_serve(run=run)
         if not allowed:
             user = current_user()

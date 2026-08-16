@@ -214,6 +214,25 @@ def _fake_tailscale_script(tmp_path: Path) -> Path:
     return bin_dir
 
 
+def test_gate_connect_ts_warns_about_ignored_cf_flags(tmp_path):
+    env = os.environ.copy()
+    env["HOME"] = str(tmp_path)
+    env["GATE_ROOT"] = str(tmp_path / ".gate")
+    env["GATE_PROJECT_DIR"] = str(Path(__file__).resolve().parents[1])
+    env["PYTHONPATH"] = str(Path(__file__).resolve().parents[1] / "src")
+    env["PATH"] = f"{_fake_tailscale_script(tmp_path)}{os.pathsep}{env['PATH']}"
+
+    result = subprocess.run(
+        [sys.executable, "-m", "gate_cli", "connect", "ts", "--hostname", "mcp.example.com"],
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "apply only to 'gate connect cf'" in result.stdout
+
+
 def test_gate_connect_ts_cli_smoke(tmp_path):
     env = os.environ.copy()
     env["HOME"] = str(tmp_path)
