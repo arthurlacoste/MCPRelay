@@ -74,6 +74,25 @@ function isToolActivity(call) {
   return !isStateCall(call) && !['oauth', 'http', 'prompt', 'resource', 'thinking'].includes(call.kind)
 }
 
+function runParentContext(calls) {
+  const runs = calls.filter(isRunCommand)
+  const runIds = new Set(runs.map(call => call.execution_id))
+  const runsByTurn = new Map()
+  for (const call of runs) {
+    const turn = turnKey(call)
+    runsByTurn.set(turn, [...(runsByTurn.get(turn) || []), call])
+  }
+  return { runIds, runsByTurn }
+}
+
+function resolveStateParent(call, context) {
+  if (context.runIds.has(call.parent_execution_id)) return call.parent_execution_id
+  const stateStart = timing(call).start
+  const eligible = (context.runsByTurn.get(turnKey(call)) || [])
+    .filter(run => timing(run).start <= stateStart)
+  return eligible.length === 1 ? eligible[0].execution_id : null
+}
+
 function syntheticThinking(left, right) {
   const start = timing(left).end
   const end = timing(right).start
@@ -93,15 +112,11 @@ function syntheticThinking(left, right) {
 }
 
 function extendRunCommandsThroughStateCalls(calls) {
-  const runIds = new Set(calls.filter(isRunCommand).map(call => call.execution_id))
-  const lastRunByTurn = new Map()
+  const parentContext = runParentContext(calls)
   const stateEnds = new Map()
   for (const call of calls) {
-    const turn = turnKey(call)
-    if (isRunCommand(call)) lastRunByTurn.set(turn, call.execution_id)
     if (!isStateCall(call)) continue
-    const explicitParent = call.parent_execution_id
-    const parent = runIds.has(explicitParent) ? explicitParent : lastRunByTurn.get(turn)
+    const parent = resolveStateParent(call, parentContext)
     if (!parent) continue
     stateEnds.set(parent, Math.max(stateEnds.get(parent) || 0, timing(call).end))
   }
@@ -201,13 +216,40 @@ function renderConversations() {
 }
 
 function closeConversationDrawer() {
-  $('.sidebar').classList.remove('drawer-open')
+  const sidebar = $('.sidebar')
+  const wasOpen = sidebar.classList.contains('drawer-open')
+  sidebar.classList.remove('drawer-open')
   $('#mobile-buckets').setAttribute('aria-expanded', 'false')
+  syncConversationDrawerA11y(false)
+  if (wasOpen && window.matchMedia('(max-width: 850px)').matches) $('#mobile-buckets').focus()
 }
 
 function toggleConversationDrawer() {
   const open = $('.sidebar').classList.toggle('drawer-open')
   $('#mobile-buckets').setAttribute('aria-expanded', String(open))
+  syncConversationDrawerA11y(open)
+}
+
+function syncConversationDrawerA11y(open) {
+  const hidden = window.matchMedia('(max-width: 850px)').matches && !open
+  const drawer = $('#conversation-drawer')
+  drawer.inert = hidden
+  drawer.setAttribute('aria-hidden', String(hidden))
+}
+
+function handleDrawerBreakpointChange() {
+  $('.sidebar').classList.remove('drawer-open')
+  $('#mobile-buckets').setAttribute('aria-expanded', 'false')
+  syncConversationDrawerA11y(false)
+}
+
+function handleDrawerKeydown(event) {
+  if (event.key === 'Escape') closeConversationDrawer()
+}
+
+function focusMobileSearch() {
+  closeConversationDrawer()
+  $('#search').focus()
 }
 
 function renderTimeline() {
@@ -277,12 +319,11 @@ function renderLedger() {
   const wasNearBottom = isLedgerNearBottom(ledger)
   const ordered = projectedCalls()
   const stateStacks = new Map()
-  const lastRunByTurn = new Map()
+  const parentContext = runParentContext(ordered)
   const calls = []
   for (const call of ordered) {
-    if (isRunCommand(call)) lastRunByTurn.set(turnKey(call), call.execution_id)
     if (!state.showStates && isStateCall(call)) {
-      const parent = call.parent_execution_id || lastRunByTurn.get(turnKey(call))
+      const parent = resolveStateParent(call, parentContext)
       if (parent) {
         const stack = stateStacks.get(parent) || []
         stack.push(call)
@@ -351,7 +392,14 @@ function currentCall() {
 }
 
 function detailedCall(call) {
-  return call ? { ...call, ...(detailCache.get(call.execution_id) || {}) } : null
+  if (!call) return null
+  const merged = { ...call, ...(detailCache.get(call.execution_id) || {}) }
+  if (call.state_extended) {
+    merged.finished_at = call.finished_at
+    merged.duration_ms = call.duration_ms
+    merged.state_extended = true
+  }
+  return merged
 }
 
 function detailValue(call, name, fallback) {
@@ -475,6 +523,7 @@ async function load() {
   renderAll()
 }
 
+function initializeUI() {
 $('#duration').addEventListener('click', () => {
   state.mode = 'duration'; $('#duration').classList.add('pressed'); $('#turns').classList.remove('pressed')
   $('#duration').setAttribute('aria-pressed', 'true'); $('#turns').setAttribute('aria-pressed', 'false'); renderTimeline()
@@ -513,17 +562,39 @@ $('#all-calls').addEventListener('click', () => {
 })
 $('#mobile-buckets').addEventListener('click', toggleConversationDrawer)
 $('#close-conversations').addEventListener('click', closeConversationDrawer)
-$('#mobile-search').addEventListener('click', () => {
-  closeConversationDrawer()
-  $('#search').focus()
-})
+$('#mobile-search').addEventListener('click', focusMobileSearch)
 $('.app').addEventListener('click', closeConversationDrawer)
-document.addEventListener('keydown', event => { if (event.key === 'Escape') closeConversationDrawer() })
+document.addEventListener('keydown', handleDrawerKeydown)
 $('#close').addEventListener('click', () => { state.selected = null; renderAll() })
 document.querySelectorAll('.detail-tabs button').forEach(button => button.addEventListener('click', () => {
   state.tab = button.dataset.tab; renderDetail()
 }))
 
+const drawerMedia = window.matchMedia('(max-width: 850px)')
+drawerMedia.addEventListener('change', handleDrawerBreakpointChange)
+syncConversationDrawerA11y(false)
+
+let observedTimelineWidth = 0
+const timelineObserver = new ResizeObserver(entries => {
+  const width = Math.round(entries[0]?.contentRect.width || 0)
+  if (!width || width === observedTimelineWidth) return
+  observedTimelineWidth = width
+  if (state.mode === 'duration') renderTimeline()
+})
+timelineObserver.observe($('#spans'))
+window.addEventListener('pagehide', () => {
+  timelineObserver.disconnect()
+  drawerMedia.removeEventListener('change', handleDrawerBreakpointChange)
+}, { once: true })
+
 load()
 setInterval(load, 2000)
 setInterval(() => { if (state.calls.some(call => ['running', 'starting'].includes(call.status))) renderAll() }, 1000)
+}
+
+if (typeof module !== 'undefined') module.exports = {
+  extendRunCommandsThroughStateCalls, focusMobileSearch, handleDrawerKeydown,
+  resolveStateParent, runParentContext, syntheticThinking, syncConversationDrawerA11y, timing,
+  toggleConversationDrawer,
+}
+if (typeof document !== 'undefined') initializeUI()

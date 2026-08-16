@@ -1,3 +1,5 @@
+import shutil
+import subprocess
 import time
 
 import jwt
@@ -60,7 +62,8 @@ def test_realtime_assets_are_authenticated(tmp_path, monkeypatch):
     assert ".filter(matches)" in script.text
     assert "const start = timing(left).end" in script.text
     assert "function extendRunCommandsThroughStateCalls(calls)" in script.text
-    assert "const parent = runIds.has(explicitParent) ? explicitParent : lastRunByTurn.get(turn)" in script.text
+    assert "function resolveStateParent(call, context)" in script.text
+    assert "eligible.length === 1 ? eligible[0].execution_id : null" in script.text
     assert "duration_ms: end - range.start" in script.text
     assert '<h3>Timing ›</h3>' in script.text
     assert '<h3>Fields ›</h3>' in script.text
@@ -84,6 +87,8 @@ def test_realtime_assets_are_authenticated(tmp_path, monkeypatch):
     assert "scrollTo({ top: $('#ledger').scrollHeight, behavior: 'smooth' })" in script.text
     assert "function toggleConversationDrawer()" in script.text
     assert "$('#mobile-search').addEventListener('click'" in script.text
+    assert "const timelineObserver = new ResizeObserver" in script.text
+    assert "timelineObserver.disconnect()" in script.text
 
     stylesheet = client.get("/rt/assets/trajectory.css")
     assert "prefers-color-scheme: dark" in stylesheet.text
@@ -95,6 +100,21 @@ def test_realtime_assets_are_authenticated(tmp_path, monkeypatch):
     assert ".ledger.compact .row { grid-template-columns: 26px minmax(120px, 1fr) 72px" in stylesheet.text
     assert ".sidebar { position: relative; z-index: 20; display: flex; flex: 0 0 58px" in stylesheet.text
     assert ".sidebar.drawer-open .conversation-drawer { transform: translateX(0); }" in stylesheet.text
+
+
+def test_realtime_ui_behavior_with_node():
+    node = shutil.which("node")
+    if node is None:
+        import pytest
+        pytest.skip("Node.js is unavailable")
+    result = subprocess.run(
+        [node, "tests/realtime_ui_behavior.test.js"],
+        cwd=realtime_web.UI_DIR.parent.parent,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    assert result.stdout.strip() == "realtime UI behavior: ok"
 
 
 def test_realtime_icon_is_served_from_gate_assets(tmp_path, monkeypatch):

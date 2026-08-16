@@ -153,6 +153,33 @@ def test_command_state_activity_keeps_parent_execution_id():
     assert call["preview"] == "exec-parent"
 
 
+def test_downstream_command_state_keeps_nested_parent_execution_id():
+    from activity_monitor import GateActivityMiddleware
+
+    store = RealtimeCallStore()
+    mcp = FastMCP("activity-test")
+
+    @mcp.tool
+    def mcp_tool_call(server_name: str, tool_name: str, arguments: dict | None = None) -> dict:
+        return {"ok": True}
+
+    mcp.add_middleware(GateActivityMiddleware(store))
+
+    async def scenario():
+        async with Client(mcp) as client:
+            await client.call_tool("mcp_tool_call", {
+                "server_name": "gate",
+                "tool_name": "get_command_state",
+                "arguments": {"execution_id": "exec-nested"},
+            })
+
+    asyncio.run(scenario())
+    call = store.snapshot()["calls"][0]
+    assert call["tool"] == "gate.get_command_state"
+    assert call["parent_execution_id"] == "exec-nested"
+    assert call["preview"] == "exec-nested"
+
+
 def test_tool_activity_keeps_raw_payload_result_and_common_fields():
     from activity_monitor import GateActivityMiddleware
 
