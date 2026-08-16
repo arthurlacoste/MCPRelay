@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.30](https://github.com/spelcc/gate/compare/v0.1.29...v0.1.30) (2026-08-16)
+
+
+### Fixed
+
+* **rt:** complete realtime call monitoring ([#76](https://github.com/spelcc/gate/issues/76)) ([e0d8fb4](https://github.com/spelcc/gate/commit/e0d8fb4f10d5cda040e47a4c5804b5d9111baa70))
+
 ## [0.1.29](https://github.com/spelcc/gate/compare/v0.1.28...v0.1.29) (2026-08-16)
 
 
