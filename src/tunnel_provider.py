@@ -116,7 +116,33 @@ def cloudflared_registered(log_path: Path | str, read_log=None) -> bool:
     return "Registered tunnel connection" in text
 
 
-def tailscale_public_url(run=subprocess.run) -> str:
+def _tailscale_json_funnel_url(payload: dict, port: int | None = None) -> str:
+    """Funnel HTTPS URL from `tailscale funnel status --json` output.
+
+    The JSON carries the served hostname as a Web key ("<machine>.ts.net:443")
+    and, for foreground funnels, the proxy target. When `port` is given, only a
+    funnel that proxies to that local port is accepted, so a Funnel pointing at
+    another service is never mistaken for Gate's.
+    """
+    for section in ("Foreground", "serve"):
+        for entry in (payload.get(section) or {}).values():
+            for key, handler in (entry.get("Web") or {}).items():
+                host = key.split(":", 1)[0]
+                if not host:
+                    continue
+                if port is not None:
+                    proxy = ""
+                    for nested in (handler or {}).get("Handlers") or {}:
+                        proxy = (handler["Handlers"][nested] or {}).get("Proxy") or ""
+                        if proxy:
+                            break
+                    if not proxy.endswith(f":{port}"):
+                        continue
+                return f"https://{host}"
+    return ""
+
+
+def tailscale_public_url(run=subprocess.run, port: int | None = None) -> str:
     try:
         result = run(
             ["tailscale", "funnel", "status", "--json"],
@@ -131,6 +157,14 @@ def tailscale_public_url(run=subprocess.run) -> str:
     url = parse_tailscale_https_url(combined)
     if result.returncode == 0 and url:
         return url
+    if result.returncode == 0:
+        try:
+            payload = json.loads(result.stdout or "{}")
+        except json.JSONDecodeError:
+            payload = {}
+        url = _tailscale_json_funnel_url(payload, port=port)
+        if url:
+            return url
     raise TunnelConfigurationError(
         "Could not detect a public Tailscale Funnel HTTPS URL. "
         "Run 'tailscale funnel 8761' once and confirm Funnel is allowed for this tailnet."

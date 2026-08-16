@@ -1,7 +1,8 @@
 param(
     [switch]$Widget,
     [switch]$Queue,
-    [switch]$Realtime
+    [switch]$Realtime,
+    [switch]$ConnectTs
 )
 
 $ErrorActionPreference = "Stop"
@@ -37,6 +38,14 @@ $Python = if (Get-Command py -ErrorAction SilentlyContinue) {
     "python"
 } else {
     throw "Python 3 was not found in PATH."
+}
+
+if ($ConnectTs) {
+    $SrcDir = Join-Path $ProjectDir "src"
+    if ($env:PYTHONPATH) { $env:PYTHONPATH = "$SrcDir;$env:PYTHONPATH" } else { $env:PYTHONPATH = $SrcDir }
+    if (-not $env:GATE_PROJECT_DIR) { $env:GATE_PROJECT_DIR = $ProjectDir }
+    & $Python -m gate_cli connect ts
+    exit $LASTEXITCODE
 }
 
 $ConfiguredGuard = Get-EnvValue "MCP_COMMAND_GUARD_PROVIDER"

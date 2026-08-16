@@ -30,6 +30,7 @@ gate rollback
 gate uninstall
 gate uninstall --purge
 gate connect cf
+gate connect ts
 ```
 
 `gate log` attaches to the redacted realtime activity snapshot of a running daemon. It includes Gate tool calls, discovered/downstream MCP calls, resource reads, prompt renders, and semantic OAuth/public-file HTTP activity. `run_command` keeps its richer terminal command/log fields. In a terminal it refreshes continuously until `Ctrl+C`; when piped, it prints one snapshot. It does not restart Gate or require the legacy `--realtime` startup flag.
@@ -108,7 +109,19 @@ TUNNEL_PROVIDER=ngrok
 
 ### Tailscale Funnel
 
-Install Tailscale, authenticate, and confirm the daemon is running:
+The quickest way to get Tailscale ready for Gate is:
+
+```bash
+gate connect ts
+# or, from a checkout:
+./run.sh connect ts
+# Windows:
+.\run.ps1 -ConnectTs
+```
+
+It installs the Tailscale CLI when missing (Homebrew on macOS, winget on Windows, the official installer elsewhere), walks you through `tailscale up` when you are not logged in, and grants the non-root serve permission Gate needs (`sudo tailscale set --operator=$USER`). When everything is ready it prints the launch command.
+
+Alternatively, set everything up by hand:
 
 ```bash
 tailscale up

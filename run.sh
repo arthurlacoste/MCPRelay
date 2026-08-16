@@ -336,25 +336,105 @@ open_temporary_ngrok() {
     return 1
 }
 
-open_temporary_tailscale() {
-    local output public_url=""
-    mkdir -p "${MCP_LOG_ROOT:-$PROJECT_DIR/logs}"
-    tailscale funnel --bg=false "$NGROK_PORT" > "${MCP_LOG_ROOT:-$PROJECT_DIR/logs}/tailscale.log" 2>&1 &
-    ONBOARDING_TAILSCALE_PID=$!
+tailscale_funnel_url_from_json() {
+    # Extract the public HTTPS URL from `tailscale funnel status --json`.
+    "$PROJECT_DIR/.venv/bin/python" -c 'import json,sys
+try:
+    data = json.load(sys.stdin)
+except Exception:
+    sys.exit(1)
+for section in ("Foreground", "serve"):
+    for entry in (data.get(section) or {}).values():
+        for key in (entry.get("Web") or {}):
+            host = key.split(":", 1)[0]
+            if host:
+                print("https://" + host)
+                sys.exit(0)
+sys.exit(1)'
+}
+
+active_tailscale_funnel_url() {
+    # Public HTTPS URL of an already-active Funnel serving NGROK_PORT, if any.
+    # Useful when a Funnel was started outside Gate (e.g. 'tailscale funnel' in
+    # another terminal or as root) and owns the 443 listener.
+    local json url
+    json="$(timeout 10s tailscale funnel status --json 2>/dev/null || true)"
+    [ -n "$json" ] || return 1
+    printf '%s' "$json" | grep -qE "\"Proxy\"[[:space:]]*:[[:space:]]*\"http://127\\.0\\.0\\.1:${NGROK_PORT}\"" || return 1
+    url="$(printf '%s' "$json" | tailscale_funnel_url_from_json 2>/dev/null || true)"
+    [ -n "$url" ] || return 1
+    printf '%s' "$url"
+}
+
+wait_for_tailscale_url() {
+    # Poll for an active Funnel URL until it appears or the given PID exits.
+    local pid="$1" output url=""
     for _ in $(seq 1 20); do
         output="$(timeout 10s tailscale funnel status --json 2>&1 || true)"
-        public_url="$(printf '%s' "$output" | grep -Eo 'https://[^[:space:]"'"'"']+' | head -n1 | sed 's#[/.,;)]$##')"
-        if [ -n "$public_url" ]; then
-            ONBOARDING_PUBLIC_URL="$public_url"
-            export GATE_EXISTING_TAILSCALE_PID="$ONBOARDING_TAILSCALE_PID"
-            return 0
+        url="$(printf '%s' "$output" | tailscale_funnel_url_from_json 2>/dev/null || true)"
+        if [ -z "$url" ]; then
+            url="$(printf '%s' "$output" | grep -Eo 'https://[^[:space:]"'"'"']+' | head -n1 | sed 's#[/.,;)]$##')"
         fi
-        kill -0 "$ONBOARDING_TAILSCALE_PID" 2>/dev/null || break
+        [ -n "$url" ] && { printf '%s' "$url"; return 0; }
+        kill -0 "$pid" 2>/dev/null || break
         sleep 1
     done
-    kill "$ONBOARDING_TAILSCALE_PID" 2>/dev/null || true
-    wait "$ONBOARDING_TAILSCALE_PID" 2>/dev/null || true
+    kill "$pid" 2>/dev/null || true
+    wait "$pid" 2>/dev/null || true
     ONBOARDING_TAILSCALE_PID=""
+    return 1
+}
+
+kill_stale_tailscale_funnels() {
+    # Stop leftover `tailscale funnel --bg=false <port>` processes. They are
+    # often root-owned (started with sudo), so escalate when a plain kill fails.
+    local pids remaining
+    pids="$(pgrep -f "tailscale[[:space:]]+funnel[[:space:]]+--bg=false[[:space:]]+${NGROK_PORT}" 2>/dev/null || true)"
+    [ -n "$pids" ] || return 0
+    warn "Stopping stale Tailscale Funnel processes for port $NGROK_PORT."
+    if [ "$(id -u)" = "0" ]; then
+        printf '%s\n' "$pids" | xargs kill 2>/dev/null || true
+    else
+        printf '%s\n' "$pids" | xargs sudo -n kill 2>/dev/null \
+            || printf '%s\n' "$pids" | xargs kill 2>/dev/null || true
+    fi
+    for _ in $(seq 1 10); do
+        remaining="$(pgrep -f "tailscale[[:space:]]+funnel[[:space:]]+--bg=false[[:space:]]+${NGROK_PORT}" 2>/dev/null || true)"
+        [ -z "$remaining" ] && { ok "Stale Tailscale Funnel processes stopped"; return 0; }
+        sleep 0.2
+    done
+    warn "Could not stop stale Tailscale Funnel processes."
+}
+
+open_temporary_tailscale() {
+    local public_url=""
+    # Prefer an already-active Funnel serving our port.
+    if public_url="$(active_tailscale_funnel_url)"; then
+        ONBOARDING_PUBLIC_URL="$public_url"
+        warn "Reusing the active Tailscale Funnel."
+        return 0
+    fi
+    mkdir -p "${MCP_LOG_ROOT:-$PROJECT_DIR/logs}"
+    : > "${MCP_LOG_ROOT:-$PROJECT_DIR/logs}/tailscale.log"
+    tailscale funnel --bg=false "$NGROK_PORT" > "${MCP_LOG_ROOT:-$PROJECT_DIR/logs}/tailscale.log" 2>&1 &
+    ONBOARDING_TAILSCALE_PID=$!
+    if public_url="$(wait_for_tailscale_url "$ONBOARDING_TAILSCALE_PID")"; then
+        ONBOARDING_PUBLIC_URL="$public_url"
+        export GATE_EXISTING_TAILSCALE_PID="$ONBOARDING_TAILSCALE_PID"
+        return 0
+    fi
+    # The Funnel failed to start, usually because an untracked process owns the
+    # listener ("listener already exists for port 443"). Clear stale Funnels
+    # and retry once before giving up.
+    warn "Could not start a Tailscale Funnel. Clearing stale Funnel processes and retrying."
+    kill_stale_tailscale_funnels
+    tailscale funnel --bg=false "$NGROK_PORT" > "${MCP_LOG_ROOT:-$PROJECT_DIR/logs}/tailscale.log" 2>&1 &
+    ONBOARDING_TAILSCALE_PID=$!
+    if public_url="$(wait_for_tailscale_url "$ONBOARDING_TAILSCALE_PID")"; then
+        ONBOARDING_PUBLIC_URL="$public_url"
+        export GATE_EXISTING_TAILSCALE_PID="$ONBOARDING_TAILSCALE_PID"
+        return 0
+    fi
     return 1
 }
 
@@ -627,6 +707,10 @@ start_daemon() {
     elif [ "$provider" = tailscale ] && [ -n "${GATE_EXISTING_TAILSCALE_PID:-}" ] && kill -0 "$GATE_EXISTING_TAILSCALE_PID" 2>/dev/null; then
         TUNNEL_PID="$GATE_EXISTING_TAILSCALE_PID"
         KEEP_AWAKE_LABEL="onboarding tunnel reused"
+    elif [ "$provider" = tailscale ] && [ -n "$(active_tailscale_funnel_url)" ]; then
+        # An untracked Funnel already serves our port; Gate must not start a
+        # second one ("listener already exists"). Nothing to manage or kill.
+        KEEP_AWAKE_LABEL="existing funnel reused"
     elif [ "$provider" = cloudflare ] && [ -n "${GATE_EXISTING_CLOUDFLARED_PID:-}" ] && kill -0 "$GATE_EXISTING_CLOUDFLARED_PID" 2>/dev/null; then
         TUNNEL_PID="$GATE_EXISTING_CLOUDFLARED_PID"
         KEEP_AWAKE_LABEL="onboarding tunnel reused"
@@ -766,6 +850,8 @@ status() {
     elif [ -n "$TUNNEL_PID" ] && kill -0 "$TUNNEL_PID" 2>/dev/null; then
         echo "✓ ${TUNNEL_PROVIDER_PID:-ngrok} tunnel     (PID $TUNNEL_PID)"
         [ "${TUNNEL_PROVIDER_PID:-ngrok}" != ngrok ] || show_ngrok_inspector
+    elif [ "${TUNNEL_PROVIDER_PID:-ngrok}" = tailscale ] && [ -n "$(active_tailscale_funnel_url)" ]; then
+        echo "✓ tailscale tunnel (existing funnel reused)"
     else
         echo "✗ tunnel not running"
     fi
@@ -813,7 +899,7 @@ if [ "${1:-}" = "connect" ]; then
     shift
     ensure_python_environment
     export GATE_PROJECT_DIR="${GATE_PROJECT_DIR:-$PROJECT_DIR}"
-    export PYTHONPATH="${PYTHONPATH:-$PROJECT_DIR/src}"
+    export PYTHONPATH="$PROJECT_DIR/src${PYTHONPATH:+:$PYTHONPATH}"
     exec "$PROJECT_DIR/.venv/bin/python" -m gate_cli connect "$@"
 fi
 
@@ -834,7 +920,7 @@ case "${1:-}" in
         if [ $# -gt 0 ]; then
         echo "Usage: $0 [start] [--queue] [--widget]"
         echo "       $0 {stop|status|setup|renew-secret}"
-        echo "       $0 connect cf [--name NAME] [--hostname HOST] [--yes]"
+        echo "       $0 connect {cf|ts} [--name NAME] [--hostname HOST] [--yes]"
             echo ""
             echo "  (no arg)  Interactive mode – Ctrl+C stops everything"
             exit 1

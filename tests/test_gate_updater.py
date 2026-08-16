@@ -1,8 +1,77 @@
+import io
+import sys
+import tarfile
 from pathlib import Path
+
+import pytest
 
 from gate_cli.paths import GatePaths
 from gate_cli.state import GateState, load_state, save_state
-from gate_cli.updater import activate_release, rollback_release
+from gate_cli.updater import _extract_safely, activate_release, rollback_release
+
+
+# The Python 3.12+ data filter raises tarfile.FilterError subclasses; the
+# hand-rolled 3.10/3.11 fallback raises RuntimeError.
+def _extract_errors() -> tuple[type[Exception], ...]:
+    errors: list[type[Exception]] = [RuntimeError]
+    filter_error = getattr(tarfile, "FilterError", None)
+    if filter_error:
+        errors.append(filter_error)
+    return tuple(errors)
+
+
+def _tar_from(tmp_path: Path, members: dict[str, bytes], *, link: tuple[str, str] | None = None) -> Path:
+    archive = tmp_path / "test.tar.gz"
+    with tarfile.open(archive, "w:gz") as handle:
+        for name, content in members.items():
+            info = tarfile.TarInfo(name)
+            info.size = len(content)
+            handle.addfile(info, io.BytesIO(content))
+        if link:
+            info = tarfile.TarInfo(link[0])
+            info.type = tarfile.SYMTYPE
+            info.linkname = link[1]
+            handle.addfile(info)
+    return archive
+
+
+def test_extract_safely_rejects_members_escaping_staging(tmp_path):
+    archive = _tar_from(tmp_path, {"ok/file.txt": b"hi"}, link=("ok/evil", "../../outside"))
+    with tarfile.open(archive, "r:gz") as handle:
+        with pytest.raises(_extract_errors(), match="(?i)(escape|outside)"):
+            _extract_safely(handle, tmp_path / "dest")
+
+
+def test_extract_safely_accepts_wellformed_archive(tmp_path):
+    archive = _tar_from(tmp_path, {"release/VERSION": b"0.2.0", "release/run.sh": b"#!/bin/sh\n"})
+    destination = tmp_path / "dest"
+    with tarfile.open(archive, "r:gz") as handle:
+        _extract_safely(handle, destination)
+    assert (destination / "release" / "VERSION").read_text() == "0.2.0"
+
+
+def test_extract_safely_never_writes_outside_for_absolute_members(tmp_path):
+    # The 3.10/3.11 fallback rejects absolute names outright; Python 3.12+
+    # sanitizes them before the data filter, so nothing escapes either way.
+    archive = _tar_from(tmp_path, {"/etc/evil": b"boom"})
+    destination = tmp_path / "dest"
+    with tarfile.open(archive, "r:gz") as handle:
+        if sys.version_info >= (3, 12):
+            _extract_safely(handle, destination)
+        else:
+            with pytest.raises(RuntimeError, match="(?i)escape"):
+                _extract_safely(handle, destination)
+    assert not Path("/etc/evil").exists()
+
+
+def test_extract_safely_uses_data_filter_on_new_python(tmp_path, monkeypatch):
+    if sys.version_info < (3, 12):
+        pytest.skip("data filter only exists on Python 3.12+")
+    archive = _tar_from(tmp_path, {"release/VERSION": b"0.2.0"})
+    monkeypatch.setattr(tarfile, "data_filter", lambda member, path: member)
+    with tarfile.open(archive, "r:gz") as handle:
+        _extract_safely(handle, tmp_path / "dest")
+    assert (tmp_path / "dest" / "release" / "VERSION").read_text() == "0.2.0"
 
 
 def test_activate_release_switches_symlink_and_tracks_previous_version(tmp_path):

@@ -1,4 +1,11 @@
-"""One-shot Cloudflare connect tunnel setup for Gate."""
+"""One-shot tunnel provider setup for Gate.
+
+- `gate connect ts` prepares Tailscale: installs the CLI when missing, logs in
+  when needed, grants the non-root serve permission, and verifies Funnel.
+- `gate connect cf` sets up a named Cloudflare tunnel on your own domain:
+  installs `cloudflared`, logs in, creates the tunnel, routes DNS, and persists
+  the configuration to `config/.env`.
+"""
 
 from __future__ import annotations
 
@@ -8,8 +15,10 @@ import os
 import platform
 import shutil
 import subprocess
+import sys
 import urllib.request
 from pathlib import Path
+from typing import Callable
 
 from .config import read_env
 
@@ -25,6 +34,14 @@ FOREIGN_HOSTNAME_HINTS = (
     ".ts.net",
     "nip.io",
 )
+
+TAILSCALE_TIMEOUT_SECONDS = 10
+FUNNEL_ADMIN_URL = "https://login.tailscale.com/admin/dns"
+
+Run = Callable[..., subprocess.CompletedProcess[str]]
+
+
+# ── Cloudflare connect ───────────────────────────────────────────────────────
 
 
 def is_foreign_provider_hostname(hostname: str) -> bool:
@@ -272,4 +289,237 @@ def command_connect(
     env = read_env(env_file)
     if not (env.get("OAUTH_ACCESS_SECRET") and env.get("OAUTH_ACCESS_SECRET_HASH", "").startswith("$argon2id$")):
         print("Run 'gate setup' to finish OAuth configuration.")
+    return 0
+
+
+# ── Tailscale connect ────────────────────────────────────────────────────────
+
+
+def current_user() -> str:
+    return os.environ.get("USER") or os.environ.get("USERNAME") or ""
+
+
+def _ask(prompt: str, default: bool = True, input_fn: Callable[[str], str] = input) -> bool:
+    suffix = "Y/n" if default else "y/N"
+    try:
+        answer = input_fn(f"{prompt} [{suffix}] ").strip().lower()
+    except EOFError:
+        answer = ""
+    if not answer:
+        return default
+    return answer in {"y", "yes"}
+
+
+def tailscale_bin(which=shutil.which) -> str | None:
+    return which("tailscale")
+
+
+def platform_name() -> str:
+    if sys.platform.startswith("darwin"):
+        return "darwin"
+    if sys.platform.startswith("win"):
+        return "windows"
+    return "linux"
+
+
+def tailscale_install_script(platform: str | None = None) -> str:
+    """Return the canonical one-liner to install the Tailscale CLI."""
+    system = platform or platform_name()
+    if system == "darwin":
+        return "brew install tailscale"
+    if system == "windows":
+        return "winget install --id Tailscale.Tailscale --accept-source-agreements --accept-package-agreements"
+    return "curl -fsSL https://tailscale.com/install.sh | sh"
+
+
+def run_install(script: str, run=subprocess.run) -> int:
+    """Run the install command interactively (sudo may prompt for a password)."""
+    return run(script, shell=True, check=False).returncode
+
+
+def tailscale_status(run=subprocess.run, timeout: float = TAILSCALE_TIMEOUT_SECONDS) -> dict:
+    """Return parsed `tailscale status --json`, or a dict describing the failure."""
+    try:
+        result = run(
+            ["tailscale", "status", "--json"],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+    except subprocess.TimeoutExpired:
+        return {"error": "Tailscale status timed out. Check that the Tailscale daemon is running."}
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout).strip() or f"exit code {result.returncode}"
+        return {"error": f"Tailscale is not authenticated or the daemon is not running ({detail})."}
+    try:
+        payload = json.loads(result.stdout or "{}")
+    except json.JSONDecodeError:
+        return {"error": "Could not read Tailscale session status."}
+    return payload
+
+
+def tailscale_logged_in(status: dict | None = None, run=subprocess.run) -> tuple[bool, str]:
+    """Check whether the Tailscale daemon is up and the user is logged in."""
+    payload = status if status is not None else tailscale_status(run=run)
+    if payload.get("error"):
+        return False, payload["error"]
+    backend_state = payload.get("BackendState", "")
+    if backend_state != "Running":
+        return False, f"Tailscale is not running (BackendState: {backend_state!r})."
+    return True, ""
+
+
+def operator_allows_serve(run=subprocess.run, timeout: float = TAILSCALE_TIMEOUT_SECONDS) -> tuple[bool, str]:
+    """Check whether the current user may modify serve/funnel config.
+
+    Reading funnel status works without extra permissions, but writing a serve
+    config does not. The authoritative signal is the OperatorUser preference:
+    it must be the current user, or Gate's `tailscale funnel --bg=false` will be
+    denied with "Access denied: serve config denied".
+
+    Returns (permission_ok, diagnostic).
+    """
+    try:
+        result = run(
+            ["tailscale", "debug", "prefs"],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+    except subprocess.TimeoutExpired:
+        return False, "Tailscale prefs check timed out."
+    if result.returncode == 0:
+        try:
+            prefs = json.loads(result.stdout or "{}")
+        except json.JSONDecodeError:
+            return True, "Could not read Tailscale prefs."
+        operator = prefs.get("OperatorUser")
+        user = current_user()
+        if operator == user:
+            return True, ""
+        if operator:
+            return False, f"Tailscale operator is {operator!r}, not {user!r}."
+        return False, "Tailscale operator is not set."
+    # Older CLI builds may refuse `debug prefs`; fall back to probing funnel
+    # status, which at least surfaces explicit permission denials.
+    try:
+        probe = run(
+            ["tailscale", "funnel", "status", "--json"],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+    except subprocess.TimeoutExpired:
+        return False, "Tailscale Funnel status timed out."
+    combined = f"{probe.stdout}\n{probe.stderr}"
+    if probe.returncode == 0:
+        return True, ""
+    lowered = combined.lower()
+    if "denied" in lowered or "permission" in lowered:
+        return False, combined.strip()
+    return True, ""
+
+
+def fix_operator_permission(run=subprocess.run) -> int:
+    """Allow the current user to manage serve/funnel config without root."""
+    user = current_user()
+    if not user:
+        return 1
+    return run(["sudo", "tailscale", "set", f"--operator={user}"], check=False).returncode
+
+
+def funnel_summary(run=subprocess.run, timeout: float = TAILSCALE_TIMEOUT_SECONDS) -> str:
+    try:
+        result = run(
+            ["tailscale", "funnel", "status", "--json"],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+    except subprocess.TimeoutExpired:
+        return "Tailscale Funnel status timed out."
+    combined = f"{result.stdout}\n{result.stderr}".strip()
+    if result.returncode != 0:
+        lowered = combined.lower()
+        if "funnel" in lowered and "not enabled" in lowered:
+            return (
+                "Funnel is not enabled for this node. Enable it in the Tailscale admin console "
+                f"({FUNNEL_ADMIN_URL}, Machine settings → Enable Funnel), then retry."
+            )
+        return combined or f"Tailscale Funnel status failed (exit code {result.returncode})."
+    try:
+        payload = json.loads(result.stdout or "{}")
+    except json.JSONDecodeError:
+        return combined or "Tailscale Funnel is available."
+    funnel = payload.get("Funnel", payload.get("serve"))
+    if funnel:
+        return "Funnel is configured and ready. Gate will use its HTTPS URL automatically."
+    return "Funnel is available for this node; Gate will start it on launch."
+
+
+def ensure_tailscale(
+    *,
+    which=shutil.which,
+    platform: str | None = None,
+    input_fn: Callable[[str], str] = input,
+    run=subprocess.run,
+    print_fn: Callable[[str], None] = print,
+) -> tuple[bool, str]:
+    """Install, log in, and grant serve permissions so Gate can use Tailscale.
+
+    Returns (ready, diagnostic). Each step is skipped when already satisfied.
+    """
+    system = platform or platform_name()
+    if tailscale_bin(which) is None:
+        script = tailscale_install_script(system)
+        print_fn("Tailscale CLI is not installed.")
+        if not _ask(f"Install it now with:\n  {script}\nProceed?", input_fn=input_fn):
+            return False, "Tailscale is required for TUNNEL_PROVIDER=tailscale. Install it and retry."
+        code = run_install(script, run=run)
+        if code != 0 or tailscale_bin(which) is None:
+            return False, "Tailscale installation failed. Install it manually and retry."
+
+    payload = tailscale_status(run=run)
+    logged_in, detail = tailscale_logged_in(payload, run=run)
+    if not logged_in:
+        if not _ask(f"Log in now?\n  {detail}\n\nRun 'sudo tailscale up' (opens a login URL)?", input_fn=input_fn):
+            return False, "Log in with 'sudo tailscale up' (or 'tailscale up') and retry."
+        if run(["sudo", "tailscale", "up"], check=False).returncode != 0:
+            return False, "Tailscale login failed. Run 'sudo tailscale up' and retry."
+        logged_in, detail = tailscale_logged_in(run=run)
+        if not logged_in:
+            return False, detail
+
+    if system != "windows":
+        allowed, diagnostic = operator_allows_serve(run=run)
+        if not allowed:
+            user = current_user()
+            if not _ask(
+                f"Tailscale blocks non-root serve config:\n  {diagnostic}\n\n"
+                f"Run 'sudo tailscale set --operator={user}' once to allow it?",
+                input_fn=input_fn,
+            ):
+                return False, (
+                    f"Run 'sudo tailscale set --operator={user}' once, then retry."
+                )
+            if fix_operator_permission(run=run) != 0:
+                return False, "Could not set the Tailscale operator. Run the sudo command manually and retry."
+
+    return True, funnel_summary(run=run)
+
+
+def command_connect_ts() -> int:
+    ready, message = ensure_tailscale()
+    if not ready:
+        print(f"✗ Tailscale is not ready: {message}")
+        return 1
+    print("✓ Tailscale is ready for Gate.")
+    print(f"  {message}")
+    print("Start Gate with the Tailscale tunnel:")
+    print()
+    print("  TUNNEL_PROVIDER=tailscale gate")
     return 0
