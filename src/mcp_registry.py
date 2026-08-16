@@ -31,6 +31,8 @@ from mcp_proxy import (
 )
 
 logger = logging.getLogger(__name__)
+CLIENT_DRAIN_GRACE_SECONDS = 1.0
+CLIENT_CLOSE_TIMEOUT_SECONDS = 2.0
 
 
 def _utcnow() -> datetime:
@@ -299,6 +301,55 @@ class MCPRegistry:
                 self._event("mcp_catalog_changed", diff.as_dict())
             return self.states[server_name]
 
+    async def _close_state_client(self, state: ServerState) -> None:
+        if not state.client:
+            return
+
+        async def bounded_close() -> None:
+            acquired = False
+            try:
+                try:
+                    await asyncio.wait_for(
+                        state.call_lock.acquire(),
+                        timeout=CLIENT_DRAIN_GRACE_SECONDS,
+                    )
+                    acquired = True
+                except TimeoutError:
+                    logger.warning(
+                        "MCP server %r still has an in-flight call after %.2fs; forcing client close",
+                        state.name,
+                        CLIENT_DRAIN_GRACE_SECONDS,
+                    )
+                try:
+                    await asyncio.wait_for(
+                        state.client.close(),
+                        timeout=CLIENT_CLOSE_TIMEOUT_SECONDS,
+                    )
+                except TimeoutError:
+                    logger.warning(
+                        "MCP server %r client close exceeded %.2fs",
+                        state.name,
+                        CLIENT_CLOSE_TIMEOUT_SECONDS,
+                    )
+                except Exception:
+                    logger.exception("MCP server %r client close failed", state.name)
+            finally:
+                if acquired:
+                    state.call_lock.release()
+
+        cleanup = asyncio.create_task(
+            bounded_close(),
+            name=f"mcp-close-{state.name}",
+        )
+        try:
+            await asyncio.shield(cleanup)
+        except asyncio.CancelledError:
+            # Propagate caller cancellation only after the bounded cleanup has
+            # had its chance to close the client and release any acquired lock.
+            with suppress(asyncio.CancelledError):
+                await cleanup
+            raise
+
     async def _reload_locked(self, server: ProxyServerConfig, diff: RegistryDiff) -> bool:
         if self.gateway is None:
             raise RuntimeError("registry has not started")
@@ -382,9 +433,7 @@ class MCPRegistry:
             if old and old.provider in self.gateway.providers:
                 self.gateway.providers.remove(old.provider)
             if old and old.client:
-                async with old.call_lock:
-                    with suppress(Exception, asyncio.CancelledError):
-                        await old.client.close()
+                await self._close_state_client(old)
             if old:
                 diff.added_tools.update(public_tools - old.public_tools)
                 diff.removed_tools.update(old.public_tools - public_tools)
@@ -440,9 +489,7 @@ class MCPRegistry:
         if self.gateway and state.provider in self.gateway.providers:
             self.gateway.providers.remove(state.provider)
         if state.client:
-            async with state.call_lock:
-                with suppress(Exception, asyncio.CancelledError):
-                    await state.client.close()
+            await self._close_state_client(state)
         self._event("mcp_server_disconnected", {"server": state.name, "prefix": state.prefix})
 
     @staticmethod
@@ -474,7 +521,7 @@ class MCPRegistry:
         needle = (query or "").casefold().strip()
         tokens = [token for token in needle.split() if token]
         matches: list[tuple[int, str, str, dict[str, Any]]] = []
-        for name, state in self.states.items():
+        for name, state in list(self.states.items()):
             if server_name and name != server_name:
                 continue
             if state.status not in {"healthy", "degraded"}:

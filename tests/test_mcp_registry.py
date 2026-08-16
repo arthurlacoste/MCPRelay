@@ -705,3 +705,121 @@ def test_cancelled_reload_closes_uninstalled_client(tmp_path, monkeypatch):
     assert len(clients) == 1
     assert clients[0].closed is True
     assert "demo" not in manager.registry.states
+
+
+def test_close_does_not_wait_forever_for_inflight_discover_call(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    import mcp_registry as registry_module
+    from mcp_proxy import MCPProxyManager
+
+    config = tmp_path / "mcp.json"
+    _write_config(config, {})
+    manager = MCPProxyManager(config, project_root=tmp_path, environ={}, refresh_interval_seconds=0)
+    registry = manager.registry
+    gateway = FastMCP("gateway")
+    registry.gateway = gateway
+    lock = asyncio.Lock()
+    closed = asyncio.Event()
+
+    class FakeClient:
+        async def close(self):
+            closed.set()
+
+    state = SimpleNamespace(
+        name="demo",
+        prefix="demo",
+        client=FakeClient(),
+        provider=None,
+        call_lock=lock,
+    )
+    registry.states["demo"] = state
+    monkeypatch.setattr(registry_module, "CLIENT_DRAIN_GRACE_SECONDS", 0.01)
+    monkeypatch.setattr(registry_module, "CLIENT_CLOSE_TIMEOUT_SECONDS", 0.1)
+
+    async def scenario():
+        await lock.acquire()
+        try:
+            await asyncio.wait_for(manager.close(), timeout=0.25)
+        finally:
+            if lock.locked():
+                lock.release()
+
+    asyncio.run(scenario())
+
+    assert closed.is_set()
+    assert registry.states == {}
+
+
+def test_reload_does_not_wait_forever_for_old_inflight_call(tmp_path, monkeypatch):
+    import mcp_registry as registry_module
+    from mcp_proxy import MCPProxyManager
+
+    script = _server_script(tmp_path)
+    config = tmp_path / "mcp.json"
+    _write_config(config, {"demo": {"command": sys.executable, "args": [str(script), "old", "old"]}})
+    gateway = FastMCP("gateway")
+    manager = MCPProxyManager(
+        config,
+        project_root=tmp_path,
+        environ={},
+        refresh_interval_seconds=0,
+        tool_exposure_mode="discover",
+    )
+    monkeypatch.setattr(registry_module, "CLIENT_DRAIN_GRACE_SECONDS", 0.01)
+    monkeypatch.setattr(registry_module, "CLIENT_CLOSE_TIMEOUT_SECONDS", 0.2)
+
+    async def scenario():
+        await manager.start(gateway)
+        old_state = manager.registry.states["demo"]
+        await old_state.call_lock.acquire()
+        try:
+            _write_config(config, {"demo": {"command": sys.executable, "args": [str(script), "new", "new"]}})
+            diff = await asyncio.wait_for(manager.refresh(), timeout=1.0)
+            return diff, manager.registry.states["demo"] is old_state
+        finally:
+            if old_state.call_lock.locked():
+                old_state.call_lock.release()
+            await manager.close()
+
+    diff, kept_old_state = asyncio.run(scenario())
+
+    assert diff.changed_servers == {"demo"}
+    assert kept_old_state is False
+
+
+def test_bounded_client_close_finishes_cleanup_before_propagating_cancellation(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    import pytest
+    import mcp_registry as registry_module
+    from mcp_proxy import MCPProxyManager
+
+    config = tmp_path / "mcp.json"
+    _write_config(config, {})
+    manager = MCPProxyManager(config, project_root=tmp_path, environ={}, refresh_interval_seconds=0)
+    registry = manager.registry
+    lock = asyncio.Lock()
+    closed = asyncio.Event()
+
+    class FakeClient:
+        async def close(self):
+            closed.set()
+
+    state = SimpleNamespace(name="demo", client=FakeClient(), call_lock=lock)
+    monkeypatch.setattr(registry_module, "CLIENT_DRAIN_GRACE_SECONDS", 0.01)
+    monkeypatch.setattr(registry_module, "CLIENT_CLOSE_TIMEOUT_SECONDS", 0.1)
+
+    async def scenario():
+        await lock.acquire()
+        task = asyncio.create_task(registry._close_state_client(state))
+        await asyncio.sleep(0)
+        task.cancel()
+        try:
+            with pytest.raises(asyncio.CancelledError):
+                await asyncio.wait_for(task, timeout=0.25)
+        finally:
+            if lock.locked():
+                lock.release()
+
+    asyncio.run(scenario())
+
+    assert closed.is_set()
