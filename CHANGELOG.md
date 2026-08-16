@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.27](https://github.com/spelcc/gate/compare/v0.1.26...v0.1.27) (2026-08-16)
+
+
+### Fixed
+
+* parse Release Please changelog headings ([#68](https://github.com/spelcc/gate/issues/68)) ([55cec7a](https://github.com/spelcc/gate/commit/55cec7a0b72df8dc5212c650d2e513ad90b8d458))
+
 ## [0.1.26](https://github.com/spelcc/gate/compare/v0.1.25...v0.1.26) (2026-08-16)
 
 
