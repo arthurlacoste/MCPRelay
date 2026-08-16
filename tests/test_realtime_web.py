@@ -41,6 +41,9 @@ def test_authenticated_realtime_page_uses_split_inspector(tmp_path, monkeypatch)
     assert "<dialog" not in response.text
     assert "<h1>Real-time calls</h1>" not in response.text
     assert '<div class="view-title">Real-time calls</div>' in response.text
+    assert "<title>Real-time calls</title>" in response.text
+    assert 'rel="icon" type="image/svg+xml" href="/rt/assets/gate.svg"' in response.text
+    assert "Gate · Real-time calls" not in response.text
     assert 'id="thinking-toggle" class="pressed"' in response.text
     assert 'class="search-icon"' in response.text
     assert 'id="scroll-bottom"' in response.text

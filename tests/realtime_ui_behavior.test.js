@@ -6,7 +6,9 @@ const {
   focusMobileSearch,
   handleDrawerKeydown,
   hasActiveTextSelection,
+  latestEventPurpose,
   organizeLedgerCalls,
+  syncDocumentTitle,
   syntheticThinking,
   syncConversationDrawerA11y,
   toggleConversationDrawer,
@@ -23,6 +25,19 @@ const call = (tool, id, start, end, extra = {}) => ({
   tool, execution_id: id, conversation_id: 'turn-1', kind: 'tool', status: 'success',
   started_at: at(start), finished_at: at(end), duration_ms: end - start, ...extra,
 })
+
+const titleCalls = [
+  call('skills_search', 'older-title', 1000, 1100, { purpose: 'Search skills' }),
+  call('run_command', 'new-title', 3000, 3100, { purpose: 'Run focused tests' }),
+  call('mcp_tools_search', 'middle-title', 2000, 2100, { purpose: 'Find MCP tools' }),
+]
+assert.equal(latestEventPurpose(titleCalls), 'Run focused tests')
+assert.equal(latestEventPurpose([call('run_command', 'tool-fallback', 1000, 1100)]), 'run_command')
+const fakeDocument = { title: 'Real-time calls' }
+assert.equal(syncDocumentTitle(titleCalls, fakeDocument), 'Run focused tests')
+assert.equal(fakeDocument.title, 'Run focused tests')
+assert.equal(syncDocumentTitle([], fakeDocument), '')
+assert.equal(fakeDocument.title, 'Run focused tests')
 
 assert.equal(hasActiveTextSelection({ isCollapsed: false, toString: () => 'copy me' }), true)
 assert.equal(hasActiveTextSelection({ isCollapsed: true, toString: () => 'copy me' }), false)

@@ -26,6 +26,31 @@ function timestamp(value) {
   return Number.isFinite(parsed) ? parsed : null
 }
 
+function latestEventPurpose(calls) {
+  let latestAt = -Infinity
+  let latestPurpose = ''
+  for (const call of calls || []) {
+    const purpose = String(call?.purpose || call?.tool || '').trim()
+    if (!purpose) continue
+    const eventAt = timestamp(call?.started_at) ?? timestamp(call?.created_at)
+    if (eventAt === null) {
+      if (!latestPurpose) latestPurpose = purpose
+      continue
+    }
+    if (eventAt >= latestAt) {
+      latestAt = eventAt
+      latestPurpose = purpose
+    }
+  }
+  return latestPurpose
+}
+
+function syncDocumentTitle(calls, targetDocument = (typeof document !== 'undefined' ? document : null)) {
+  const purpose = latestEventPurpose(calls)
+  if (purpose && targetDocument) targetDocument.title = purpose
+  return purpose
+}
+
 function timing(call) {
   const start = timestamp(call.started_at) ?? timestamp(call.created_at) ?? Date.now()
   const recordedEnd = timestamp(call.finished_at)
@@ -565,6 +590,7 @@ async function load() {
   if (response.status === 401) { location.reload(); return }
   const payload = await response.json()
   state.calls = payload.calls || []
+  syncDocumentTitle(state.calls)
   const knownIds = new Set(state.calls.map(call => call.execution_id))
   for (const call of state.calls) {
     const cached = detailCache.get(call.execution_id)
@@ -656,6 +682,7 @@ setInterval(() => { if (state.calls.some(call => ['running', 'starting'].include
 
 if (typeof module !== 'undefined') module.exports = {
   activityAgeMs, allocateDurationLevels, extendRunCommandsThroughStateCalls, focusMobileSearch, handleDrawerKeydown,
+  latestEventPurpose, syncDocumentTitle,
   organizeLedgerCalls, resolveStateParent, runParentContext, syntheticThinking,
   syncConversationDrawerA11y, timing, toggleConversationDrawer, hasActiveTextSelection,
 }
