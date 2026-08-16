@@ -9,8 +9,9 @@ import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
-SUPPORTED_PROVIDERS = {"ngrok", "tailscale", "external"}
+SUPPORTED_PROVIDERS = {"ngrok", "tailscale", "cloudflare", "external"}
 HTTPS_URL_RE = re.compile(r"https://[^\s\"']+")
+CLOUDFLARED_URL_RE = re.compile(r"https://[a-z0-9-]+\.trycloudflare\.com")
 TAILSCALE_COMMAND_TIMEOUT_SECONDS = 10
 
 
@@ -40,12 +41,19 @@ def require_cli(provider: str, which=None) -> str:
     if provider == "external":
         return ""
     resolver = which or shutil.which
-    executable = resolver(provider)
+    executable = resolver({"cloudflare": "cloudflared"}.get(provider, provider))
     if executable:
         return executable
     if provider == "tailscale":
         raise TunnelConfigurationError(
             "Tailscale CLI was not found. Install Tailscale, run 'tailscale up', then retry."
+        )
+    if provider == "cloudflare":
+        raise TunnelConfigurationError(
+            "cloudflared was not found. Install it (macOS: 'brew install cloudflared', "
+            "Linux: 'curl -L https://github.com/cloudflare/cloudflared/releases/latest/download/"
+            "cloudflared-linux-amd64 -o /usr/local/bin/cloudflared && chmod +x /usr/local/bin/cloudflared', "
+            "Windows: 'winget install --id Cloudflare.cloudflared'), then retry."
         )
     raise TunnelConfigurationError(
         "ngrok was not found. Install ngrok and configure its authtoken, then retry."
@@ -85,6 +93,29 @@ def parse_tailscale_https_url(output: str) -> str:
     return ""
 
 
+def parse_cloudflared_url(output: str) -> str:
+    match = CLOUDFLARED_URL_RE.search(output)
+    return match.group(0).rstrip("/.,;)") if match else ""
+
+
+def cloudflared_public_url(log_path: Path | str, read_log=None) -> str:
+    reader = read_log or (lambda path: Path(path).read_text(encoding="utf-8", errors="replace"))
+    try:
+        text = reader(log_path)
+    except OSError:
+        return ""
+    return parse_cloudflared_url(text)
+
+
+def cloudflared_registered(log_path: Path | str, read_log=None) -> bool:
+    reader = read_log or (lambda path: Path(path).read_text(encoding="utf-8", errors="replace"))
+    try:
+        text = reader(log_path)
+    except OSError:
+        return False
+    return "Registered tunnel connection" in text
+
+
 def tailscale_public_url(run=subprocess.run) -> str:
     try:
         result = run(
@@ -112,6 +143,7 @@ def build_tunnel_spec(
     log_root: Path,
     *,
     ngrok_target: str | None = None,
+    cloudflared_tunnel_name: str | None = None,
 ) -> TunnelSpec:
     provider = normalize_provider(provider)
     if provider == "external":
@@ -125,6 +157,22 @@ def build_tunnel_spec(
             log_root / "tailscale.log",
             "Tailscale Funnel",
         )
+    if provider == "cloudflare":
+        if cloudflared_tunnel_name:
+            command = [
+                "cloudflared",
+                "tunnel",
+                "--no-autoupdate",
+                "run",
+                "--url",
+                f"http://127.0.0.1:{port}",
+                cloudflared_tunnel_name,
+            ]
+            display_name = f"Cloudflare Tunnel ({cloudflared_tunnel_name})"
+        else:
+            command = ["cloudflared", "tunnel", "--no-autoupdate", "--url", f"http://127.0.0.1:{port}"]
+            display_name = "Cloudflare Tunnel"
+        return TunnelSpec(provider, command, log_root / "cloudflared.log", display_name)
     return TunnelSpec(
         provider,
         ["ngrok", "http", ngrok_target or str(port), "--log=stdout"],

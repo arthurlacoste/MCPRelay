@@ -58,9 +58,10 @@ $env:PATH = "$GuardBin$([IO.Path]::PathSeparator)$env:PATH"
 $TunnelProvider = if ($env:TUNNEL_PROVIDER) { $env:TUNNEL_PROVIDER } else { Get-EnvValue "TUNNEL_PROVIDER" }
 if (-not $TunnelProvider) { $TunnelProvider = "ngrok" }
 $TunnelProvider = $TunnelProvider.ToLowerInvariant()
-if ($TunnelProvider -notin @("ngrok", "tailscale", "external")) {
-    throw "Unsupported TUNNEL_PROVIDER=$TunnelProvider. Use ngrok, tailscale, or external."
+if ($TunnelProvider -notin @("ngrok", "tailscale", "cloudflare", "external")) {
+    throw "Unsupported TUNNEL_PROVIDER=$TunnelProvider. Use ngrok, tailscale, cloudflare, or external."
 }
+$CloudflaredTunnelName = if ($env:CLOUDFLARED_TUNNEL_NAME) { $env:CLOUDFLARED_TUNNEL_NAME } else { Get-EnvValue "CLOUDFLARED_TUNNEL_NAME" }
 
 $TunnelCommand = $null
 $TunnelArgs = @()
@@ -82,6 +83,26 @@ switch ($TunnelProvider) {
         }
         $TunnelCommand = "tailscale"
         $TunnelArgs = @("funnel", "--bg=false", "$TunnelPort")
+    }
+    "cloudflare" {
+        if (-not (Get-Command cloudflared -ErrorAction SilentlyContinue)) {
+            throw "cloudflared was not found. Install it (winget install --id Cloudflare.cloudflared), then retry."
+        }
+        if ($CloudflaredTunnelName) {
+            $TunnelList = & cloudflared tunnel list 2>&1 | Out-String
+            if ($LASTEXITCODE -ne 0) {
+                throw "cloudflared is not logged in to Cloudflare. Run 'cloudflared tunnel login', then retry."
+            }
+            if ($TunnelList -notmatch [regex]::Escape($CloudflaredTunnelName)) {
+                throw "Cloudflare tunnel '$CloudflaredTunnelName' does not exist. Run 'cloudflared tunnel create $CloudflaredTunnelName' or '.\run.ps1 setup'."
+            }
+        }
+        $TunnelCommand = "cloudflared"
+        if ($CloudflaredTunnelName) {
+            $TunnelArgs = @("tunnel", "--no-autoupdate", "run", "--url", "http://127.0.0.1:$TunnelPort", $CloudflaredTunnelName)
+        } else {
+            $TunnelArgs = @("tunnel", "--no-autoupdate", "--url", "http://127.0.0.1:$TunnelPort")
+        }
     }
     "external" {
         $PublicUrl = if ($env:MCP_BASE_URL) { $env:MCP_BASE_URL } else { Get-EnvValue "MCP_BASE_URL" }
@@ -128,6 +149,40 @@ try {
         Set-EnvValue "OAUTH_ISSUER" "$PublicUrl/oauth"
         Set-EnvValue "LOCAL_OAUTH_ISSUER" "$PublicUrl/oauth"
         Write-Host "Public URL: $PublicUrl"
+    }
+
+    if ($TunnelProvider -eq "cloudflare") {
+        if ($CloudflaredTunnelName) {
+            $PublicUrl = if ($env:MCP_BASE_URL) { $env:MCP_BASE_URL } else { Get-EnvValue "MCP_BASE_URL" }
+            if (-not $PublicUrl -or -not $PublicUrl.StartsWith("https://")) {
+                throw "CLOUDFLARED_TUNNEL_NAME requires MCP_BASE_URL=https://... (your tunnel hostname)."
+            }
+            Write-Host "Starting Cloudflare connect tunnel '$CloudflaredTunnelName'."
+            $Tunnel = Start-Process -FilePath $TunnelCommand -ArgumentList $TunnelArgs -WorkingDirectory $ProjectDir -NoNewWindow -PassThru
+        } else {
+            $CloudflaredLog = Join-Path $ProjectDir "logs\cloudflared.log"
+            New-Item -ItemType Directory -Path (Split-Path $CloudflaredLog) -Force | Out-Null
+            Write-Host "Starting Cloudflare Tunnel."
+            $Tunnel = Start-Process -FilePath $TunnelCommand -ArgumentList $TunnelArgs -WorkingDirectory $ProjectDir -NoNewWindow -PassThru -RedirectStandardError $CloudflaredLog
+            $PublicUrl = $null
+            for ($Attempt = 0; $Attempt -lt 30; $Attempt++) {
+                if ($Tunnel.HasExited) { break }
+                Start-Sleep -Seconds 1
+                $LogText = Get-Content $CloudflaredLog -Raw -ErrorAction SilentlyContinue
+                $UrlMatch = [regex]::Match($LogText, 'https://[a-z0-9-]+\.trycloudflare\.com')
+                if ($UrlMatch.Success) {
+                    $PublicUrl = $UrlMatch.Value.TrimEnd('/')
+                    break
+                }
+            }
+            if (-not $PublicUrl) {
+                throw "Could not detect a public Cloudflare Tunnel HTTPS URL. Check $CloudflaredLog."
+            }
+            Set-EnvValue "MCP_BASE_URL" $PublicUrl
+            Set-EnvValue "OAUTH_ISSUER" "$PublicUrl/oauth"
+            Set-EnvValue "LOCAL_OAUTH_ISSUER" "$PublicUrl/oauth"
+            Write-Host "Public URL: $PublicUrl"
+        }
     }
 
     $Gateway = Start-Process -FilePath $Python -ArgumentList $ServiceArgs -WorkingDirectory $ProjectDir -NoNewWindow -PassThru

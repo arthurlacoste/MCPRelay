@@ -29,6 +29,7 @@ gate update --version 0.1.14-beta.1
 gate rollback
 gate uninstall
 gate uninstall --purge
+gate connect cf
 ```
 
 `gate log` attaches to the redacted realtime activity snapshot of a running daemon. It includes Gate tool calls, discovered/downstream MCP calls, resource reads, prompt renders, and semantic OAuth/public-file HTTP activity. `run_command` keeps its richer terminal command/log fields. In a terminal it refreshes continuously until `Ctrl+C`; when piped, it prints one snapshot. It does not restart Gate or require the legacy `--realtime` startup flag.
@@ -94,7 +95,7 @@ python -m pip install -r requirements.txt
 
 ## Tunnel providers
 
-Gate supports three tunnel modes through `TUNNEL_PROVIDER`:
+Gate supports four tunnel modes through `TUNNEL_PROVIDER`:
 
 ```env
 TUNNEL_PROVIDER=ngrok
@@ -102,6 +103,7 @@ TUNNEL_PROVIDER=ngrok
 
 - `ngrok`: default. Gate starts ngrok and detects its public HTTPS URL. Existing installations keep this behavior.
 - `tailscale`: Gate validates the Tailscale CLI and login, starts `tailscale funnel --bg=false 8761`, and stores the Funnel HTTPS URL as `MCP_BASE_URL`. Tailscale Serve without Funnel is tailnet-only and cannot be reached directly by ChatGPT.
+- `cloudflare`: Gate starts a free, account-less Cloudflare quick tunnel through `cloudflared` and stores its `trycloudflare.com` HTTPS URL as `MCP_BASE_URL`.
 - `external`: Gate does not start a tunnel. Set `MCP_BASE_URL` to a public HTTPS endpoint that forwards to local port `8761`.
 
 ### Tailscale Funnel
@@ -120,6 +122,67 @@ TUNNEL_PROVIDER=tailscale
 ```
 
 Run `./run.sh setup` on macOS, Linux, or WSL. On Windows, set the same value in `config/.env` before launching `run.ps1`. Funnel availability depends on the tailnet policy and Tailscale account configuration. Gate reports an actionable error when the CLI, login, or public Funnel URL is unavailable.
+
+### Cloudflare Tunnel (quick tunnel)
+
+Install `cloudflared`:
+
+```bash
+# macOS
+brew install cloudflared
+
+# Debian/Ubuntu (x86_64; use cloudflared-linux-arm64 on ARM64)
+curl -L https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 \
+  -o ~/.local/bin/cloudflared
+chmod +x ~/.local/bin/cloudflared
+
+# Windows
+winget install --id Cloudflare.cloudflared
+```
+
+Then set:
+
+```env
+TUNNEL_PROVIDER=cloudflare
+```
+
+Run `./run.sh setup` on macOS, Linux, or WSL. Gate launches `cloudflared tunnel --url http://127.0.0.1:8761`, waits for the `trycloudflare.com` URL, and saves it as `MCP_BASE_URL`. No Cloudflare account or token is required.
+
+Quick tunnels are transient: the random `trycloudflare.com` subdomain changes whenever the tunnel restarts. After a restart, re-run `./run.sh setup` so Gate stores the new URL. Also note that Cloudflare refuses quick tunnels when a `config.yaml` or `config.yml` file exists in `~/.cloudflared/`; rename that file if you have one.
+
+#### Cloudflare connect (named tunnel)
+
+When `./run.sh setup` runs interactively, choosing **2. Cloudflare connect** keeps the same hostname across restarts by creating a named tunnel on your Cloudflare account and routing a hostname on one of your domains to it. This is the stable option if you want a persistent `MCP_BASE_URL` and a custom domain.
+
+The setup flow:
+
+1. Logs in: `cloudflared tunnel login` opens a browser so you can authorize your Cloudflare account (writes `~/.cloudflared/cert.pem`). It is skipped when you are already logged in.
+2. Creates the tunnel if needed: `cloudflared tunnel create gate` (default name `gate`).
+3. Asks for a public hostname (for example `mcp.example.com`) and routes it: `cloudflared tunnel route dns gate mcp.example.com`. The domain must be on the same Cloudflare account.
+4. Stores `CLOUDFLARED_TUNNEL_NAME=gate` and `MCP_BASE_URL=https://mcp.example.com` in `config/.env`.
+
+Gate then launches `cloudflared tunnel run --url http://127.0.0.1:8761 gate` on every start, reusing the same hostname. To choose the mode again, set `CLOUDFLARED_TUNNEL_NAME` (or remove it) in `config/.env` before re-running setup.
+
+The same flow is available as a one-shot CLI command, without running the interactive `./run.sh setup`:
+
+```bash
+gate connect cf
+# Or with explicit values (skips prompts):
+gate connect cf --name gate --hostname mcp.example.com
+```
+
+`gate connect cf` installs `cloudflared` when missing (after a prompt unless `--yes`; macOS uses Homebrew, Windows uses winget, and Linux downloads the correct `cloudflared-linux-<arch>` binary for your machine into `~/.gate/runtime/bin` — no `sudo` needed), logs in only when not already logged in, creates the tunnel if it does not exist, routes DNS, and writes `TUNNEL_PROVIDER=cloudflare`, `CLOUDFLARED_TUNNEL_NAME`, `MCP_BASE_URL`, and the OAuth issuer values to `config/.env`. It does not complete OAuth; when the required secrets are still missing it tells you to run `gate setup`. `gate setup` then reuses the hostname you configured and does not re-run DNS provisioning. `gate connect cloudflare` is accepted as an alias.
+
+The hostname you type is the full public subdomain on your Cloudflare domain. For example, with `mcp.example.com`, `cloudflared tunnel route dns gate mcp.example.com` creates a CNAME on your zone (`example.com`) pointing the `mcp` subdomain at the tunnel, and Gate stores `MCP_BASE_URL=https://mcp.example.com`. When no hostname is given, `gate connect cf` prompts for one with the default `mcp.<zone>` (the zone is read from `~/.cloudflared/cert.pem`); press Enter to accept it or type another subdomain — a single label like `mcp` is completed to `mcp.<zone>`. If an existing `MCP_BASE_URL` from another provider (ngrok, Tailscale, quick tunnel) is present, `gate connect cf` refuses to reuse it and prompts for a fresh hostname instead — it never mixes a foreign URL into your Cloudflare domain.
+
+The tunnel name can also be set ahead of time so setup skips the interactive choice:
+
+```env
+TUNNEL_PROVIDER=cloudflare
+CLOUDFLARED_TUNNEL_NAME=gate
+```
+
+On Windows, the named-tunnel mode is configured the same way in `config/.env`, but `MCP_BASE_URL` must already be set to your `https://<hostname>` because `run.ps1` performs no browser-based onboarding.
 
 ### Externally managed tunnel
 
