@@ -35,7 +35,12 @@
       <div class="track" id="track"><div id="spans"></div></div>
     </section>
     <div class="split" id="split">
-      <section class="ledger" id="ledger" aria-live="polite"></section>
+      <div class="ledger-shell">
+        <section class="ledger" id="ledger" aria-live="polite"></section>
+        <button class="scroll-bottom" id="scroll-bottom" aria-label="Go to latest calls" title="Go to latest calls" hidden>
+          <svg viewBox="0 0 18 18" aria-hidden="true"><path d="m4 7 5 5 5-5"/></svg>
+        </button>
+      </div>
       <aside class="inspector" id="inspector" hidden>
         <div class="inspector-head">
           <span class="badge" id="detail-kind">TOOL</span>

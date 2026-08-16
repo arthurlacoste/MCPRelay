@@ -26,6 +26,7 @@ def test_authenticated_realtime_page_uses_split_inspector(tmp_path, monkeypatch)
     assert '<div class="view-title">Real-time calls</div>' in response.text
     assert 'id="thinking-toggle" class="pressed"' in response.text
     assert 'class="search-icon"' in response.text
+    assert 'id="scroll-bottom"' in response.text
 
 
 def test_realtime_assets_are_authenticated(tmp_path, monkeypatch):
@@ -55,6 +56,10 @@ def test_realtime_assets_are_authenticated(tmp_path, monkeypatch):
     assert "width:max(1px" in script.text
     assert 'class="badge-icon"' in script.text
     assert '<span>${formatDuration(range.duration)}</span>' in script.text
+    assert "pendingBottomScroll: true" in script.text
+    assert "ledger.scrollTop = ledger.scrollHeight" in script.text
+    assert "function updateScrollBottomButton()" in script.text
+    assert "scrollTo({ top: $('#ledger').scrollHeight, behavior: 'smooth' })" in script.text
 
     stylesheet = client.get("/rt/assets/trajectory.css")
     assert "prefers-color-scheme: dark" in stylesheet.text
