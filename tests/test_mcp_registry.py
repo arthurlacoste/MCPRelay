@@ -653,3 +653,55 @@ def test_manual_refresh_status_records_global_config_failure(tmp_path):
     assert status["status"] == "failed"
     assert "JSONDecodeError" in status["error"]
     assert status["finished_at"].endswith("Z")
+
+
+def test_cancelled_reload_closes_uninstalled_client(tmp_path, monkeypatch):
+    import pytest
+    import mcp_registry as registry_module
+    from mcp_proxy import MCPProxyManager
+
+    config = tmp_path / "mcp.json"
+    _write_config(config, {"demo": {"command": sys.executable}})
+    gateway = FastMCP("gateway")
+    entered = asyncio.Event()
+    clients = []
+
+    class FakeClient:
+        def __init__(self, *args, **kwargs):
+            self.closed = False
+            clients.append(self)
+
+        async def __aenter__(self):
+            return self
+
+        async def close(self):
+            self.closed = True
+
+    class BlockingProxy:
+        async def list_tools(self):
+            entered.set()
+            await asyncio.Event().wait()
+
+    monkeypatch.setattr(registry_module, "StatefulProxyClient", FakeClient)
+    monkeypatch.setattr(registry_module, "create_proxy", lambda client, name: BlockingProxy())
+
+    manager = MCPProxyManager(
+        config,
+        project_root=tmp_path,
+        environ={},
+        refresh_interval_seconds=0,
+        tool_exposure_mode="discover",
+    )
+
+    async def scenario():
+        task = asyncio.create_task(manager.start(gateway))
+        await entered.wait()
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+    asyncio.run(scenario())
+
+    assert len(clients) == 1
+    assert clients[0].closed is True
+    assert "demo" not in manager.registry.states

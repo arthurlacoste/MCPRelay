@@ -306,6 +306,7 @@ class MCPRegistry:
         self._event("mcp_server_reload_started", {"server": server.name, "prefix": server.prefix})
         started = monotonic()
         client: Client | None = None
+        state_installed = False
         try:
             if not server.prefix or any(
                 state.prefix == server.prefix for name, state in self.states.items() if name != server.name
@@ -377,6 +378,7 @@ class MCPRegistry:
                 catalog_tools=catalog_tools,
             )
             self.states[server.name] = state
+            state_installed = True
             if old and old.provider in self.gateway.providers:
                 self.gateway.providers.remove(old.provider)
             if old and old.client:
@@ -393,6 +395,11 @@ class MCPRegistry:
                 "tool_count": len(public_tools), "duration_ms": round((monotonic()-started)*1000, 2),
             })
             return True
+        except asyncio.CancelledError:
+            if client and not state_installed:
+                with suppress(Exception, asyncio.CancelledError):
+                    await client.close()
+            raise
         except Exception as exc:
             if client:
                 with suppress(Exception, asyncio.CancelledError):
