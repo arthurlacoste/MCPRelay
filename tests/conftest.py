@@ -60,8 +60,13 @@ import lightweight_oauth as oauth_mod
 
 @pytest.fixture
 def oauth_client() -> TestClient:
-    """FastAPI TestClient wired to the lightweight OAuth server."""
-    return TestClient(oauth_mod.app)
+    """FastAPI TestClient wired to the lightweight OAuth server.
+
+    The base_url sets the Host header, which the server uses to derive the
+    OAuth issuer (issuer_for_host). ``test.local`` matches the issuer that
+    test assertions expect.
+    """
+    return TestClient(oauth_mod.app, base_url="https://test.local")
 
 
 @pytest.fixture

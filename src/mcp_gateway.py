@@ -25,7 +25,7 @@ from command_queue import CommandQueue
 from blocking_command_runner import BlockingCommandRunner
 from command_guard import GuardService, SecretRedactor, current_guard_request
 from environment_config import gateway_paths, load_gateway_environment
-from lightweight_oauth import app as oauth_app, set_activity_observer
+from lightweight_oauth import app as oauth_app, set_activity_observer, public_key_pem
 from terminal_app import TERMINAL_APP_HTML, TERMINAL_APP_URI
 from realtime_web import register_realtime_routes
 from tool_registry import configurable_tool, tool_exposure_mode
@@ -254,9 +254,14 @@ def resolve_share_path(path: str) -> Path:
 mcp_kwargs = {}
 
 if ENABLE_OAUTH:
+    # Tokens are minted by the bundled OAuth server with a per-request issuer
+    # (the host the client reached), so strict static issuer validation would
+    # reject legitimate tokens as soon as the public host changes. The
+    # signature is checked against our own key and the audience is fixed, so
+    # skipping the issuer equality check does not weaken authentication.
     token_verifier = JWTVerifier(
-        jwks_uri=f'{LOCAL_OAUTH_ISSUER}/jwks.json',
-        issuer=LOCAL_OAUTH_ISSUER,
+        public_key=public_key_pem(),
+        issuer=None,
         audience=MCP_AUDIENCE,
     )
 

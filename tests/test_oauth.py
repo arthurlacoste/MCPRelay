@@ -15,6 +15,8 @@ import jwt
 import pytest
 from fastapi.testclient import TestClient
 
+import lightweight_oauth as oauth_mod
+
 
 def complete_authorization(client, response):
     match = re.search(r'name="request" value="([^"]+)"', response.text)
@@ -69,6 +71,92 @@ class TestMetadata:
         resp = oauth_client.get("/oauth/health")
         assert resp.status_code == 200
         assert resp.json()["ok"] is True
+
+
+class TestHostRelativeIssuer:
+    def test_metadata_uses_request_host(self):
+        """The issuer and registration endpoint follow the Host header, so a
+        tunnel host (e.g. Tailscale) works even when the configured issuer is
+        stale or belongs to another tunnel provider."""
+        client = TestClient(oauth_mod.app, base_url="https://mj-1.taildc7e9e.ts.net")
+        body = client.get("/.well-known/oauth-authorization-server").json()
+        assert body["issuer"] == "https://mj-1.taildc7e9e.ts.net/oauth"
+        assert body["registration_endpoint"] == "https://mj-1.taildc7e9e.ts.net/oauth/register"
+        assert body["token_endpoint"] == "https://mj-1.taildc7e9e.ts.net/oauth/token"
+        assert body["jwks_uri"] == "https://mj-1.taildc7e9e.ts.net/oauth/jwks.json"
+
+    def test_protected_resource_metadata(self):
+        client = TestClient(oauth_mod.app, base_url="https://mj-1.taildc7e9e.ts.net")
+        body = client.get("/.well-known/oauth-protected-resource").json()
+        assert body["resource"] == "https://mj-1.taildc7e9e.ts.net/mcp"
+        assert body["authorization_servers"] == ["https://mj-1.taildc7e9e.ts.net/oauth"]
+
+    def test_token_iss_follows_request_host(self, oauth_client: TestClient,
+                                            registered_client: dict,
+                                            temp_data_dir):
+        from fastapi.testclient import TestClient as TC
+        host_client = TC(oauth_mod.app, base_url="https://mj-1.taildc7e9e.ts.net")
+        auth_resp = complete_authorization(host_client, host_client.get(
+            "/oauth/authorize",
+            params={
+                "response_type": "code",
+                "client_id": registered_client["client_id"],
+                "redirect_uri": "https://client.example/cb",
+            },
+            follow_redirects=False,
+        ))
+        code = auth_resp.headers["location"].split("code=")[1].split("&")[0]
+        resp = host_client.post(
+            "/oauth/token",
+            data={
+                "grant_type": "authorization_code",
+                "code": code,
+                "redirect_uri": "https://client.example/cb",
+                "client_id": registered_client["client_id"],
+            },
+        )
+        assert resp.status_code == 200
+        access = jwt.decode(
+            resp.json()["access_token"],
+            options={"verify_signature": False},
+        )
+        assert access["iss"] == "https://mj-1.taildc7e9e.ts.net/oauth"
+
+    def test_verifier_accepts_host_relative_token(self, temp_data_dir):
+        """The MCP JWTVerifier validates host-derived tokens (signature from our
+        own public key, audience match) without a fixed issuer."""
+        import asyncio
+        import time as _time
+        from fastmcp.server.auth.providers.jwt import JWTVerifier
+        import lightweight_oauth as oauth_mod
+
+        now = int(_time.time())
+        token = jwt.encode(
+            {
+                "iss": "https://mj-1.taildc7e9e.ts.net/oauth",
+                "sub": "local-user",
+                "aud": "https://test.local/mcp",
+                "iat": now,
+                "exp": now + 3600,
+                "scope": "openid profile email",
+            },
+            oauth_mod.private_key,
+            algorithm="RS256",
+            headers={"kid": oauth_mod.KID},
+        )
+
+        verifier = JWTVerifier(
+            public_key=oauth_mod.public_key_pem(),
+            issuer=None,
+            audience="https://test.local/mcp",
+        )
+
+        async def _verify():
+            return await verifier.verify_token(token)
+
+        verified = asyncio.run(_verify())
+        assert verified is not None
+        assert verified.client_id == "local-user"
 
 
 # ===================================================================
