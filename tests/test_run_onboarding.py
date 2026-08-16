@@ -359,6 +359,35 @@ def test_setup_and_secret_renewal_commands_are_available():
     assert "renew-secret) ensure_python_environment; ensure_onboarding true ;;" in content
 
 
+def test_connect_command_is_available_through_launcher():
+    content = RUN_SCRIPT.read_text()
+
+    assert '-m gate_cli connect "$@"' in content
+    assert "connect {cf|ts}" in content
+
+
+def test_connect_ts_runs_through_launcher_with_fake_tailscale(tmp_path):
+    script, env = _sandbox(tmp_path, "")
+    shutil.copytree(RUN_SCRIPT.parent / "src", tmp_path / "src")
+    fake_bin = tmp_path / "bin"
+    _write_executable(
+        fake_bin / "tailscale",
+        "#!/usr/bin/env bash\n"
+        'case "$1" in\n'
+        '  status) echo \'{"BackendState":"Running"}\' ;;\n'
+        '  debug) echo "{\"OperatorUser\":\"$(id -un)\"}" ;;\n'
+        '  funnel) if [ "$2" = "status" ]; then echo \'{"Funnel":{"On":true}}\'; fi ;;\n'
+        "esac\n"
+        "exit 0\n",
+    )
+
+    result = subprocess.run(
+        [str(script), "connect", "ts"], env=env, text=True, capture_output=True, timeout=120
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "Tailscale is ready" in result.stdout
+
+
 def test_runtime_flags_are_ephemeral_and_forwarded_to_children():
     content = RUN_SCRIPT.read_text()
 

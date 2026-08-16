@@ -108,7 +108,19 @@ TUNNEL_PROVIDER=ngrok
 
 ### Tailscale Funnel
 
-Install Tailscale, authenticate, and confirm the daemon is running:
+The quickest way to get Tailscale ready for Gate is:
+
+```bash
+gate connect ts
+# or, from a checkout:
+./run.sh connect ts
+# Windows:
+.\run.ps1 -ConnectTs
+```
+
+It installs the Tailscale CLI when missing (Homebrew on macOS, winget on Windows, the official installer elsewhere), walks you through `tailscale up` when you are not logged in, and grants the non-root serve permission Gate needs (`sudo tailscale set --operator=$USER`). When everything is ready it prints the launch command.
+
+Alternatively, set everything up by hand:
 
 ```bash
 tailscale up
