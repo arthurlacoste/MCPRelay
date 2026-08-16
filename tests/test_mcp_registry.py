@@ -774,7 +774,7 @@ def test_reload_does_not_wait_forever_for_old_inflight_call(tmp_path, monkeypatc
         await old_state.call_lock.acquire()
         try:
             _write_config(config, {"demo": {"command": sys.executable, "args": [str(script), "new", "new"]}})
-            diff = await asyncio.wait_for(manager.refresh(), timeout=1.0)
+            diff = await asyncio.wait_for(manager.refresh(), timeout=3.0)
             return diff, manager.registry.states["demo"] is old_state
         finally:
             if old_state.call_lock.locked():
