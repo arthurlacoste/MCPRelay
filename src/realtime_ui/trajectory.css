@@ -47,8 +47,13 @@ button { color: inherit; }
 .span.selected { z-index: 2; opacity: 1; box-shadow: 0 0 0 1px #fff, 0 0 0 2px var(--blue); }
 .span.filtered { opacity: .12; }
 .turn-boundary { position: absolute; top: -8px; bottom: -8px; width: 1px; background: #d9dce1; pointer-events: none; }
-.split { display: flex; flex: 1; min-height: 0; overflow: hidden; }
-.ledger { flex: 1; min-width: 280px; overflow: auto; }
+.split { position: relative; display: flex; flex: 1; min-height: 0; overflow: hidden; }
+.ledger-shell { position: relative; flex: 1; min-width: 280px; overflow: hidden; }
+.ledger { height: 100%; overflow: auto; }
+.scroll-bottom { position: absolute; right: 16px; bottom: 16px; display: grid; width: 32px; height: 32px; padding: 0; place-items: center; border: 1px solid var(--line); border-radius: 50%; background: var(--bg); box-shadow: 0 2px 9px rgb(0 0 0 / 14%); color: var(--muted); cursor: pointer; opacity: .9; }
+.scroll-bottom:hover { color: var(--text); opacity: 1; }
+.scroll-bottom[hidden] { display: none; }
+.scroll-bottom svg { width: 17px; height: 17px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
 .turn-label { position: sticky; top: 0; z-index: 2; height: 24px; padding: 4px 10px; border-bottom: 1px solid var(--line); background: #f8f9fa; color: var(--muted); font-size: 11px; }
 .row { position: relative; display: grid; min-height: 36px; grid-template-columns: 96px minmax(150px, .8fr) minmax(140px, 1.4fr) 120px; align-items: center; gap: 10px; padding: 6px 14px 6px 48px; border-bottom: 1px solid var(--line-soft); cursor: default; }
 .row::before { position: absolute; left: 30px; top: 0; bottom: 0; width: 1px; background: #d9dce1; content: ""; }
@@ -112,7 +117,6 @@ pre { margin: 0; padding: 14px; overflow: auto; border-radius: 6px; background: 
   .modes::-webkit-scrollbar { display: none; }
   .modes button { flex: 0 0 auto; }
   .search { width: 100%; flex: 1 0 100%; margin-left: 0; }
-  .split { position: relative; }
   .inspector { position: absolute; z-index: 10; inset: 0; width: 100%; min-width: 0; box-shadow: none; }
   .detail-tabs { overflow-x: auto; gap: 20px; }
   .row { grid-template-columns: 26px minmax(120px, 1fr) 72px; gap: 7px; padding: 6px 9px 6px 36px; }

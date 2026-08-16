@@ -1,8 +1,9 @@
 const $ = selector => document.querySelector(selector)
 const THINKING_MIN_MS = 250
+const BOTTOM_THRESHOLD_PX = 32
 const state = {
   calls: [], mode: 'duration', compact: false, showStates: false, showThinking: true,
-  query: '', conversation: null, selected: null, tab: 'summary',
+  query: '', conversation: null, selected: null, tab: 'summary', pendingBottomScroll: true,
 }
 const resultCache = new Map()
 
@@ -161,6 +162,7 @@ function renderConversations() {
     button.addEventListener('click', () => {
       state.conversation = button.dataset.key || null
       state.selected = null
+      state.pendingBottomScroll = true
       renderAll()
     })
   })
@@ -224,6 +226,8 @@ function renderTimeline() {
 }
 
 function renderLedger() {
+  const ledger = $('#ledger')
+  const wasNearBottom = isLedgerNearBottom(ledger)
   const ordered = projectedCalls()
   const stateStacks = new Map()
   const lastRunByTurn = new Map()
@@ -241,9 +245,12 @@ function renderLedger() {
     }
     if (matches(call)) calls.push(call)
   }
-  const ledger = $('#ledger')
   ledger.classList.toggle('compact', state.compact)
-  if (!calls.length) { ledger.innerHTML = '<p class="empty">No calls yet.</p>'; return }
+  if (!calls.length) {
+    ledger.innerHTML = '<p class="empty">No calls yet.</p>'
+    $('#scroll-bottom').hidden = true
+    return
+  }
   let previousTurn = null
   ledger.innerHTML = calls.map(call => {
     const range = timing(call)
@@ -272,6 +279,24 @@ function renderLedger() {
   ledger.querySelectorAll('.row, .state-stack').forEach(row => {
     row.addEventListener('click', () => selectCall(row.dataset.id))
   })
+  const shouldScrollToBottom = state.pendingBottomScroll || wasNearBottom
+  state.pendingBottomScroll = false
+  requestAnimationFrame(() => {
+    if (shouldScrollToBottom) ledger.scrollTop = ledger.scrollHeight
+    updateScrollBottomButton()
+  })
+}
+
+function isLedgerNearBottom(ledger = $('#ledger')) {
+  return ledger.scrollHeight - ledger.clientHeight - ledger.scrollTop <= BOTTOM_THRESHOLD_PX
+}
+
+function updateScrollBottomButton() {
+  $('#scroll-bottom').hidden = isLedgerNearBottom()
+}
+
+function goToLatestCalls() {
+  $('#ledger').scrollTo({ top: $('#ledger').scrollHeight, behavior: 'smooth' })
 }
 
 function currentCall() {
@@ -361,6 +386,7 @@ async function load() {
   state.calls = payload.calls || []
   if (state.conversation && !state.calls.some(call => turnKey(call) === state.conversation)) {
     state.conversation = null
+    state.pendingBottomScroll = true
   }
   if (state.selected && !currentCall()) state.selected = null
   renderAll()
@@ -392,6 +418,8 @@ $('#thinking-toggle').addEventListener('click', event => {
   renderAll()
 })
 $('#search').addEventListener('input', event => { state.query = event.currentTarget.value.trim().toLowerCase(); renderAll() })
+$('#ledger').addEventListener('scroll', updateScrollBottomButton, { passive: true })
+$('#scroll-bottom').addEventListener('click', goToLatestCalls)
 $('#refresh').addEventListener('click', load)
 $('#close').addEventListener('click', () => { state.selected = null; renderAll() })
 document.querySelectorAll('.detail-tabs button').forEach(button => button.addEventListener('click', () => {
