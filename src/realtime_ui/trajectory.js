@@ -5,6 +5,7 @@ const BOTTOM_THRESHOLD_PX = 32
 const state = {
   calls: [], mode: 'duration', compact: false, showStates: false, showThinking: true,
   query: '', conversation: null, selected: null, tab: 'summary', pendingBottomScroll: true,
+  selectionRefreshPending: false,
 }
 const resultCache = new Map()
 const detailCache = new Map()
@@ -532,11 +533,31 @@ function selectCall(id) {
   document.querySelector(`.row[data-id="${CSS.escape(id)}"]`)?.scrollIntoView({ block: 'nearest' })
 }
 
+function hasActiveTextSelection(selection = (
+  typeof window !== 'undefined' && window.getSelection ? window.getSelection() : null
+)) {
+  return Boolean(selection && !selection.isCollapsed && selection.toString().length)
+}
+
 function renderAll() {
   renderConversations()
   renderTimeline()
   renderLedger()
   renderDetail()
+}
+
+function renderRealtimeUpdate() {
+  if (hasActiveTextSelection()) {
+    state.selectionRefreshPending = true
+    return false
+  }
+  state.selectionRefreshPending = false
+  renderAll()
+  return true
+}
+
+function flushDeferredRealtimeUpdate() {
+  if (state.selectionRefreshPending && !hasActiveTextSelection()) renderRealtimeUpdate()
 }
 
 async function load() {
@@ -559,7 +580,7 @@ async function load() {
     state.pendingBottomScroll = true
   }
   if (state.selected && !currentCall()) state.selected = null
-  renderAll()
+  renderRealtimeUpdate()
 }
 
 function initializeUI() {
@@ -604,6 +625,7 @@ $('#close-conversations').addEventListener('click', closeConversationDrawer)
 $('#mobile-search').addEventListener('click', focusMobileSearch)
 $('.app').addEventListener('click', closeConversationDrawer)
 document.addEventListener('keydown', handleDrawerKeydown)
+document.addEventListener('selectionchange', flushDeferredRealtimeUpdate)
 $('#close').addEventListener('click', () => { state.selected = null; renderAll() })
 document.querySelectorAll('.detail-tabs button').forEach(button => button.addEventListener('click', () => {
   state.tab = button.dataset.tab; renderDetail()
@@ -624,16 +646,17 @@ timelineObserver.observe($('#spans'))
 window.addEventListener('pagehide', () => {
   timelineObserver.disconnect()
   drawerMedia.removeEventListener('change', handleDrawerBreakpointChange)
+  document.removeEventListener('selectionchange', flushDeferredRealtimeUpdate)
 }, { once: true })
 
 load()
 setInterval(load, 2000)
-setInterval(() => { if (state.calls.some(call => ['running', 'starting'].includes(call.status))) renderAll() }, 1000)
+setInterval(() => { if (state.calls.some(call => ['running', 'starting'].includes(call.status))) renderRealtimeUpdate() }, 1000)
 }
 
 if (typeof module !== 'undefined') module.exports = {
   activityAgeMs, allocateDurationLevels, extendRunCommandsThroughStateCalls, focusMobileSearch, handleDrawerKeydown,
   organizeLedgerCalls, resolveStateParent, runParentContext, syntheticThinking,
-  syncConversationDrawerA11y, timing, toggleConversationDrawer,
+  syncConversationDrawerA11y, timing, toggleConversationDrawer, hasActiveTextSelection,
 }
 if (typeof document !== 'undefined' && typeof process === 'undefined') initializeUI()

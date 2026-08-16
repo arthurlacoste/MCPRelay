@@ -96,6 +96,9 @@ def test_realtime_assets_are_authenticated(tmp_path, monkeypatch):
     assert "function updateScrollBottomButton()" in script.text
     assert "scrollTo({ top: $('#ledger').scrollHeight, behavior: 'smooth' })" in script.text
     assert "function toggleConversationDrawer()" in script.text
+    assert "function hasActiveTextSelection(" in script.text
+    assert "function renderRealtimeUpdate()" in script.text
+    assert "document.addEventListener('selectionchange', flushDeferredRealtimeUpdate)" in script.text
     assert "$('#mobile-search').addEventListener('click'" in script.text
     assert "const timelineObserver = new ResizeObserver" in script.text
     assert "timelineObserver.disconnect()" in script.text
