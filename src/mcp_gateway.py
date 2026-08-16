@@ -63,6 +63,7 @@ realtime_store = RealtimeCallStore(
     snapshot_path=REALTIME_CALLS_FILE,
     redact_text=SECRET_REDACTOR.redact_text,
 )
+atexit.register(realtime_store.close)
 set_activity_observer(realtime_store)
 
 LOCAL_OAUTH_ISSUER = os.getenv(

@@ -1,4 +1,5 @@
 import os
+import time
 from pathlib import Path
 from datetime import UTC, datetime, timedelta
 
@@ -80,6 +81,25 @@ def test_store_redacts_and_bounds_generic_payload_and_result():
     assert len(item["payload"]) == 32_000
 
 
+def test_unserializable_activity_data_does_not_break_store(caplog):
+    class BrokenPayload:
+        def model_dump(self, *, mode):
+            raise RuntimeError("serialization failed")
+
+    store = RealtimeCallStore()
+    store.update({
+        "execution_id": "safe-observer",
+        "status": "success",
+        "payload": BrokenPayload(),
+        "result": BrokenPayload(),
+    })
+
+    item = store.snapshot()["calls"][0]
+    assert item["payload"] == ""
+    assert item["result"] == ""
+    assert "serialization failed" in caplog.text
+
+
 def test_recent_buffer_is_bounded_but_active_calls_remain():
     store = RealtimeCallStore(max_entries=2)
     now = datetime.now(UTC).isoformat()
@@ -119,6 +139,7 @@ def test_snapshot_is_private_and_display_values_are_bounded(tmp_path):
     assert len(item["purpose"]) == 240
     if os.name != "nt":
         assert path.stat().st_mode & 0o777 == 0o600
+    store.close()
 
 
 def test_shorten_and_age_formatting():
@@ -232,7 +253,28 @@ def test_snapshot_write_failure_does_not_break_activity(monkeypatch, tmp_path, c
     monkeypatch.setattr(Path, "write_text", fail_write)
 
     activity_id = store.start_activity(tool="skills_search", purpose="Search skills")
+    assert store.flush_snapshot()
 
     assert activity_id.startswith("activity_")
     assert store.snapshot()["calls"][0]["tool"] == "skills_search"
     assert "snapshot" in caplog.text.lower()
+    store.close()
+
+
+def test_snapshot_updates_are_coalesced_off_the_update_path(monkeypatch, tmp_path):
+    store = RealtimeCallStore(snapshot_path=tmp_path / "realtime_calls.json")
+    writes = []
+
+    def record_write():
+        writes.append(time.monotonic())
+
+    monkeypatch.setattr(store, "_write_snapshot", record_write)
+    started = time.monotonic()
+    for index in range(10):
+        store.update(call(str(index), "success", datetime.now(UTC).isoformat()))
+    elapsed = time.monotonic() - started
+
+    assert elapsed < 0.05
+    assert store.flush_snapshot()
+    assert len(writes) == 1
+    store.close()
