@@ -1,3 +1,4 @@
+import re
 import shutil
 import subprocess
 import time
@@ -46,6 +47,10 @@ def test_authenticated_realtime_page_uses_split_inspector(tmp_path, monkeypatch)
     assert 'id="mobile-buckets"' in response.text
     assert 'id="conversation-drawer"' in response.text
     assert 'M21 12a9 9 0 1 1-2.64-6.36L21 8' in response.text
+    versions = re.findall(r'trajectory\.(?:css|js)\?v=([0-9a-f]{12})', response.text)
+    assert len(versions) == 2
+    assert versions[0] == versions[1]
+    assert "review-fixes" not in response.text
 
 
 def test_realtime_assets_are_authenticated(tmp_path, monkeypatch):
@@ -65,6 +70,7 @@ def test_realtime_assets_are_authenticated(tmp_path, monkeypatch):
     assert "function extendRunCommandsThroughStateCalls(calls)" in script.text
     assert "function resolveStateParent(call, context)" in script.text
     assert "eligible.length === 1 ? eligible[0].execution_id : null" in script.text
+    assert "turnKey(explicit) === turnKey(call)" in script.text
     assert "duration_ms: end - range.start" in script.text
     assert '<h3>Timing ›</h3>' in script.text
     assert '<h3>Fields ›</h3>' in script.text
@@ -74,6 +80,7 @@ def test_realtime_assets_are_authenticated(tmp_path, monkeypatch):
     assert "function directoryLabel(path)" in script.text
     assert "call.working_directory" in script.text
     assert "let coveredUntil = timing(coveredBy).end" in script.text
+    assert "function allocateDurationLevels(calls, ranges, timelineWidth)" in script.text
     assert "const occupiedUntil = [[], [], []]" in script.text
     assert "const timelineWidth = Math.max(1, host.clientWidth)" in script.text
     assert "const renderedWidth = Math.max(1" in script.text
@@ -90,6 +97,10 @@ def test_realtime_assets_are_authenticated(tmp_path, monkeypatch):
     assert "$('#mobile-search').addEventListener('click'" in script.text
     assert "const timelineObserver = new ResizeObserver" in script.text
     assert "timelineObserver.disconnect()" in script.text
+    assert "function organizeLedgerCalls(ordered, showStates)" in script.text
+    assert "typeof process === 'undefined'" in script.text
+
+    assert script.headers["cache-control"] == "private, max-age=31536000, immutable"
 
     stylesheet = client.get("/rt/assets/trajectory.css")
     assert "prefers-color-scheme: dark" in stylesheet.text

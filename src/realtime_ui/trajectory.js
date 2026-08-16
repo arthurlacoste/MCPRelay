@@ -54,7 +54,7 @@ function lane(call) {
 
 function orderedCalls() {
   return state.calls
-    .filter(call => state.conversation === null || turnKey(call) === state.conversation)
+    .slice()
     .sort((left, right) => timing(left).start - timing(right).start)
 }
 
@@ -76,18 +76,22 @@ function isToolActivity(call) {
 
 function runParentContext(calls) {
   const runs = calls.filter(isRunCommand)
-  const runIds = new Set(runs.map(call => call.execution_id))
+  const runsById = new Map(runs.map(call => [call.execution_id, call]))
   const runsByTurn = new Map()
   for (const call of runs) {
     const turn = turnKey(call)
     runsByTurn.set(turn, [...(runsByTurn.get(turn) || []), call])
   }
-  return { runIds, runsByTurn }
+  return { runsById, runsByTurn }
 }
 
 function resolveStateParent(call, context) {
-  if (context.runIds.has(call.parent_execution_id)) return call.parent_execution_id
   const stateStart = timing(call).start
+  if (call.parent_execution_id) {
+    const explicit = context.runsById.get(call.parent_execution_id)
+    return explicit && turnKey(explicit) === turnKey(call) && timing(explicit).start <= stateStart
+      ? explicit.execution_id : null
+  }
   const eligible = (context.runsByTurn.get(turnKey(call)) || [])
     .filter(run => timing(run).start <= stateStart)
   return eligible.length === 1 ? eligible[0].execution_id : null
@@ -135,10 +139,17 @@ function extendRunCommandsThroughStateCalls(calls) {
 
 function projectedCalls() {
   const real = extendRunCommandsThroughStateCalls(orderedCalls())
+    .filter(call => state.conversation === null || turnKey(call) === state.conversation)
   if (!state.showThinking) return real
-  const tools = real.filter(isToolActivity).sort((left, right) => timing(left).start - timing(right).start)
   const thinking = []
-  if (tools.length) {
+  const toolsByTurn = new Map()
+  for (const call of real.filter(isToolActivity)) {
+    const turn = turnKey(call)
+    toolsByTurn.set(turn, [...(toolsByTurn.get(turn) || []), call])
+  }
+  for (const tools of toolsByTurn.values()) {
+    tools.sort((left, right) => timing(left).start - timing(right).start)
+    if (!tools.length) continue
     let coveredBy = tools[0]
     let coveredUntil = timing(coveredBy).end
     for (let index = 1; index < tools.length; index += 1) {
@@ -160,6 +171,29 @@ function visibleTimelineCalls() {
   return projectedCalls()
     .filter(call => state.showStates || !isStateCall(call))
     .filter(matches)
+}
+
+function allocateDurationLevels(calls, ranges, timelineWidth) {
+  const domainStart = Math.min(...ranges.map(range => range.start))
+  const domainEnd = Math.max(...ranges.map(range => range.end))
+  const domain = Math.max(1, domainEnd - domainStart)
+  const occupiedUntil = [[], [], []]
+  const levels = calls.map(() => 0)
+  const laneLevels = [1, 1, 1]
+  calls.forEach((call, index) => {
+    const callLane = lane(call)
+    const range = ranges[index]
+    const gap = call.kind === 'thinking' ? 2 : 1
+    const renderedStart = (range.start - domainStart) / domain * timelineWidth + gap
+    const renderedWidth = Math.max(1, range.duration / domain * timelineWidth - gap * 2)
+    const renderedEnd = renderedStart + renderedWidth
+    let level = occupiedUntil[callLane].findIndex(end => end <= renderedStart)
+    if (level < 0) level = occupiedUntil[callLane].length
+    occupiedUntil[callLane][level] = renderedEnd
+    levels[index] = level
+    laneLevels[callLane] = Math.max(laneLevels[callLane], level + 1)
+  })
+  return { levels, laneLevels }
 }
 
 function conversationModels() {
@@ -266,24 +300,11 @@ function renderTimeline() {
   const domainStart = Math.min(...ranges.map(range => range.start))
   const domainEnd = Math.max(...ranges.map(range => range.end))
   const domain = Math.max(1, domainEnd - domainStart)
-  const levels = calls.map(() => 0)
-  const laneLevels = [1, 1, 1]
+  let levels = calls.map(() => 0)
+  let laneLevels = [1, 1, 1]
   if (state.mode === 'duration') {
-    const occupiedUntil = [[], [], []]
     const timelineWidth = Math.max(1, host.clientWidth)
-    calls.forEach((call, index) => {
-      const callLane = lane(call)
-      const range = ranges[index]
-      const gap = call.kind === 'thinking' ? 2 : 1
-      const renderedStart = (range.start - domainStart) / domain * timelineWidth + gap
-      const renderedWidth = Math.max(1, range.duration / domain * timelineWidth - gap * 2)
-      const renderedEnd = renderedStart + renderedWidth
-      let level = occupiedUntil[callLane].findIndex(end => end <= renderedStart)
-      if (level < 0) level = occupiedUntil[callLane].length
-      occupiedUntil[callLane][level] = renderedEnd
-      levels[index] = level
-      laneLevels[callLane] = Math.max(laneLevels[callLane], level + 1)
-    })
+    ;({ levels, laneLevels } = allocateDurationLevels(calls, ranges, timelineWidth))
   }
   const laneOffsets = [0, laneLevels[0] * 12 + 4, (laneLevels[0] + laneLevels[1]) * 12 + 8]
   const contentHeight = laneLevels.reduce((sum, count) => sum + count * 12, 0) + 8
@@ -318,21 +339,8 @@ function renderLedger() {
   const ledger = $('#ledger')
   const wasNearBottom = isLedgerNearBottom(ledger)
   const ordered = projectedCalls()
-  const stateStacks = new Map()
-  const parentContext = runParentContext(ordered)
-  const calls = []
-  for (const call of ordered) {
-    if (!state.showStates && isStateCall(call)) {
-      const parent = resolveStateParent(call, parentContext)
-      if (parent) {
-        const stack = stateStacks.get(parent) || []
-        stack.push(call)
-        stateStacks.set(parent, stack)
-      }
-      continue
-    }
-    if (matches(call)) calls.push(call)
-  }
+  const { calls: ledgerCalls, stateStacks } = organizeLedgerCalls(ordered, state.showStates)
+  const calls = ledgerCalls.filter(matches)
   ledger.classList.toggle('compact', state.compact)
   if (!calls.length) {
     ledger.innerHTML = '<p class="empty">No calls yet.</p>'
@@ -373,6 +381,25 @@ function renderLedger() {
     if (shouldScrollToBottom) ledger.scrollTop = ledger.scrollHeight
     updateScrollBottomButton()
   })
+}
+
+function organizeLedgerCalls(ordered, showStates) {
+  const stateStacks = new Map()
+  const parentContext = runParentContext(ordered)
+  const calls = []
+  for (const call of ordered) {
+    if (!showStates && isStateCall(call)) {
+      const parent = resolveStateParent(call, parentContext)
+      if (parent) {
+        const stack = stateStacks.get(parent) || []
+        stack.push(call)
+        stateStacks.set(parent, stack)
+        continue
+      }
+    }
+    calls.push(call)
+  }
+  return { calls, stateStacks }
 }
 
 function isLedgerNearBottom(ledger = $('#ledger')) {
@@ -593,8 +620,8 @@ setInterval(() => { if (state.calls.some(call => ['running', 'starting'].include
 }
 
 if (typeof module !== 'undefined') module.exports = {
-  extendRunCommandsThroughStateCalls, focusMobileSearch, handleDrawerKeydown,
-  resolveStateParent, runParentContext, syntheticThinking, syncConversationDrawerA11y, timing,
-  toggleConversationDrawer,
+  allocateDurationLevels, extendRunCommandsThroughStateCalls, focusMobileSearch, handleDrawerKeydown,
+  organizeLedgerCalls, resolveStateParent, runParentContext, syntheticThinking,
+  syncConversationDrawerA11y, timing, toggleConversationDrawer,
 }
-if (typeof document !== 'undefined') initializeUI()
+if (typeof document !== 'undefined' && typeof process === 'undefined') initializeUI()

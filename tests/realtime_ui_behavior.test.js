@@ -1,8 +1,10 @@
 const assert = require('node:assert/strict')
 const {
+  allocateDurationLevels,
   extendRunCommandsThroughStateCalls,
   focusMobileSearch,
   handleDrawerKeydown,
+  organizeLedgerCalls,
   syntheticThinking,
   syncConversationDrawerA11y,
   toggleConversationDrawer,
@@ -23,6 +25,23 @@ const interleaved = extendRunCommandsThroughStateCalls([
 assert.equal(interleaved.find(item => item.execution_id === 'run-a').duration_ms, 500)
 assert.equal(interleaved.find(item => item.execution_id === 'run-b').duration_ms, 100)
 
+const crossTurn = extendRunCommandsThroughStateCalls([
+  call('run_command', 'run-turn-a', 0, 100, { conversation_id: 'turn-a' }),
+  call('get_command_state', 'poll-turn-b', 400, 500, {
+    conversation_id: 'turn-b', parent_execution_id: 'run-turn-a',
+  }),
+])
+assert.equal(crossTurn[0].duration_ms, 100)
+
+const invalidParent = extendRunCommandsThroughStateCalls([
+  call('run_command', 'run-valid', 0, 100),
+  call('get_command_state', 'poll-invalid', 400, 500, { parent_execution_id: 'missing-run' }),
+])
+assert.equal(invalidParent[0].duration_ms, 100)
+const invalidLedger = organizeLedgerCalls(invalidParent, false)
+assert.equal(invalidLedger.stateStacks.size, 0)
+assert.equal(invalidLedger.calls.some(item => item.execution_id === 'poll-invalid'), true)
+
 const single = extendRunCommandsThroughStateCalls([
   call('gate.run_command', 'run-only', 0, 100),
   call('gate.get_command_state', 'poll-only', 4900, 5000),
@@ -31,6 +50,13 @@ assert.equal(single[0].duration_ms, 5000)
 const thinking = syntheticThinking(single[0], call('skills_search', 'next', 8000, 8100))
 assert.equal(thinking.started_at, at(5000))
 assert.equal(thinking.duration_ms, 3000)
+
+const levelCalls = [call('read', 'short', 0, 4), call('read', 'long', 4.1, 100)]
+const levelRanges = levelCalls.map(item => ({
+  start: Date.parse(item.started_at), end: Date.parse(item.finished_at), duration: item.duration_ms,
+}))
+assert.deepEqual(allocateDurationLevels(levelCalls, levelRanges, 100).levels, [0, 0])
+assert.deepEqual(allocateDurationLevels(levelCalls, levelRanges, 10).levels, [0, 1])
 
 const classList = values => {
   const classes = new Set(values)
