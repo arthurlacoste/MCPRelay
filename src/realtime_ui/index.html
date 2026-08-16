@@ -4,14 +4,26 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>Gate · Real-time calls</title>
-  <link rel="stylesheet" href="/rt/assets/trajectory.css">
+  <link rel="stylesheet" href="/rt/assets/trajectory.css?v=__ASSET_VERSION__">
 </head>
 <body>
   <aside class="sidebar">
-    <div class="brand"><img src="/rt/assets/gate.svg" alt="">gate</div>
-    <button class="session" id="refresh">↻&nbsp;&nbsp;Refresh</button>
-    <div class="sidebar-title">Conversations</div>
-    <nav id="conversations" aria-label="Conversation filter"></nav>
+    <button class="brand" id="all-calls" aria-label="Show all calls" title="All calls">
+      <img src="/rt/assets/gate.svg" alt=""><span>gate</span>
+    </button>
+    <button class="session" id="refresh" title="Refresh">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 12a9 9 0 1 1-2.64-6.36L21 8"/><path d="M21 3v5h-5"/></svg><span>Refresh</span>
+    </button>
+    <button class="rail-action" id="mobile-buckets" aria-label="Conversations" aria-expanded="false" aria-controls="conversation-drawer" title="Conversations">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3.5 6.5h6l2 2h9v10h-17z"/></svg>
+    </button>
+    <button class="rail-action" id="mobile-search" aria-label="Search calls" title="Search calls">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m15.5 15.5 5 5"/></svg>
+    </button>
+    <div class="conversation-drawer" id="conversation-drawer">
+      <div class="drawer-head"><span>Conversations</span><button id="close-conversations" aria-label="Close conversations">×</button></div>
+      <nav id="conversations" aria-label="Conversation filter"></nav>
+    </div>
   </aside>
   <main class="app">
     <header class="header">
@@ -56,6 +68,6 @@
       </aside>
     </div>
   </main>
-  <script src="/rt/assets/trajectory.js"></script>
+  <script src="/rt/assets/trajectory.js?v=__ASSET_VERSION__"></script>
 </body>
 </html>

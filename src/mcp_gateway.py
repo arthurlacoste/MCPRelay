@@ -913,7 +913,28 @@ def run_command(
         cwd,
     ))
     if guard_result.decision == "deny":
-        return {"status": "denied", **guard_result.as_dict()}
+        result = {"status": "denied", **guard_result.as_dict()}
+        activity_id = realtime_store.start_activity(
+            tool="run_command",
+            purpose=purpose,
+            conversation_id=conversation_id,
+            preview=guard_result.reason,
+            working_directory=cwd,
+            payload={
+                "command": command,
+                "cwd": cwd,
+                "conversation_id": conversation_id,
+                "purpose": purpose,
+                "timeout_seconds": timeout_seconds,
+            },
+            fields={
+                "cwd": cwd,
+                "conversation_id": conversation_id,
+                "rule": guard_result.rule_id,
+            },
+        )
+        realtime_store.finish_activity(activity_id, status="denied", result=result)
+        return result
     runner = _run_command_queued if RUNTIME_FEATURES.command_queue_enabled else _run_command_blocking
     result = runner(
         command, cwd, conversation_id, purpose,

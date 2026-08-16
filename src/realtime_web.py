@@ -1,6 +1,7 @@
 """Authenticated routes for the Gate realtime trajectory UI."""
 from __future__ import annotations
 
+import hashlib
 import html
 import time
 from pathlib import Path
@@ -15,6 +16,16 @@ from request_body_limit import RequestBodyLimitMiddleware
 SESSION_COOKIE = "gate_rt_session"
 UI_DIR = Path(__file__).resolve().parent / "realtime_ui"
 MAX_LOGIN_BODY_BYTES = 4096
+
+
+def _realtime_page() -> str:
+    assets = (UI_DIR / "trajectory.css", UI_DIR / "trajectory.js")
+    digest_input = b"".join(
+        asset.name.encode("utf-8") + b"\0" + hashlib.sha256(asset.read_bytes()).digest()
+        for asset in assets
+    )
+    digest = hashlib.sha256(digest_input).hexdigest()[:12]
+    return (UI_DIR / "index.html").read_text(encoding="utf-8").replace("__ASSET_VERSION__", digest)
 
 
 def _token_from_request(request: Request) -> str | None:
@@ -73,7 +84,7 @@ def register_realtime_routes(app, store: RealtimeCallStore, logs_dir: Path) -> N
     def realtime_page(request: Request):
         if not _authenticated(request):
             return HTMLResponse(_login_page())
-        return FileResponse(UI_DIR / "index.html", media_type="text/html")
+        return HTMLResponse(_realtime_page(), headers={"Cache-Control": "no-cache"})
 
     @app.get("/rt/assets/{name}")
     def realtime_asset(name: str, request: Request):
@@ -82,7 +93,11 @@ def register_realtime_routes(app, store: RealtimeCallStore, logs_dir: Path) -> N
         if name == "gate.svg":
             return FileResponse(UI_DIR / name, media_type="image/svg+xml")
         media_type = "text/css" if name.endswith(".css") else "text/javascript"
-        return FileResponse(UI_DIR / name, media_type=media_type)
+        return FileResponse(
+            UI_DIR / name,
+            media_type=media_type,
+            headers={"Cache-Control": "private, max-age=31536000, immutable"},
+        )
 
     @app.post("/rt/login", response_class=HTMLResponse)
     def realtime_login(request: Request, secret: str = Form("")):

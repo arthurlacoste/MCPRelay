@@ -54,7 +54,7 @@ function lane(call) {
 
 function orderedCalls() {
   return state.calls
-    .filter(call => state.conversation === null || turnKey(call) === state.conversation)
+    .slice()
     .sort((left, right) => timing(left).start - timing(right).start)
 }
 
@@ -63,15 +63,45 @@ function matches(call) {
 }
 
 function isStateCall(call) {
-  return call.tool === 'get_command_state'
+  return call.tool === 'get_command_state' || call.tool?.endsWith('.get_command_state')
+}
+
+function isRunCommand(call) {
+  return call.tool === 'run_command' || call.tool?.endsWith('.run_command')
+}
+
+function isErrorStatus(call) {
+  return ['failed', 'denied'].includes(call.status)
 }
 
 function isToolActivity(call) {
   return !isStateCall(call) && !['oauth', 'http', 'prompt', 'resource', 'thinking'].includes(call.kind)
 }
 
+function runParentContext(calls) {
+  const runs = calls.filter(isRunCommand)
+  const runsById = new Map(runs.map(call => [call.execution_id, call]))
+  const runsByTurn = new Map()
+  for (const call of runs) {
+    const turn = turnKey(call)
+    runsByTurn.set(turn, [...(runsByTurn.get(turn) || []), call])
+  }
+  return { runsById, runsByTurn }
+}
+
+function resolveStateParent(call, context) {
+  const stateStart = timing(call).start
+  if (call.parent_execution_id) {
+    const explicit = context.runsById.get(call.parent_execution_id)
+    return explicit && turnKey(explicit) === turnKey(call) && timing(explicit).start <= stateStart
+      ? explicit.execution_id : null
+  }
+  const eligible = (context.runsByTurn.get(turnKey(call)) || [])
+    .filter(run => timing(run).start <= stateStart)
+  return eligible.length === 1 ? eligible[0].execution_id : null
+}
+
 function syntheticThinking(left, right) {
-  // Thinking starts only after the previous tool result completed.
   const start = timing(left).end
   const end = timing(right).start
   if (end - start < THINKING_MIN_MS) return null
@@ -89,12 +119,41 @@ function syntheticThinking(left, right) {
   }
 }
 
+function extendRunCommandsThroughStateCalls(calls) {
+  const parentContext = runParentContext(calls)
+  const stateEnds = new Map()
+  for (const call of calls) {
+    if (!isStateCall(call)) continue
+    const parent = resolveStateParent(call, parentContext)
+    if (!parent) continue
+    stateEnds.set(parent, Math.max(stateEnds.get(parent) || 0, timing(call).end))
+  }
+  return calls.map(call => {
+    const end = stateEnds.get(call.execution_id)
+    const range = timing(call)
+    if (!isRunCommand(call) || !end || end <= range.end) return call
+    return {
+      ...call,
+      finished_at: new Date(end).toISOString(),
+      duration_ms: end - range.start,
+      state_extended: true,
+    }
+  })
+}
+
 function projectedCalls() {
-  const real = orderedCalls()
+  const real = extendRunCommandsThroughStateCalls(orderedCalls())
+    .filter(call => state.conversation === null || turnKey(call) === state.conversation)
   if (!state.showThinking) return real
-  const tools = real.filter(isToolActivity).sort((left, right) => timing(left).start - timing(right).start)
   const thinking = []
-  if (tools.length) {
+  const toolsByTurn = new Map()
+  for (const call of real.filter(isToolActivity)) {
+    const turn = turnKey(call)
+    toolsByTurn.set(turn, [...(toolsByTurn.get(turn) || []), call])
+  }
+  for (const tools of toolsByTurn.values()) {
+    tools.sort((left, right) => timing(left).start - timing(right).start)
+    if (!tools.length) continue
     let coveredBy = tools[0]
     let coveredUntil = timing(coveredBy).end
     for (let index = 1; index < tools.length; index += 1) {
@@ -116,6 +175,29 @@ function visibleTimelineCalls() {
   return projectedCalls()
     .filter(call => state.showStates || !isStateCall(call))
     .filter(matches)
+}
+
+function allocateDurationLevels(calls, ranges, timelineWidth) {
+  const domainStart = Math.min(...ranges.map(range => range.start))
+  const domainEnd = Math.max(...ranges.map(range => range.end))
+  const domain = Math.max(1, domainEnd - domainStart)
+  const occupiedUntil = [[], [], []]
+  const levels = calls.map(() => 0)
+  const laneLevels = [1, 1, 1]
+  calls.forEach((call, index) => {
+    const callLane = lane(call)
+    const range = ranges[index]
+    const gap = call.kind === 'thinking' ? 2 : 1
+    const renderedStart = (range.start - domainStart) / domain * timelineWidth + gap
+    const renderedWidth = Math.max(1, range.duration / domain * timelineWidth - gap * 2)
+    const renderedEnd = renderedStart + renderedWidth
+    let level = occupiedUntil[callLane].findIndex(end => end <= renderedStart)
+    if (level < 0) level = occupiedUntil[callLane].length
+    occupiedUntil[callLane][level] = renderedEnd
+    levels[index] = level
+    laneLevels[callLane] = Math.max(laneLevels[callLane], level + 1)
+  })
+  return { levels, laneLevels }
 }
 
 function conversationModels() {
@@ -165,9 +247,47 @@ function renderConversations() {
       state.conversation = button.dataset.key || null
       state.selected = null
       state.pendingBottomScroll = true
+      closeConversationDrawer()
       renderAll()
     })
   })
+}
+
+function closeConversationDrawer() {
+  const sidebar = $('.sidebar')
+  const wasOpen = sidebar.classList.contains('drawer-open')
+  sidebar.classList.remove('drawer-open')
+  $('#mobile-buckets').setAttribute('aria-expanded', 'false')
+  syncConversationDrawerA11y(false)
+  if (wasOpen && window.matchMedia('(max-width: 850px)').matches) $('#mobile-buckets').focus()
+}
+
+function toggleConversationDrawer() {
+  const open = $('.sidebar').classList.toggle('drawer-open')
+  $('#mobile-buckets').setAttribute('aria-expanded', String(open))
+  syncConversationDrawerA11y(open)
+}
+
+function syncConversationDrawerA11y(open) {
+  const hidden = window.matchMedia('(max-width: 850px)').matches && !open
+  const drawer = $('#conversation-drawer')
+  drawer.inert = hidden
+  drawer.setAttribute('aria-hidden', String(hidden))
+}
+
+function handleDrawerBreakpointChange() {
+  $('.sidebar').classList.remove('drawer-open')
+  $('#mobile-buckets').setAttribute('aria-expanded', 'false')
+  syncConversationDrawerA11y(false)
+}
+
+function handleDrawerKeydown(event) {
+  if (event.key === 'Escape') closeConversationDrawer()
+}
+
+function focusMobileSearch() {
+  closeConversationDrawer()
+  $('#search').focus()
 }
 
 function renderTimeline() {
@@ -181,28 +301,20 @@ function renderTimeline() {
     return
   }
   const ranges = calls.map(timing)
-  const levels = calls.map(() => 0)
-  const laneLevels = [1, 1, 1]
+  const domainStart = Math.min(...ranges.map(range => range.start))
+  const domainEnd = Math.max(...ranges.map(range => range.end))
+  const domain = Math.max(1, domainEnd - domainStart)
+  let levels = calls.map(() => 0)
+  let laneLevels = [1, 1, 1]
   if (state.mode === 'duration') {
-    const occupiedUntil = [[], [], []]
-    calls.forEach((call, index) => {
-      const callLane = lane(call)
-      const range = ranges[index]
-      let level = occupiedUntil[callLane].findIndex(end => end <= range.start)
-      if (level < 0) level = occupiedUntil[callLane].length
-      occupiedUntil[callLane][level] = range.end
-      levels[index] = level
-      laneLevels[callLane] = Math.max(laneLevels[callLane], level + 1)
-    })
+    const timelineWidth = Math.max(1, host.clientWidth)
+    ;({ levels, laneLevels } = allocateDurationLevels(calls, ranges, timelineWidth))
   }
   const laneOffsets = [0, laneLevels[0] * 12 + 4, (laneLevels[0] + laneLevels[1]) * 12 + 8]
   const contentHeight = laneLevels.reduce((sum, count) => sum + count * 12, 0) + 8
   $('.timeline').style.height = `${Math.max(58, contentHeight + 16)}px`
   host.style.height = `${contentHeight}px`
   laneOffsets.forEach((top, index) => { labels[index].style.top = `${top + 9}px` })
-  const domainStart = Math.min(...ranges.map(range => range.start))
-  const domainEnd = Math.max(...ranges.map(range => range.end))
-  const domain = Math.max(1, domainEnd - domainStart)
   let previousTurn = null
   host.innerHTML = calls.map((call, index) => {
     const range = ranges[index]
@@ -214,7 +326,7 @@ function renderTimeline() {
       ? `<i class="turn-boundary" style="left:${left}%"></i>` : ''
     previousTurn = turn
     const classes = [
-      'span', call.status === 'failed' ? 'error' : '',
+      'span', isErrorStatus(call) ? 'error' : '',
       call.execution_id === state.selected ? 'selected' : '', matches(call) ? '' : 'filtered',
     ].filter(Boolean).join(' ')
     const gap = call.kind === 'thinking' ? 2 : 1
@@ -231,22 +343,8 @@ function renderLedger() {
   const ledger = $('#ledger')
   const wasNearBottom = isLedgerNearBottom(ledger)
   const ordered = projectedCalls()
-  const stateStacks = new Map()
-  const lastRunByTurn = new Map()
-  const calls = []
-  for (const call of ordered) {
-    if (call.tool === 'run_command') lastRunByTurn.set(turnKey(call), call.execution_id)
-    if (!state.showStates && isStateCall(call)) {
-      const parent = call.parent_execution_id || lastRunByTurn.get(turnKey(call))
-      if (parent) {
-        const stack = stateStacks.get(parent) || []
-        stack.push(call)
-        stateStacks.set(parent, stack)
-      }
-      continue
-    }
-    if (matches(call)) calls.push(call)
-  }
+  const { calls: ledgerCalls, stateStacks } = organizeLedgerCalls(ordered, state.showStates)
+  const calls = ledgerCalls.filter(matches)
   ledger.classList.toggle('compact', state.compact)
   if (!calls.length) {
     ledger.innerHTML = '<p class="empty">No calls yet.</p>'
@@ -261,7 +359,7 @@ function renderLedger() {
       ? `<div class="turn-label">${escapeHtml(turn)} · ${formatTime(range.start)}</div>` : ''
     previousTurn = turn
     const classes = [
-      'row', call.status === 'failed' ? 'error' : '', call.kind === 'thinking' ? 'thinking' : '',
+      'row', isErrorStatus(call) ? 'error' : '', call.kind === 'thinking' ? 'thinking' : '',
       call.execution_id === state.selected ? 'selected' : '',
     ].filter(Boolean).join(' ')
     const stacked = stateStacks.get(call.execution_id) || []
@@ -289,6 +387,25 @@ function renderLedger() {
   })
 }
 
+function organizeLedgerCalls(ordered, showStates) {
+  const stateStacks = new Map()
+  const parentContext = runParentContext(ordered)
+  const calls = []
+  for (const call of ordered) {
+    if (!showStates && isStateCall(call)) {
+      const parent = resolveStateParent(call, parentContext)
+      if (parent) {
+        const stack = stateStacks.get(parent) || []
+        stack.push(call)
+        stateStacks.set(parent, stack)
+        continue
+      }
+    }
+    calls.push(call)
+  }
+  return { calls, stateStacks }
+}
+
 function isLedgerNearBottom(ledger = $('#ledger')) {
   return ledger.scrollHeight - ledger.clientHeight - ledger.scrollTop <= BOTTOM_THRESHOLD_PX
 }
@@ -306,7 +423,14 @@ function currentCall() {
 }
 
 function detailedCall(call) {
-  return call ? { ...call, ...(detailCache.get(call.execution_id) || {}) } : null
+  if (!call) return null
+  const merged = { ...call, ...(detailCache.get(call.execution_id) || {}) }
+  if (call.state_extended) {
+    merged.finished_at = call.finished_at
+    merged.duration_ms = call.duration_ms
+    merged.state_extended = true
+  }
+  return merged
 }
 
 function detailValue(call, name, fallback) {
@@ -430,6 +554,7 @@ async function load() {
   renderAll()
 }
 
+function initializeUI() {
 $('#duration').addEventListener('click', () => {
   state.mode = 'duration'; $('#duration').classList.add('pressed'); $('#turns').classList.remove('pressed')
   $('#duration').setAttribute('aria-pressed', 'true'); $('#turns').setAttribute('aria-pressed', 'false'); renderTimeline()
@@ -459,11 +584,48 @@ $('#search').addEventListener('input', event => { state.query = event.currentTar
 $('#ledger').addEventListener('scroll', updateScrollBottomButton, { passive: true })
 $('#scroll-bottom').addEventListener('click', goToLatestCalls)
 $('#refresh').addEventListener('click', load)
+$('#all-calls').addEventListener('click', () => {
+  state.conversation = null
+  state.selected = null
+  state.pendingBottomScroll = true
+  closeConversationDrawer()
+  renderAll()
+})
+$('#mobile-buckets').addEventListener('click', toggleConversationDrawer)
+$('#close-conversations').addEventListener('click', closeConversationDrawer)
+$('#mobile-search').addEventListener('click', focusMobileSearch)
+$('.app').addEventListener('click', closeConversationDrawer)
+document.addEventListener('keydown', handleDrawerKeydown)
 $('#close').addEventListener('click', () => { state.selected = null; renderAll() })
 document.querySelectorAll('.detail-tabs button').forEach(button => button.addEventListener('click', () => {
   state.tab = button.dataset.tab; renderDetail()
 }))
 
+const drawerMedia = window.matchMedia('(max-width: 850px)')
+drawerMedia.addEventListener('change', handleDrawerBreakpointChange)
+syncConversationDrawerA11y(false)
+
+let observedTimelineWidth = 0
+const timelineObserver = new ResizeObserver(entries => {
+  const width = Math.round(entries[0]?.contentRect.width || 0)
+  if (!width || width === observedTimelineWidth) return
+  observedTimelineWidth = width
+  if (state.mode === 'duration') renderTimeline()
+})
+timelineObserver.observe($('#spans'))
+window.addEventListener('pagehide', () => {
+  timelineObserver.disconnect()
+  drawerMedia.removeEventListener('change', handleDrawerBreakpointChange)
+}, { once: true })
+
 load()
 setInterval(load, 2000)
 setInterval(() => { if (state.calls.some(call => ['running', 'starting'].includes(call.status))) renderAll() }, 1000)
+}
+
+if (typeof module !== 'undefined') module.exports = {
+  allocateDurationLevels, extendRunCommandsThroughStateCalls, focusMobileSearch, handleDrawerKeydown,
+  organizeLedgerCalls, resolveStateParent, runParentContext, syntheticThinking,
+  syncConversationDrawerA11y, timing, toggleConversationDrawer,
+}
+if (typeof document !== 'undefined' && typeof process === 'undefined') initializeUI()
