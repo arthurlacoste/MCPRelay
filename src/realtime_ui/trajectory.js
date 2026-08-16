@@ -1,4 +1,3 @@
-/* Timeline projection adapted from DeepSeek Harness ui-trajectory (MIT). */
 const $ = selector => document.querySelector(selector)
 const THINKING_MIN_MS = 250
 const state = {
