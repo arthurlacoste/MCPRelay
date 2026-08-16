@@ -132,6 +132,7 @@ Install `cloudflared`:
 brew install cloudflared
 
 # Debian/Ubuntu (x86_64; use cloudflared-linux-arm64 on ARM64)
+mkdir -p ~/.local/bin
 curl -L https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 \
   -o ~/.local/bin/cloudflared
 chmod +x ~/.local/bin/cloudflared
@@ -161,7 +162,7 @@ The setup flow:
 3. Asks for a public hostname (for example `mcp.example.com`) and routes it: `cloudflared tunnel route dns gate mcp.example.com`. The domain must be on the same Cloudflare account.
 4. Stores `CLOUDFLARED_TUNNEL_NAME=gate` and `MCP_BASE_URL=https://mcp.example.com` in `config/.env`.
 
-Gate then launches `cloudflared tunnel run --url http://127.0.0.1:8761 gate` on every start, reusing the same hostname. To choose the mode again, set `CLOUDFLARED_TUNNEL_NAME` (or remove it) in `config/.env` before re-running setup.
+Gate then launches `cloudflared tunnel run --url http://127.0.0.1:8761 gate` on every start, reusing the same hostname. Setting `CLOUDFLARED_TUNNEL_NAME` in `config/.env` selects named-tunnel mode automatically; removing it restores the interactive mode prompt during setup.
 
 The same flow is available as a one-shot CLI command, without running the interactive `./run.sh setup`:
 

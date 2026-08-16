@@ -89,12 +89,18 @@ switch ($TunnelProvider) {
             throw "cloudflared was not found. Install it (winget install --id Cloudflare.cloudflared), then retry."
         }
         if ($CloudflaredTunnelName) {
-            $TunnelList = & cloudflared tunnel list 2>&1 | Out-String
+            $TunnelListJson = & cloudflared tunnel list --output json 2>&1 | Out-String
             if ($LASTEXITCODE -ne 0) {
                 throw "cloudflared is not logged in to Cloudflare. Run 'cloudflared tunnel login', then retry."
             }
-            if ($TunnelList -notmatch [regex]::Escape($CloudflaredTunnelName)) {
-                throw "Cloudflare tunnel '$CloudflaredTunnelName' does not exist. Run 'cloudflared tunnel create $CloudflaredTunnelName' or '.\run.ps1 setup'."
+            try {
+                $Tunnels = $TunnelListJson | ConvertFrom-Json
+                $Exists = $Tunnels | Where-Object { $_.name -eq $CloudflaredTunnelName }
+                if (-not $Exists) {
+                    throw "Cloudflare tunnel '$CloudflaredTunnelName' does not exist. Run 'cloudflared tunnel create $CloudflaredTunnelName' or '.\run.ps1 setup'."
+                }
+            } catch {
+                throw "Could not parse cloudflared tunnel list output."
             }
         }
         $TunnelCommand = "cloudflared"
