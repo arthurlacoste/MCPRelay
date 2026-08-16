@@ -128,6 +128,28 @@ def test_discovery_call_is_displayed_as_real_downstream_tool():
     assert "https://example.test" not in repr(call)
 
 
+def test_command_state_activity_keeps_parent_execution_id():
+    from activity_monitor import GateActivityMiddleware
+
+    store = RealtimeCallStore()
+    mcp = FastMCP("activity-test")
+
+    @mcp.tool
+    def get_command_state(execution_id: str) -> dict:
+        return {"execution_id": execution_id, "status": "success"}
+
+    mcp.add_middleware(GateActivityMiddleware(store))
+
+    async def scenario():
+        async with Client(mcp) as client:
+            await client.call_tool("get_command_state", {"execution_id": "exec-parent"})
+
+    asyncio.run(scenario())
+    call = store.snapshot()["calls"][0]
+    assert call["parent_execution_id"] == "exec-parent"
+    assert call["preview"] == "exec-parent"
+
+
 def test_resources_and_prompts_are_monitored_as_semantic_activity():
     from activity_monitor import GateActivityMiddleware
 

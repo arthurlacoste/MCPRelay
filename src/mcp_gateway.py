@@ -27,6 +27,7 @@ from command_guard import GuardService, SecretRedactor, current_guard_request
 from environment_config import gateway_paths, load_gateway_environment
 from lightweight_oauth import app as oauth_app, set_activity_observer
 from terminal_app import TERMINAL_APP_HTML, TERMINAL_APP_URI
+from realtime_web import register_realtime_routes
 from tool_registry import configurable_tool, tool_exposure_mode
 from mcp_proxy import MCPProxyManager
 from mcp_discovery_tools import register_mcp_discovery_tools
@@ -416,6 +417,7 @@ def serve_public_file(share_id: str):
     )
 
 
+register_realtime_routes(oauth_app, realtime_store, STREAM_DIR)
 mcp._additional_http_routes.append(Mount('/', app=oauth_app, name='oauth'))
 
 
