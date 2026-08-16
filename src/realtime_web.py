@@ -20,7 +20,11 @@ MAX_LOGIN_BODY_BYTES = 4096
 
 def _realtime_page() -> str:
     assets = (UI_DIR / "trajectory.css", UI_DIR / "trajectory.js")
-    digest = hashlib.sha256(b"".join(asset.read_bytes() for asset in assets)).hexdigest()[:12]
+    digest_input = b"".join(
+        asset.name.encode("utf-8") + b"\0" + hashlib.sha256(asset.read_bytes()).digest()
+        for asset in assets
+    )
+    digest = hashlib.sha256(digest_input).hexdigest()[:12]
     return (UI_DIR / "index.html").read_text(encoding="utf-8").replace("__ASSET_VERSION__", digest)
 
 
