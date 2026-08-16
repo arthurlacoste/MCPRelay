@@ -41,6 +41,8 @@ def test_authenticated_realtime_page_uses_split_inspector(tmp_path, monkeypatch)
     assert 'id="thinking-toggle" class="pressed"' in response.text
     assert 'class="search-icon"' in response.text
     assert 'id="scroll-bottom"' in response.text
+    assert 'id="mobile-buckets"' in response.text
+    assert 'id="conversation-drawer"' in response.text
 
 
 def test_realtime_assets_are_authenticated(tmp_path, monkeypatch):
@@ -80,6 +82,8 @@ def test_realtime_assets_are_authenticated(tmp_path, monkeypatch):
     assert "ledger.scrollTop = ledger.scrollHeight" in script.text
     assert "function updateScrollBottomButton()" in script.text
     assert "scrollTo({ top: $('#ledger').scrollHeight, behavior: 'smooth' })" in script.text
+    assert "function toggleConversationDrawer()" in script.text
+    assert "$('#mobile-search').addEventListener('click'" in script.text
 
     stylesheet = client.get("/rt/assets/trajectory.css")
     assert "prefers-color-scheme: dark" in stylesheet.text
@@ -89,6 +93,8 @@ def test_realtime_assets_are_authenticated(tmp_path, monkeypatch):
     assert ".row-time { display: flex; flex-direction: column" in stylesheet.text
     assert ".ledger.compact .row { grid-template-columns: 90px minmax(180px, 1fr) 100px" in stylesheet.text
     assert ".ledger.compact .row { grid-template-columns: 26px minmax(120px, 1fr) 72px" in stylesheet.text
+    assert ".sidebar { position: relative; z-index: 20; display: flex; flex: 0 0 58px" in stylesheet.text
+    assert ".sidebar.drawer-open .conversation-drawer { transform: translateX(0); }" in stylesheet.text
 
 
 def test_realtime_icon_is_served_from_gate_assets(tmp_path, monkeypatch):

@@ -194,9 +194,20 @@ function renderConversations() {
       state.conversation = button.dataset.key || null
       state.selected = null
       state.pendingBottomScroll = true
+      closeConversationDrawer()
       renderAll()
     })
   })
+}
+
+function closeConversationDrawer() {
+  $('.sidebar').classList.remove('drawer-open')
+  $('#mobile-buckets').setAttribute('aria-expanded', 'false')
+}
+
+function toggleConversationDrawer() {
+  const open = $('.sidebar').classList.toggle('drawer-open')
+  $('#mobile-buckets').setAttribute('aria-expanded', String(open))
 }
 
 function renderTimeline() {
@@ -493,6 +504,21 @@ $('#search').addEventListener('input', event => { state.query = event.currentTar
 $('#ledger').addEventListener('scroll', updateScrollBottomButton, { passive: true })
 $('#scroll-bottom').addEventListener('click', goToLatestCalls)
 $('#refresh').addEventListener('click', load)
+$('#all-calls').addEventListener('click', () => {
+  state.conversation = null
+  state.selected = null
+  state.pendingBottomScroll = true
+  closeConversationDrawer()
+  renderAll()
+})
+$('#mobile-buckets').addEventListener('click', toggleConversationDrawer)
+$('#close-conversations').addEventListener('click', closeConversationDrawer)
+$('#mobile-search').addEventListener('click', () => {
+  closeConversationDrawer()
+  $('#search').focus()
+})
+$('.app').addEventListener('click', closeConversationDrawer)
+document.addEventListener('keydown', event => { if (event.key === 'Escape') closeConversationDrawer() })
 $('#close').addEventListener('click', () => { state.selected = null; renderAll() })
 document.querySelectorAll('.detail-tabs button').forEach(button => button.addEventListener('click', () => {
   state.tab = button.dataset.tab; renderDetail()
