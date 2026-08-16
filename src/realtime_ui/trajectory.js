@@ -70,6 +70,10 @@ function isRunCommand(call) {
   return call.tool === 'run_command' || call.tool?.endsWith('.run_command')
 }
 
+function isErrorStatus(call) {
+  return ['failed', 'denied'].includes(call.status)
+}
+
 function isToolActivity(call) {
   return !isStateCall(call) && !['oauth', 'http', 'prompt', 'resource', 'thinking'].includes(call.kind)
 }
@@ -322,7 +326,7 @@ function renderTimeline() {
       ? `<i class="turn-boundary" style="left:${left}%"></i>` : ''
     previousTurn = turn
     const classes = [
-      'span', call.status === 'failed' ? 'error' : '',
+      'span', isErrorStatus(call) ? 'error' : '',
       call.execution_id === state.selected ? 'selected' : '', matches(call) ? '' : 'filtered',
     ].filter(Boolean).join(' ')
     const gap = call.kind === 'thinking' ? 2 : 1
@@ -355,7 +359,7 @@ function renderLedger() {
       ? `<div class="turn-label">${escapeHtml(turn)} · ${formatTime(range.start)}</div>` : ''
     previousTurn = turn
     const classes = [
-      'row', call.status === 'failed' ? 'error' : '', call.kind === 'thinking' ? 'thinking' : '',
+      'row', isErrorStatus(call) ? 'error' : '', call.kind === 'thinking' ? 'thinking' : '',
       call.execution_id === state.selected ? 'selected' : '',
     ].filter(Boolean).join(' ')
     const stacked = stateStacks.get(call.execution_id) || []

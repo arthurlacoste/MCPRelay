@@ -48,6 +48,32 @@ def test_gateway_denial_never_calls_runner(monkeypatch):
     assert called == []
 
 
+def test_gateway_denial_is_published_to_realtime_conversation(tmp_path, monkeypatch):
+    import mcp_gateway
+    from realtime_calls import RealtimeCallStore
+
+    store = RealtimeCallStore(snapshot_path=tmp_path / "realtime.json")
+    monkeypatch.setattr(mcp_gateway, "realtime_store", store)
+
+    result = mcp_gateway.run_command(
+        "rm -rf /tmp/gate-safety-guard-test",
+        conversation_id="conv_safety_guard_test_20260816_1556",
+        purpose="Test safety guard UI with an explicit conversation_id",
+    )
+
+    assert result["status"] == "denied"
+    calls = store.snapshot()["calls"]
+    assert len(calls) == 1
+    call = store.get_call(calls[0]["execution_id"])
+    assert call["status"] == "denied"
+    assert call["tool"] == "run_command"
+    assert call["conversation_id"] == "conv_safety_guard_test_20260816_1556"
+    assert call["purpose"] == "Test safety guard UI with an explicit conversation_id"
+    assert json.loads(call["payload"])["command"] == "rm -rf /tmp/gate-safety-guard-test"
+    assert json.loads(call["result"])["rule"] == "filesystem.rm-recursive-force"
+    store.close()
+
+
 def test_gateway_log_redacts_nested_secrets(tmp_path, monkeypatch):
     import mcp_gateway
 
