@@ -8,6 +8,7 @@ from pathlib import Path
 from .clipboard import copy_text
 from .config import read_env
 from .changelog import version_notes
+from .connect import command_connect
 from .doctor import run_checks
 from .logs import selected_logs
 from .log_viewer import follow_snapshot
@@ -170,6 +171,11 @@ def build_parser() -> argparse.ArgumentParser:
     mode.add_argument("--version", dest="target_version", metavar="VERSION")
     uninstall_parser = sub.add_parser("uninstall")
     uninstall_parser.add_argument("--purge", action="store_true")
+    connect = sub.add_parser("connect", help="set up a named tunnel provider in one shot (e.g. 'gate connect cf')")
+    connect.add_argument("provider", choices=("cf", "cloudflare"))
+    connect.add_argument("--name", metavar="NAME", help="Cloudflare tunnel name (default: gate)")
+    connect.add_argument("--hostname", metavar="HOST", help="public hostname on your domain")
+    connect.add_argument("--yes", action="store_true", help="confirm installs and non-interactive defaults")
     return parser
 
 
@@ -214,6 +220,8 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "log": return command_log()
     if args.command == "logs": return command_logs(gateway=args.gateway, ngrok=args.ngrok, follow=args.follow)
     if args.command == "uninstall": return command_uninstall(purge=args.purge)
+    if args.command == "connect":
+        return command_connect(args.provider, args.name, args.hostname, yes=args.yes)
     if args.command == "update":
         from .release_flow import update_with_lifecycle
         try:

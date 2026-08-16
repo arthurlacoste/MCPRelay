@@ -12,6 +12,7 @@ NGROK_INSPECT_URL="http://127.0.0.1:4040"
 ONBOARDING_NGROK_PID=""
 ONBOARDING_PUBLIC_URL=""
 ONBOARDING_TAILSCALE_PID=""
+ONBOARDING_CLOUDFLARED_PID=""
 CHATGPT_CONNECTOR_URL="https://chatgpt.com/plugins#settings/Connectors?create-connector=true&redirectAfter=%2Fplugins"
 
 resolve_ngrok_target() {
@@ -119,8 +120,8 @@ configured_tunnel_provider() {
     provider="${TUNNEL_PROVIDER:-$(env_value TUNNEL_PROVIDER)}"
     provider="${provider:-ngrok}"
     case "$provider" in
-        ngrok|tailscale|external) printf '%s' "$provider" ;;
-        *) die "Unsupported TUNNEL_PROVIDER=$provider. Use ngrok, tailscale, or external." ;;
+        ngrok|tailscale|cloudflare|external) printf '%s' "$provider" ;;
+        *) die "Unsupported TUNNEL_PROVIDER=$provider. Use ngrok, tailscale, cloudflare, or external." ;;
     esac
 }
 
@@ -134,6 +135,17 @@ ensure_tunnel_provider() {
             command -v tailscale >/dev/null 2>&1 || die "Tailscale CLI is required. Install Tailscale, run 'tailscale up', then retry."
             tailscale status --json 2>/dev/null | grep -q '"BackendState"[[:space:]]*:[[:space:]]*"Running"' \
                 || die "Tailscale is not authenticated or running. Run 'tailscale up' and retry."
+            ;;
+        cloudflare)
+            command -v cloudflared >/dev/null 2>&1 || die "cloudflared is required. Install it (macOS: brew install cloudflared), then retry."
+            local tunnel_name
+            tunnel_name="${CLOUDFLARED_TUNNEL_NAME:-$(env_value CLOUDFLARED_TUNNEL_NAME)}"
+            if [ -n "$tunnel_name" ]; then
+                cloudflared tunnel list >/dev/null 2>&1 \
+                    || die "cloudflared is not logged in to Cloudflare. Run 'cloudflared tunnel login', then retry."
+                cloudflared tunnel list 2>/dev/null | grep -qw "$tunnel_name" \
+                    || die "Cloudflare tunnel '$tunnel_name' does not exist. Run 'cloudflared tunnel create $tunnel_name' or './run.sh setup'."
+            fi
             ;;
         external) ;;
     esac
@@ -199,6 +211,42 @@ cleanup_stale_ngrok() {
     done
 
     die "Could not stop stale ngrok processes: $(printf '%s' "$remaining" | tr '\n' ' ')"
+}
+
+cloudflared_pids() {
+    pgrep -f "(^|[ /])cloudflared[[:space:]]+tunnel[[:space:]]+.*127\.0\.0\.1:${NGROK_PORT}" 2>/dev/null || true
+}
+
+cleanup_stale_cloudflared() {
+    local pids remaining
+    pids="$(cloudflared_pids)"
+    [ -n "$pids" ] || return 0
+
+    warn "Stopping stale cloudflared processes for port $NGROK_PORT."
+    printf '%s\n' "$pids" | signal_ngrok_pids TERM
+
+    for _ in $(seq 1 20); do
+        remaining="$(cloudflared_pids)"
+        [ -z "$remaining" ] && {
+            ok "Stale cloudflared processes stopped"
+            return 0
+        }
+        sleep 0.1
+    done
+
+    warn "Forcing stale cloudflared processes to stop."
+    printf '%s\n' "$remaining" | signal_ngrok_pids KILL
+
+    for _ in $(seq 1 20); do
+        remaining="$(cloudflared_pids)"
+        [ -z "$remaining" ] && {
+            ok "Stale cloudflared processes killed"
+            return 0
+        }
+        sleep 0.1
+    done
+
+    die "Could not stop stale cloudflared processes: $(printf '%s' "$remaining" | tr '\n' ' ')"
 }
 
 show_connection_details() {
@@ -310,6 +358,53 @@ open_temporary_tailscale() {
     return 1
 }
 
+open_temporary_cloudflared() {
+    local log public_url=""
+    log="${MCP_LOG_ROOT:-$PROJECT_DIR/logs}/cloudflared.log"
+    mkdir -p "$(dirname "$log")"
+    : > "$log"
+    cloudflared tunnel --no-autoupdate --url "http://127.0.0.1:$NGROK_PORT" > "$log" 2>&1 &
+    ONBOARDING_CLOUDFLARED_PID=$!
+
+    for _ in $(seq 1 30); do
+        public_url="$(grep -Eo 'https://[a-z0-9-]+\.trycloudflare\.com' "$log" 2>/dev/null | head -n1)"
+        if [ -n "$public_url" ]; then
+            ONBOARDING_PUBLIC_URL="$public_url"
+            export GATE_EXISTING_CLOUDFLARED_PID="$ONBOARDING_CLOUDFLARED_PID"
+            return 0
+        fi
+        kill -0 "$ONBOARDING_CLOUDFLARED_PID" 2>/dev/null || break
+        sleep 1
+    done
+
+    kill "$ONBOARDING_CLOUDFLARED_PID" 2>/dev/null || true
+    wait "$ONBOARDING_CLOUDFLARED_PID" 2>/dev/null || true
+    ONBOARDING_CLOUDFLARED_PID=""
+    return 1
+}
+
+setup_cloudflared_connect() {
+    local tunnel_name="$1" cf_hostname="" raw
+    info "Setting up your Cloudflare connect tunnel '$tunnel_name'"
+    if ! cloudflared tunnel list >/dev/null 2>&1; then
+        info "Log in to Cloudflare (a browser window will open)."
+        cloudflared tunnel login || die "Cloudflare login failed. Run 'cloudflared tunnel login' manually, then retry."
+    fi
+    if ! cloudflared tunnel list 2>/dev/null | grep -qw "$tunnel_name"; then
+        cloudflared tunnel create "$tunnel_name" || die "Could not create Cloudflare tunnel '$tunnel_name'."
+    fi
+    cf_hostname="${MCP_BASE_URL:-$(env_value MCP_BASE_URL)}"
+    if [ -z "$cf_hostname" ] && [ -t 0 ] && [ -t 1 ]; then
+        printf 'Public hostname (e.g. mcp.example.com): ' > /dev/tty
+        IFS= read -r raw < /dev/tty || raw=""
+        cf_hostname="$raw"
+    fi
+    cf_hostname="$(printf '%s' "$cf_hostname" | sed -E 's#^https?://##; s#/.*$##')"
+    [ -n "$cf_hostname" ] || die "A public hostname is required for a Cloudflare connect tunnel."
+    cloudflared tunnel route dns "$tunnel_name" "$cf_hostname" || die "Could not route DNS for '$cf_hostname'. Confirm the domain is on your Cloudflare account."
+    ONBOARDING_PUBLIC_URL="https://$cf_hostname"
+}
+
 ensure_command_guard() {
     local provider bin_dir choice
     if [ "${MCP_COMMAND_GUARD_PROVIDER:-}" = "disabled" ]; then
@@ -347,12 +442,13 @@ ensure_ngrok_web_allow_hosts() {
 }
 
 ensure_onboarding() {
-    local renew_secret="${1:-false}" public_url access_secret access_hash provider choice
+    local renew_secret="${1:-false}" public_url access_secret access_hash provider choice cloudflared_tunnel_name mode tunnel_name_input
 
     mkdir -p "$CONFIG_ROOT"
     ensure_command_guard
     public_url="$(env_value MCP_BASE_URL)"
     provider="$(configured_tunnel_provider)"
+    cloudflared_tunnel_name="${CLOUDFLARED_TUNNEL_NAME:-$(env_value CLOUDFLARED_TUNNEL_NAME)}"
     access_secret="$(env_value OAUTH_ACCESS_SECRET)"
     access_hash="$(env_value OAUTH_ACCESS_SECRET_HASH)"
     ensure_skills_directory
@@ -372,10 +468,11 @@ ensure_onboarding() {
         warn "OAuth configuration incomplete. Starting setup."
         command -v curl >/dev/null 2>&1 || die "curl is required."
         if [ -z "${TUNNEL_PROVIDER:-$(env_value TUNNEL_PROVIDER)}" ] && [ -t 0 ] && [ -t 1 ]; then
-            printf '\nTunnel provider\n1. ngrok (default)\n2. Tailscale Funnel\nChoose [1/2]: ' > /dev/tty
+            printf '\nTunnel provider\n1. ngrok (default)\n2. Tailscale Funnel\n3. Cloudflare Tunnel\nChoose [1/2/3]: ' > /dev/tty
             IFS= read -r choice < /dev/tty || choice=""
             provider="ngrok"
             [ "$choice" = "2" ] && provider="tailscale"
+            [ "$choice" = "3" ] && provider="cloudflare"
         fi
         ensure_tunnel_provider "$provider"
 
@@ -394,6 +491,25 @@ ensure_onboarding() {
                 info "Detecting your Tailscale Funnel URL"
                 open_temporary_tailscale || die "Could not obtain a public Tailscale Funnel HTTPS URL. Confirm Funnel is enabled for this tailnet."
                 public_url="$ONBOARDING_PUBLIC_URL"
+                ;;
+            cloudflare)
+                if [ -z "$cloudflared_tunnel_name" ] && [ -t 0 ] && [ -t 1 ]; then
+                    printf '\nCloudflare Tunnel mode\n1. Temporary quick tunnel (random URL, no account)\n2. Cloudflare connect (named tunnel, stable URL, custom domain)\nChoose [1/2]: ' > /dev/tty
+                    IFS= read -r mode < /dev/tty || mode=""
+                    if [ "$mode" = "2" ]; then
+                        printf 'Tunnel name [gate]: ' > /dev/tty
+                        IFS= read -r tunnel_name_input < /dev/tty || tunnel_name_input=""
+                        cloudflared_tunnel_name="${tunnel_name_input:-gate}"
+                    fi
+                fi
+                if [ -n "$cloudflared_tunnel_name" ]; then
+                    setup_cloudflared_connect "$cloudflared_tunnel_name"
+                    public_url="$ONBOARDING_PUBLIC_URL"
+                else
+                    info "Detecting your Cloudflare Tunnel URL"
+                    open_temporary_cloudflared || { cat "${MCP_LOG_ROOT:-$PROJECT_DIR/logs}/cloudflared.log" >&2 || true; die "Could not obtain a Cloudflare quick-tunnel HTTPS URL. Check that cloudflared is installed and that ~/.cloudflared has no config.yml/config.yaml blocking quick tunnels."; }
+                    public_url="$ONBOARDING_PUBLIC_URL"
+                fi
                 ;;
             external)
                 public_url="${MCP_BASE_URL:-$(env_value MCP_BASE_URL)}"
@@ -425,6 +541,7 @@ ensure_onboarding() {
         ENABLE_OAUTH "true" \
         CHATGPT_STARTUP_BROWSER_ASSIST "false"
     ensure_env_notes
+    [ -n "$cloudflared_tunnel_name" ] && set_env_values CLOUDFLARED_TUNNEL_NAME "$cloudflared_tunnel_name"
 
     printf '\nGate is configured.\n'
     copy_access_secret "$access_secret" || true
@@ -466,6 +583,7 @@ run_interactive() {
         return 0
     fi
     cleanup_stale_ngrok
+    [ "$(configured_tunnel_provider)" = cloudflare ] && cleanup_stale_cloudflared
     ensure_python_environment
     export GATE_NGROK_TARGET="${GATE_NGROK_TARGET:-$(resolve_ngrok_target)}"
     ensure_onboarding
@@ -481,6 +599,7 @@ start_daemon() {
     fi
 
     cleanup_stale_ngrok
+    [ "$(configured_tunnel_provider)" = cloudflare ] && cleanup_stale_cloudflared
     ensure_python_environment
     export GATE_NGROK_TARGET="${GATE_NGROK_TARGET:-$(resolve_ngrok_target)}"
     ensure_onboarding
@@ -500,12 +619,22 @@ start_daemon() {
     elif [ "$provider" = tailscale ] && [ -n "${GATE_EXISTING_TAILSCALE_PID:-}" ] && kill -0 "$GATE_EXISTING_TAILSCALE_PID" 2>/dev/null; then
         TUNNEL_PID="$GATE_EXISTING_TAILSCALE_PID"
         KEEP_AWAKE_LABEL="onboarding tunnel reused"
+    elif [ "$provider" = cloudflare ] && [ -n "${GATE_EXISTING_CLOUDFLARED_PID:-}" ] && kill -0 "$GATE_EXISTING_CLOUDFLARED_PID" 2>/dev/null; then
+        TUNNEL_PID="$GATE_EXISTING_CLOUDFLARED_PID"
+        KEEP_AWAKE_LABEL="onboarding tunnel reused"
     elif [ "$provider" != external ]; then
-        if [ "$provider" = ngrok ]; then
-            tunnel_cmd=(ngrok http "$GATE_NGROK_TARGET")
-        else
-            tunnel_cmd=(tailscale funnel --bg=false "$NGROK_PORT")
-        fi
+        case "$provider" in
+            ngrok) tunnel_cmd=(ngrok http "$GATE_NGROK_TARGET") ;;
+            cloudflare)
+                tunnel_name="${CLOUDFLARED_TUNNEL_NAME:-$(env_value CLOUDFLARED_TUNNEL_NAME)}"
+                if [ -n "$tunnel_name" ]; then
+                    tunnel_cmd=(cloudflared tunnel --no-autoupdate run --url "http://127.0.0.1:$NGROK_PORT" "$tunnel_name")
+                else
+                    tunnel_cmd=(cloudflared tunnel --no-autoupdate --url "http://127.0.0.1:$NGROK_PORT")
+                fi
+                ;;
+            *) tunnel_cmd=(tailscale funnel --bg=false "$NGROK_PORT") ;;
+        esac
         if command -v caffeinate >/dev/null 2>&1; then
             tunnel_cmd=(caffeinate -i "${tunnel_cmd[@]}")
             KEEP_AWAKE_LABEL="caffeinate active"
@@ -604,6 +733,7 @@ stop_daemon() {
 
     stop_gateway_port
     cleanup_stale_ngrok
+    cleanup_stale_cloudflared
     rm -f "$PID_FILE"
     echo "✓ Gateway stopped"
 }
@@ -671,6 +801,14 @@ parse_runtime_args() {
     fi
 }
 
+if [ "${1:-}" = "connect" ]; then
+    shift
+    ensure_python_environment
+    export GATE_PROJECT_DIR="${GATE_PROJECT_DIR:-$PROJECT_DIR}"
+    export PYTHONPATH="${PYTHONPATH:-$PROJECT_DIR/src}"
+    exec "$PROJECT_DIR/.venv/bin/python" -m gate_cli connect "$@"
+fi
+
 parse_runtime_args "$@"
 if [ -n "$RUNTIME_COMMAND" ]; then
     set -- "$RUNTIME_COMMAND"
@@ -686,8 +824,9 @@ case "${1:-}" in
     renew-secret) ensure_python_environment; ensure_onboarding true ;;
     *)
         if [ $# -gt 0 ]; then
-            echo "Usage: $0 [start] [--queue] [--widget]"
-            echo "       $0 {stop|status|setup|renew-secret}"
+        echo "Usage: $0 [start] [--queue] [--widget]"
+        echo "       $0 {stop|status|setup|renew-secret}"
+        echo "       $0 connect cf [--name NAME] [--hostname HOST] [--yes]"
             echo ""
             echo "  (no arg)  Interactive mode – Ctrl+C stops everything"
             exit 1

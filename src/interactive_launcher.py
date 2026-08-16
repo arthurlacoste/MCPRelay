@@ -30,6 +30,8 @@ try:
     from src.tunnel_provider import (
         TunnelConfigurationError,
         build_tunnel_spec,
+        cloudflared_public_url,
+        cloudflared_registered,
         normalize_provider,
         tailscale_public_url,
     )
@@ -37,6 +39,8 @@ except ModuleNotFoundError:
     from tunnel_provider import (
         TunnelConfigurationError,
         build_tunnel_spec,
+        cloudflared_public_url,
+        cloudflared_registered,
         normalize_provider,
         tailscale_public_url,
     )
@@ -48,6 +52,7 @@ PYTHON = BASE_DIR / ".venv" / "bin" / "python"
 LOG_ROOT = Path(os.environ.get("MCP_LOG_ROOT", BASE_DIR / "logs"))
 NGROK_LOG = LOG_ROOT / "ngrok.log"
 TAILSCALE_LOG = LOG_ROOT / "tailscale.log"
+CLOUDFLARED_LOG = LOG_ROOT / "cloudflared.log"
 SERVICE_LOG = LOG_ROOT / "services" / "launcher.log"
 REALTIME_CALLS_FILE = LOG_ROOT / "realtime_calls.json"
 REALTIME_REFRESH_SECONDS = max(0.25, int(os.environ.get("GATE_REALTIME_REFRESH_MS", "1000")) / 1000)
@@ -197,6 +202,11 @@ def request_shutdown(*_args) -> None:
 def configured_tunnel_provider() -> str:
     values = dotenv_values(CONFIG_FILE)
     return normalize_provider(os.environ.get("TUNNEL_PROVIDER") or values.get("TUNNEL_PROVIDER"))
+
+
+def configured_cloudflared_tunnel_name() -> str:
+    values = dotenv_values(CONFIG_FILE)
+    return (os.environ.get("CLOUDFLARED_TUNNEL_NAME") or values.get("CLOUDFLARED_TUNNEL_NAME") or "").strip()
 
 
 def connection_detail_lines() -> list[str]:
@@ -442,7 +452,11 @@ def log_tail(path: Path, max_lines: int = 8) -> str:
 def startup_failure_message(name: str, code: int, log_path: Path | None = None) -> str:
     if name != "Gateway":
         if log_path is None:
-            log_path = {"ngrok": NGROK_LOG, "tailscale": TAILSCALE_LOG}.get(name.lower())
+            log_path = {
+                "ngrok": NGROK_LOG,
+                "tailscale": TAILSCALE_LOG,
+                "cloudflare": CLOUDFLARED_LOG,
+            }.get(name.lower())
         suffix = f" Check {log_path}." if log_path else ""
         return f"{name} failed to start (exit {code}).{suffix}"
 
@@ -547,6 +561,20 @@ def wait_for_tailscale_ready(process: subprocess.Popen | ExistingProcess, timeou
         time.sleep(0.2)
     raise StartupError(f"Tailscale Funnel did not become ready. Check {TAILSCALE_LOG}.")
 
+
+def wait_for_cloudflared_ready(process: subprocess.Popen | ExistingProcess, timeout: float = 20.0) -> None:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if STOP_REQUESTED:
+            raise ShutdownRequested
+        code = process.poll()
+        if code is not None and not isinstance(process, ExistingProcess):
+            raise StartupError(startup_failure_message("cloudflare", code))
+        if cloudflared_public_url(CLOUDFLARED_LOG) or cloudflared_registered(CLOUDFLARED_LOG):
+            return
+        time.sleep(0.2)
+    raise StartupError(f"Cloudflare Tunnel did not become ready. Check {CLOUDFLARED_LOG}.")
+
 def start_services() -> subprocess.Popen:
     SERVICE_LOG.parent.mkdir(parents=True, exist_ok=True)
     with SERVICE_LOG.open("w", encoding="utf-8") as log_file:
@@ -563,7 +591,11 @@ def start_tunnel() -> tuple[subprocess.Popen | ExistingProcess | None, str]:
     provider = configured_tunnel_provider()
     if provider == "external":
         return None, "user managed"
-    existing = os.environ.get("GATE_EXISTING_NGROK_PID", "") if provider == "ngrok" else ""
+    existing_env = {
+        "ngrok": "GATE_EXISTING_NGROK_PID",
+        "cloudflare": "GATE_EXISTING_CLOUDFLARED_PID",
+    }.get(provider)
+    existing = os.environ.get(existing_env, "") if existing_env else ""
     if existing.isdigit():
         process = ExistingProcess(int(existing))
         if process.poll() is None:
@@ -573,6 +605,7 @@ def start_tunnel() -> tuple[subprocess.Popen | ExistingProcess | None, str]:
         NGROK_PORT,
         LOG_ROOT,
         ngrok_target=resolve_ngrok_target(NGROK_PORT) if provider == "ngrok" else None,
+        cloudflared_tunnel_name=configured_cloudflared_tunnel_name() if provider == "cloudflare" else None,
     )
     if spec.command is None or spec.log_path is None:
         raise StartupError(f"{spec.display_name} has no launch command or log path.")
@@ -614,7 +647,10 @@ def monitor(services, tunnel, keep_awake: str, update_result: list[str | None] |
                 return 1
             if tunnel is not None and tunnel.poll() is not None:
                 provider = configured_tunnel_provider()
-                log_path = TAILSCALE_LOG if provider == "tailscale" else NGROK_LOG
+                log_path = {
+                    "tailscale": TAILSCALE_LOG,
+                    "cloudflare": CLOUDFLARED_LOG,
+                }.get(provider, NGROK_LOG)
                 print(f"Error: {provider} stopped. Check {log_path}.", file=sys.stderr)
                 return 1
             if panel == "realtime" and not realtime_paused and time.monotonic() - last_realtime_render >= REALTIME_REFRESH_SECONDS:
@@ -719,6 +755,8 @@ def main() -> int:
             wait_for_ngrok_ready(tunnel)
         elif provider == "tailscale" and tunnel is not None:
             wait_for_tailscale_ready(tunnel)
+        elif provider == "cloudflare" and tunnel is not None:
+            wait_for_cloudflared_ready(tunnel)
 
         update_result: list[str | None] = [None]
         def _fetch_update() -> None:

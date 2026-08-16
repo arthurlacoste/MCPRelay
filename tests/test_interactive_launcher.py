@@ -113,7 +113,9 @@ def test_ngrok_startup_failure_points_to_ngrok_log():
 def test_start_ngrok_uses_resolved_target(monkeypatch, tmp_path):
     process = Mock()
     popen = Mock(return_value=process)
+    monkeypatch.setattr(interactive_launcher, "CONFIG_FILE", tmp_path / ".env")
     monkeypatch.delenv("GATE_EXISTING_NGROK_PID", raising=False)
+    monkeypatch.delenv("TUNNEL_PROVIDER", raising=False)
     monkeypatch.setattr(interactive_launcher, "NGROK_LOG", tmp_path / "ngrok.log")
     monkeypatch.setattr(interactive_launcher, "resolve_ngrok_target", lambda port: "172.20.10.2:8761")
     monkeypatch.setattr(
@@ -130,6 +132,133 @@ def test_start_ngrok_uses_resolved_target(monkeypatch, tmp_path):
         "ngrok", "http", "172.20.10.2:8761", "--log=stdout",
     ]
     popen.call_args.kwargs["stdout"].close()
+
+
+def test_start_cloudflared_uses_loopback_url(monkeypatch, tmp_path):
+    process = Mock()
+    popen = Mock(return_value=process)
+    monkeypatch.setenv("TUNNEL_PROVIDER", "cloudflare")
+    monkeypatch.setattr(interactive_launcher, "CONFIG_FILE", tmp_path / ".env")
+    monkeypatch.delenv("CLOUDFLARED_TUNNEL_NAME", raising=False)
+    monkeypatch.delenv("GATE_EXISTING_CLOUDFLARED_PID", raising=False)
+    monkeypatch.setattr(interactive_launcher, "CLOUDFLARED_LOG", tmp_path / "cloudflared.log")
+    monkeypatch.setattr(
+        tunnel_provider.shutil,
+        "which",
+        lambda name: "/usr/bin/cloudflared" if name == "cloudflared" else None,
+    )
+    monkeypatch.setattr(interactive_launcher.subprocess, "Popen", popen)
+
+    returned, _ = interactive_launcher.start_tunnel()
+
+    assert returned is process
+    assert popen.call_args.args[0] == [
+        "cloudflared", "tunnel", "--no-autoupdate", "--url", "http://127.0.0.1:8761",
+    ]
+    popen.call_args.kwargs["stdout"].close()
+
+
+def test_start_cloudflared_named_tunnel_uses_tunnel_name(monkeypatch, tmp_path):
+    process = Mock()
+    popen = Mock(return_value=process)
+    monkeypatch.setenv("TUNNEL_PROVIDER", "cloudflare")
+    monkeypatch.setenv("CLOUDFLARED_TUNNEL_NAME", "gate")
+    monkeypatch.delenv("GATE_EXISTING_CLOUDFLARED_PID", raising=False)
+    monkeypatch.setattr(interactive_launcher, "CLOUDFLARED_LOG", tmp_path / "cloudflared.log")
+    monkeypatch.setattr(
+        tunnel_provider.shutil,
+        "which",
+        lambda name: "/usr/bin/cloudflared" if name == "cloudflared" else None,
+    )
+    monkeypatch.setattr(interactive_launcher.subprocess, "Popen", popen)
+
+    returned, _ = interactive_launcher.start_tunnel()
+
+    assert returned is process
+    assert popen.call_args.args[0] == [
+        "cloudflared", "tunnel", "--no-autoupdate", "run", "--url", "http://127.0.0.1:8761", "gate",
+    ]
+    popen.call_args.kwargs["stdout"].close()
+
+
+def test_start_cloudflared_reuses_onboarding_tunnel(monkeypatch, tmp_path):
+    class FakeExistingProcess:
+        def __init__(self, pid):
+            self.pid = pid
+
+        def poll(self):
+            return None
+
+    monkeypatch.setenv("TUNNEL_PROVIDER", "cloudflare")
+    monkeypatch.setenv("GATE_EXISTING_CLOUDFLARED_PID", "4242")
+    monkeypatch.setattr(interactive_launcher, "ExistingProcess", FakeExistingProcess)
+    monkeypatch.setattr(interactive_launcher, "build_tunnel_spec", Mock())
+
+    returned, label = interactive_launcher.start_tunnel()
+
+    assert returned.pid == 4242
+    assert label == "onboarding tunnel reused"
+    interactive_launcher.build_tunnel_spec.assert_not_called()
+
+
+def test_cloudflared_failure_uses_cloudflared_log():
+    message = interactive_launcher.startup_failure_message("cloudflare", 1)
+    assert str(interactive_launcher.CLOUDFLARED_LOG) in message
+
+
+def test_wait_for_cloudflared_ready_returns_when_url_appears(monkeypatch, tmp_path):
+    log = tmp_path / "cloudflared.log"
+    monkeypatch.setattr(interactive_launcher, "CLOUDFLARED_LOG", log)
+
+    class Process:
+        pid = 123
+        def poll(self):
+            return None
+
+    def fake_url(_):
+        log.write_text("INF | https://magic-tunnels-9.trycloudflare.com |\n", encoding="utf-8")
+        return "https://magic-tunnels-9.trycloudflare.com"
+
+    monkeypatch.setattr(interactive_launcher, "cloudflared_public_url", fake_url)
+    interactive_launcher.wait_for_cloudflared_ready(Process())
+
+
+def test_wait_for_cloudflared_ready_returns_when_registered(monkeypatch, tmp_path):
+    log = tmp_path / "cloudflared.log"
+    monkeypatch.setattr(interactive_launcher, "CLOUDFLARED_LOG", log)
+    monkeypatch.setattr(interactive_launcher, "cloudflared_public_url", lambda _: "")
+
+    class Process:
+        pid = 123
+        def poll(self):
+            return None
+
+    def fake_registered(_):
+        log.write_text("INF Registered tunnel connection connIndex=0", encoding="utf-8")
+        return True
+
+    monkeypatch.setattr(interactive_launcher, "cloudflared_registered", fake_registered)
+    interactive_launcher.wait_for_cloudflared_ready(Process())
+
+
+def test_wait_for_cloudflared_ready_reports_failure(monkeypatch, tmp_path):
+    log = tmp_path / "cloudflared.log"
+    monkeypatch.setattr(interactive_launcher, "CLOUDFLARED_LOG", log)
+    monkeypatch.setattr(interactive_launcher, "STOP_REQUESTED", False)
+    monkeypatch.setattr(interactive_launcher, "cloudflared_public_url", lambda _: "")
+    monkeypatch.setattr(interactive_launcher.time, "monotonic", lambda: 0)
+
+    class Process:
+        pid = 123
+        def poll(self):
+            return None
+
+    try:
+        interactive_launcher.wait_for_cloudflared_ready(Process(), timeout=0.0)
+    except interactive_launcher.StartupError as exc:
+        assert "Cloudflare Tunnel did not become ready" in str(exc)
+    else:
+        raise AssertionError("expected StartupError")
 
 
 def test_start_services_captures_output(monkeypatch, tmp_path):
@@ -183,8 +312,10 @@ def test_install_update_runs_global_gate_update(monkeypatch):
     assert calls == [([str(interactive_launcher.GATE_COMMAND), "update"], False)]
 
 
-def test_main_installs_update_after_services_stop(monkeypatch):
+def test_main_installs_update_after_services_stop(monkeypatch, tmp_path):
     events = []
+    monkeypatch.setattr(interactive_launcher, "CONFIG_FILE", tmp_path / ".env")
+    monkeypatch.delenv("TUNNEL_PROVIDER", raising=False)
 
     class Process:
         pid = 123

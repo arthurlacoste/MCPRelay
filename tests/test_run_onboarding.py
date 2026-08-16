@@ -55,8 +55,22 @@ def _sandbox(tmp_path: Path, env_content: str) -> tuple[Path, dict[str, str]]:
     env["GATE_PID_FILE"] = str(tmp_path / "mcp_gateway.pid")
     env["MCP_CONFIG_ROOT"] = str(tmp_path / "config")
     env["MCP_LOG_ROOT"] = str(tmp_path / "logs")
-    env.pop("GATE_PROJECT_DIR", None)
-    env.pop("GATE_ROOT", None)
+    for _runtime_key in (
+        "GATE_PROJECT_DIR",
+        "GATE_ROOT",
+        "TUNNEL_PROVIDER",
+        "CLOUDFLARED_TUNNEL_NAME",
+        "MCP_BASE_URL",
+        "OAUTH_ISSUER",
+        "LOCAL_OAUTH_ISSUER",
+        "OAUTH_ACCESS_SECRET",
+        "OAUTH_ACCESS_SECRET_HASH",
+        "OAUTH_AUDIENCE",
+        "MCP_AUDIENCE",
+        "MCP_COMMAND_GUARD_PROVIDER",
+        "MCP_COMMAND_GUARD_FALLBACK",
+    ):
+        env.pop(_runtime_key, None)
     return script, env
 
 
@@ -177,6 +191,14 @@ def test_python_bootstrap_uses_canonical_requirements():
     assert '"$python_bin" -m venv "$PROJECT_DIR/.venv"' in content
     assert '"$python" -m pip install -r "$requirements"' in content
     assert "pip install argon2-cffi" not in content
+
+
+def test_run_script_forwards_connect_to_gate_cli_before_arg_parsing():
+    content = RUN_SCRIPT.read_text()
+
+    assert "-m gate_cli connect \"$@\"" in content
+    assert content.index('"connect"') < content.index('parse_runtime_args "$@"')
+    assert content.index("-m gate_cli connect") < content.index('parse_runtime_args "$@"')
 
 
 def test_daemon_uses_venv_python_instead_of_path_python3():
@@ -497,6 +519,60 @@ def test_onboarding_reuses_detected_ngrok_process():
     assert '([^[:space:]]*:)?${NGROK_PORT}' in content
     onboarding = content[content.index('open_temporary_ngrok()'):content.index('ensure_onboarding()')]
     assert 'kill "$temp_pid"' not in onboarding
+
+
+def test_onboarding_offers_temporary_and_connect_cloudflare_modes():
+    content = RUN_SCRIPT.read_text()
+    assert "1. Temporary quick tunnel (random URL, no account)" in content
+    assert "2. Cloudflare connect (named tunnel, stable URL, custom domain)" in content
+    assert "setup_cloudflared_connect" in content
+
+
+def test_onboarding_persists_cloudflare_connect_tunnel_name():
+    content = RUN_SCRIPT.read_text()
+    assert 'set_env_values CLOUDFLARED_TUNNEL_NAME "$cloudflared_tunnel_name"' in content
+
+
+def test_daemon_uses_named_cloudflared_tunnel_command():
+    content = RUN_SCRIPT.read_text()
+    daemon = content[content.index("start_daemon()") : content.index("stop_daemon()")]
+    assert '(cloudflared tunnel --no-autoupdate run --url "http://127.0.0.1:$NGROK_PORT" "$tunnel_name")' in daemon
+
+
+def test_onboarding_cloudflare_connect_uses_named_tunnel(tmp_path):
+    script, env = _sandbox(
+        tmp_path,
+        "MCP_BASE_URL=https://mcp.example.com\n"
+        "TUNNEL_PROVIDER=cloudflare\n"
+        "CLOUDFLARED_TUNNEL_NAME=gate\n"
+        "OAUTH_ACCESS_SECRET_HASH=$argon2id$old\n",
+    )
+    fake_bin = tmp_path / "bin"
+    _write_executable(
+        fake_bin / "cloudflared",
+        "#!/usr/bin/env bash\n"
+        'if [ "${1:-}" = "tunnel" ] && [ "${2:-}" = "list" ]; then printf "gate\\n"; exit 0; fi\n'
+        'if [ "${1:-}" = "tunnel" ] && [ "${2:-}" = "create" ]; then exit 0; fi\n'
+        'if [ "${1:-}" = "tunnel" ] && [ "${2:-}" = "route" ]; then exit 0; fi\n'
+        'echo "unexpected cloudflared call: $*" >&2; exit 9\n',
+    )
+    env["PATH"] = f"{fake_bin}:{env['PATH']}"
+
+    result = subprocess.run(
+        [str(script), "setup"],
+        cwd=tmp_path,
+        env=env,
+        text=True,
+        capture_output=True,
+        timeout=15,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    config = (tmp_path / "config" / ".env").read_text()
+    assert "MCP_BASE_URL=https://mcp.example.com" in config
+    assert "CLOUDFLARED_TUNNEL_NAME=gate" in config
+    assert "OAUTH_ACCESS_SECRET=" in config
 
 def test_onboarding_copies_generated_secret_when_clipboard_exists():
     content = RUN_SCRIPT.read_text()
