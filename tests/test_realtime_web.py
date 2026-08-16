@@ -122,6 +122,9 @@ def test_realtime_assets_are_authenticated(tmp_path, monkeypatch):
     assert ".sidebar.drawer-open .conversation-drawer { transform: translateX(0); }" in stylesheet.text
     assert ".conversation-activity" in stylesheet.text
     assert "conversation-activity-fade 60s linear both" in stylesheet.text
+    assert "scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-track)" in stylesheet.text
+    assert "--scrollbar-track: #17181c" in stylesheet.text
+    assert ".row.error .badge { background: #3a1d20; color: #ff7379; }" in stylesheet.text
 
 
 def test_realtime_ui_behavior_with_node():
