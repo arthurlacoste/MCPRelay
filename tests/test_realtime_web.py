@@ -57,6 +57,9 @@ def test_realtime_assets_are_authenticated(tmp_path, monkeypatch):
     assert "THINKING_MIN_MS = 250" in script.text
     assert ".filter(matches)" in script.text
     assert "const start = timing(left).end" in script.text
+    assert "function extendRunCommandsThroughStateCalls(calls)" in script.text
+    assert "const parent = runIds.has(explicitParent) ? explicitParent : lastRunByTurn.get(turn)" in script.text
+    assert "duration_ms: end - range.start" in script.text
     assert '<h3>Timing ›</h3>' in script.text
     assert '<h3>Fields ›</h3>' in script.text
     assert "detailValue(call, 'payload'" in script.text

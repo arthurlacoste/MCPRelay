@@ -63,7 +63,11 @@ function matches(call) {
 }
 
 function isStateCall(call) {
-  return call.tool === 'get_command_state'
+  return call.tool === 'get_command_state' || call.tool?.endsWith('.get_command_state')
+}
+
+function isRunCommand(call) {
+  return call.tool === 'run_command' || call.tool?.endsWith('.run_command')
 }
 
 function isToolActivity(call) {
@@ -71,7 +75,6 @@ function isToolActivity(call) {
 }
 
 function syntheticThinking(left, right) {
-  // Thinking starts only after the previous tool result completed.
   const start = timing(left).end
   const end = timing(right).start
   if (end - start < THINKING_MIN_MS) return null
@@ -89,8 +92,34 @@ function syntheticThinking(left, right) {
   }
 }
 
+function extendRunCommandsThroughStateCalls(calls) {
+  const runIds = new Set(calls.filter(isRunCommand).map(call => call.execution_id))
+  const lastRunByTurn = new Map()
+  const stateEnds = new Map()
+  for (const call of calls) {
+    const turn = turnKey(call)
+    if (isRunCommand(call)) lastRunByTurn.set(turn, call.execution_id)
+    if (!isStateCall(call)) continue
+    const explicitParent = call.parent_execution_id
+    const parent = runIds.has(explicitParent) ? explicitParent : lastRunByTurn.get(turn)
+    if (!parent) continue
+    stateEnds.set(parent, Math.max(stateEnds.get(parent) || 0, timing(call).end))
+  }
+  return calls.map(call => {
+    const end = stateEnds.get(call.execution_id)
+    const range = timing(call)
+    if (!isRunCommand(call) || !end || end <= range.end) return call
+    return {
+      ...call,
+      finished_at: new Date(end).toISOString(),
+      duration_ms: end - range.start,
+      state_extended: true,
+    }
+  })
+}
+
 function projectedCalls() {
-  const real = orderedCalls()
+  const real = extendRunCommandsThroughStateCalls(orderedCalls())
   if (!state.showThinking) return real
   const tools = real.filter(isToolActivity).sort((left, right) => timing(left).start - timing(right).start)
   const thinking = []
