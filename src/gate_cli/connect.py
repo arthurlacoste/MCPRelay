@@ -8,6 +8,7 @@ import os
 import platform
 import shutil
 import subprocess
+import sys
 import urllib.request
 from pathlib import Path
 
@@ -140,7 +141,23 @@ def tunnel_exists(name: str) -> bool:
     return False
 
 
+def _warn_wrapped_login_url(stream=None) -> None:
+    """cloudflared prints a ~150-char browser login URL that wraps on narrow
+    terminals; a wrapped URL is easy to copy only in part."""
+    stream = stream if stream is not None else sys.stdout
+    if not stream.isatty():
+        return
+    width = shutil.get_terminal_size((80, 24)).columns
+    if width >= 160:
+        return
+    stream.write(
+        "\nThe login URL below is ONE long line and wraps across lines in this terminal.\n"
+        "Copy the whole URL (both wrapped halves) into your browser.\n\n"
+    )
+
+
 def cloudflared_login() -> bool:
+    _warn_wrapped_login_url()
     return _run(["cloudflared", "tunnel", "login"]).returncode == 0
 
 

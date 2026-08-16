@@ -163,6 +163,56 @@ def test_cloudflare_zone_returns_empty_when_no_cert(monkeypatch, tmp_path):
     assert connect.cloudflare_zone() == ""
 
 
+def _fake_tty():
+    class FakeTty:
+        def __init__(self):
+            self.text = ""
+
+        def isatty(self):
+            return True
+
+        def write(self, value):
+            self.text += value
+
+    return FakeTty()
+
+
+def _patch_terminal_width(monkeypatch, width):
+    monkeypatch.setattr(
+        connect.shutil, "get_terminal_size", lambda fallback=(80, 24): os.terminal_size((width, 24))
+    )
+
+
+def test_login_warns_when_url_would_wrap(monkeypatch):
+    stream = _fake_tty()
+    _patch_terminal_width(monkeypatch, 80)
+    connect._warn_wrapped_login_url(stream)
+    assert "ONE long line" in stream.text and "both wrapped halves" in stream.text
+
+
+def test_login_silent_on_wide_terminal(monkeypatch):
+    stream = _fake_tty()
+    _patch_terminal_width(monkeypatch, 200)
+    connect._warn_wrapped_login_url(stream)
+    assert stream.text == ""
+
+
+def test_login_silent_when_not_a_tty():
+    class FakeStdout:
+        def __init__(self):
+            self.text = ""
+
+        def isatty(self):
+            return False
+
+        def write(self, value):
+            self.text += value
+
+    stream = FakeStdout()
+    connect._warn_wrapped_login_url(stream)
+    assert stream.text == ""
+
+
 def test_connect_requires_hostname_when_unconfigured(monkeypatch, tmp_path, capsys):
     _patch(monkeypatch, tmp_path)
     assert connect.command_connect("cf", input_func=lambda _: "  ") == 1
