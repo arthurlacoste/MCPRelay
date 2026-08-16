@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.1.32](https://github.com/spelcc/gate/compare/v0.1.31...v0.1.32) (2026-08-16)
+
+
+### Added
+
+* **ui:** show recent conversation activity ([#81](https://github.com/spelcc/gate/issues/81)) ([eb9f7b7](https://github.com/spelcc/gate/commit/eb9f7b72e0efd2fd9d78b17294305f2a811efdfa))
+
+
+### Fixed
+
+* **ui:** preserve text selection during realtime refresh ([#82](https://github.com/spelcc/gate/issues/82)) ([3a3de60](https://github.com/spelcc/gate/commit/3a3de607c693ffe670f51089e1b24a6c39146e46))
+
 ## [0.1.31](https://github.com/spelcc/gate/compare/v0.1.30...v0.1.31) (2026-08-16)
 
 
