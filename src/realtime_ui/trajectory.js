@@ -79,6 +79,7 @@ function syntheticThinking(left, right) {
     preview: `No tool call for ${formatDuration(end - start)}`,
     conversation_id: right.conversation_id || left.conversation_id,
     session_ref: right.session_ref || left.session_ref,
+    working_directory: right.working_directory || left.working_directory,
     started_at: new Date(start).toISOString(), finished_at: new Date(end).toISOString(),
     duration_ms: end - start, synthetic: true,
     previous_tool: left.tool, next_tool: right.tool,
@@ -115,26 +116,43 @@ function conversationModels() {
   const groups = new Map()
   for (const call of state.calls) {
     const key = turnKey(call)
-    const model = groups.get(key) || { key, count: 0, latest: 0, purpose: 'Untitled conversation' }
+    const model = groups.get(key) || { key, count: 0, latest: 0, purpose: 'Untitled conversation', directory: '' }
     const started = timing(call).start
     model.count += 1
     model.latest = Math.max(model.latest, started)
+    if (call.working_directory) model.directory = call.working_directory
     if (!isStateCall(call) && started >= (model.purposeAt || 0)) {
       model.purpose = call.purpose || call.tool
       model.purposeAt = started
     }
     groups.set(key, model)
   }
-  return [...groups.values()].sort((left, right) => right.latest - left.latest)
+  return [...groups.values()].sort((left, right) => (
+    (left.directory || '\uffff').localeCompare(right.directory || '\uffff') || right.latest - left.latest
+  ))
+}
+
+function directoryLabel(path) {
+  if (!path) return 'Other'
+  const parts = path.replace(/\\/g, '/').split('/').filter(Boolean)
+  return parts.at(-1) || path
 }
 
 function renderConversations() {
   const models = conversationModels()
+  let previousDirectory = null
+  const grouped = models.flatMap(model => {
+    const directory = model.directory || ''
+    const heading = directory !== previousDirectory
+      ? `<div class="directory" title="${escapeHtml(directory)}">${escapeHtml(directoryLabel(directory))}</div>` : ''
+    previousDirectory = directory
+    return [heading, `<button class="conversation ${state.conversation === model.key ? 'active' : ''}"
+      data-key="${escapeHtml(model.key)}" title="${escapeHtml(model.purpose)}">${escapeHtml(model.purpose)}
+      <small>${escapeHtml(model.key)} · ${model.count} calls · ${formatTime(model.latest)}</small></button>`]
+  })
   $('#conversations').innerHTML = [
     `<button class="conversation ${state.conversation === null ? 'active' : ''}" data-key="">All calls<small>${state.calls.length} calls</small></button>`,
-    ...models.map(model => `<button class="conversation ${state.conversation === model.key ? 'active' : ''}"
-      data-key="${escapeHtml(model.key)}" title="${escapeHtml(model.purpose)}">${escapeHtml(model.purpose)}
-      <small>${model.count} calls · ${formatTime(model.latest)}</small></button>`),
+    ...grouped,
   ].join('')
   $('#conversations').querySelectorAll('.conversation').forEach(button => {
     button.addEventListener('click', () => {
@@ -234,14 +252,19 @@ function currentCall() {
 
 function summaryHtml(call) {
   const range = timing(call)
+  const fields = Object.entries(call.fields || {})
+  const fieldsSection = fields.length ? `<section class="section"><h3>Fields ›</h3><dl class="overview compact-overview common-fields">
+    ${fields.map(([key, value]) => `<dt>${escapeHtml(key)}</dt><dd>${escapeHtml(String(value))}</dd>`).join('')}
+  </dl></section>` : ''
   return `<dl class="overview">
     <dt>Hierarchy</dt><dd>${escapeHtml(turnKey(call))}</dd>
     <dt>Status</dt><dd>${escapeHtml(call.status)}</dd>
     <dt>Purpose</dt><dd>${escapeHtml(call.purpose)}</dd>
     <dt>Duration</dt><dd>${formatDuration(range.duration)}</dd>
   </dl>
-  <section class="section"><h3>Payload ›</h3><pre>${escapeHtml(call.command || call.preview || 'No payload')}</pre></section>
-  <section class="section"><h3>Result ›</h3><pre id="summary-result">${escapeHtml(resultCache.get(call.execution_id) || 'Loading…')}</pre></section>
+  ${fieldsSection}
+  <section class="section"><h3>Payload ›</h3><pre>${escapeHtml(call.payload || call.command || call.preview || 'No payload')}</pre></section>
+  <section class="section"><h3>Result ›</h3><pre id="summary-result">${escapeHtml(call.result || resultCache.get(call.execution_id) || 'Loading…')}</pre></section>
   <section class="section"><h3>Timing ›</h3><dl class="overview compact-overview">
     <dt>Started</dt><dd>${formatTime(range.start)}</dd><dt>Finished</dt><dd>${call.finished_at ? formatTime(range.end) : 'Running'}</dd>
     <dt>Duration</dt><dd>${formatDuration(range.duration)}</dd><dt>Source</dt><dd>${call.synthetic ? 'Previous tool result → next tool call' : 'Gate timestamps'}</dd>
@@ -250,8 +273,8 @@ function summaryHtml(call) {
 
 function detailHtml(call) {
   const range = timing(call)
-  if (state.tab === 'payload') return `<pre>${escapeHtml(call.command || call.preview || 'No payload')}</pre>`
-  if (state.tab === 'result') return `<pre>${escapeHtml(resultCache.get(call.execution_id) || 'Loading…')}</pre>`
+  if (state.tab === 'payload') return `<pre>${escapeHtml(call.payload || call.command || call.preview || 'No payload')}</pre>`
+  if (state.tab === 'result') return `<pre>${escapeHtml(call.result || resultCache.get(call.execution_id) || 'Loading…')}</pre>`
   if (state.tab === 'timing') return `<dl class="overview">
     <dt>Started</dt><dd>${formatTime(range.start)}</dd><dt>Finished</dt><dd>${call.finished_at ? formatTime(range.end) : 'Running'}</dd>
     <dt>Duration</dt><dd>${formatDuration(range.duration)}</dd><dt>Source</dt><dd>${call.synthetic ? 'Previous tool result → next tool call' : 'Gate timestamps'}</dd>
@@ -261,6 +284,7 @@ function detailHtml(call) {
 
 async function loadResult(call) {
   if (resultCache.has(call.execution_id)) return
+  if (call.result) { resultCache.set(call.execution_id, call.result); return }
   if (call.synthetic) {
     resultCache.set(call.execution_id, 'Synthetic interval derived from adjacent tool timestamps.')
     renderDetail()

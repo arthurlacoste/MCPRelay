@@ -17,6 +17,8 @@ MAX_PREVIEW_CHARS = 500
 MAX_PURPOSE_CHARS = 240
 MAX_TOOL_CHARS = 80
 MAX_COMMAND_CHARS = 8_000
+MAX_RAW_DATA_CHARS = 32_000
+MAX_FIELD_CHARS = 1_000
 _ANSI_RE = re.compile(r"\x1b(?:\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1b\\))")
 LOGGER = logging.getLogger(__name__)
 
@@ -180,6 +182,9 @@ class RealtimeCallStore:
         client_id: str | None = None,
         preview: str | None = None,
         parent_execution_id: str | None = None,
+        working_directory: str | None = None,
+        payload=None,
+        fields: dict | None = None,
     ) -> str:
         activity_id = f"activity_{secrets.token_hex(8)}"
         now = datetime.now(UTC).isoformat()
@@ -199,6 +204,9 @@ class RealtimeCallStore:
             "client_id": client_id,
             "preview": preview,
             "parent_execution_id": parent_execution_id,
+            "working_directory": working_directory,
+            "payload": payload,
+            "fields": fields,
         })
         return activity_id
 
@@ -251,6 +259,16 @@ class RealtimeCallStore:
         raw_preview = call.get("preview") if call.get("preview") is not None else command
         preview = self.redact_text(single_line(str(raw_preview or "")))
         purpose = self.redact_text(single_line(call.get("purpose"))) or infer_purpose(command)
+        payload = self._json_text(call.get("payload"))
+        result = self._json_text(call.get("result"))
+        fields = {
+            shorten(single_line(str(key)), 80): shorten(
+                self.redact_text(single_line(self._json_text(value) or str(value))),
+                MAX_FIELD_CHARS,
+            )
+            for key, value in (call.get("fields") or {}).items()
+            if single_line(str(key))
+        }
         return {
             "execution_id": str(call["execution_id"]),
             "status": str(call.get("status") or "queued"),
@@ -266,13 +284,37 @@ class RealtimeCallStore:
             "request_id": single_line(call.get("request_id")) or None,
             "client_id": single_line(call.get("client_id")) or None,
             "parent_execution_id": single_line(call.get("parent_execution_id")) or None,
+            "working_directory": self.redact_text(single_line(
+                call.get("working_directory") or call.get("cwd") or call.get("workdir")
+            )) or None,
             "http_status": call.get("http_status"),
             "command": command,
             "preview": shorten(preview, MAX_PREVIEW_CHARS),
             "log_ref": _snapshot_log_ref(call),
             "command_truncated": command_truncated,
             "exit_code": call.get("exit_code"),
+            "payload": payload,
+            "result": result,
+            "fields": fields,
         }
+
+    def _json_text(self, value) -> str:
+        if value is None:
+            return ""
+        if isinstance(value, str):
+            return sanitize_command(self.redact_text(value))[:MAX_RAW_DATA_CHARS]
+
+        def fallback(item):
+            model_dump = getattr(item, "model_dump", None)
+            if callable(model_dump):
+                return model_dump(mode="json")
+            return str(item)
+
+        try:
+            text = json.dumps(value, ensure_ascii=False, indent=2, default=fallback)
+        except (TypeError, ValueError):
+            text = str(value)
+        return sanitize_command(self.redact_text(text))[:MAX_RAW_DATA_CHARS]
 
     def _write_snapshot(self) -> None:
         if not self.snapshot_path:
