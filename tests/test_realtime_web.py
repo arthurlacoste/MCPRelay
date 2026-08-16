@@ -48,6 +48,11 @@ def test_realtime_assets_are_authenticated(tmp_path, monkeypatch):
     assert "call.result || resultCache" in script.text
     assert "function directoryLabel(path)" in script.text
     assert "call.working_directory" in script.text
+    assert "let coveredUntil = timing(coveredBy).end" in script.text
+    assert "const occupiedUntil = [[], [], []]" in script.text
+    assert "occupiedUntil[callLane].findIndex" in script.text
+    assert "call.kind === 'thinking' ? 2 : 1" in script.text
+    assert "width:max(1px" in script.text
     assert 'class="badge-icon"' in script.text
     assert '<span>${formatDuration(range.duration)}</span>' in script.text
 
@@ -57,6 +62,8 @@ def test_realtime_assets_are_authenticated(tmp_path, monkeypatch):
     assert ".inspector { position: absolute; z-index: 10; inset: 0; width: 100%" in stylesheet.text
     assert ".badge-label { display: none; }" in stylesheet.text
     assert ".row-time { display: flex; flex-direction: column" in stylesheet.text
+    assert ".ledger.compact .row { grid-template-columns: 90px minmax(180px, 1fr) 100px" in stylesheet.text
+    assert ".ledger.compact .row { grid-template-columns: 26px minmax(120px, 1fr) 72px" in stylesheet.text
 
 
 def test_realtime_icon_is_served_from_gate_assets(tmp_path, monkeypatch):
