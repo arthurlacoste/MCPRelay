@@ -179,6 +179,7 @@ class RealtimeCallStore:
         request_id: str | None = None,
         client_id: str | None = None,
         preview: str | None = None,
+        parent_execution_id: str | None = None,
     ) -> str:
         activity_id = f"activity_{secrets.token_hex(8)}"
         now = datetime.now(UTC).isoformat()
@@ -197,6 +198,7 @@ class RealtimeCallStore:
             "request_id": request_id,
             "client_id": client_id,
             "preview": preview,
+            "parent_execution_id": parent_execution_id,
         })
         return activity_id
 
@@ -263,6 +265,7 @@ class RealtimeCallStore:
             "session_ref": single_line(call.get("session_ref")) or None,
             "request_id": single_line(call.get("request_id")) or None,
             "client_id": single_line(call.get("client_id")) or None,
+            "parent_execution_id": single_line(call.get("parent_execution_id")) or None,
             "http_status": call.get("http_status"),
             "command": command,
             "preview": shorten(preview, MAX_PREVIEW_CHARS),

@@ -75,10 +75,15 @@ class GateActivityMiddleware(Middleware):
                 display_tool = f"{server_name}.{downstream_tool}"
                 kind = "mcp"
         activity_context = await self._activity_context(context, arguments)
+        parent_execution_id = arguments.get("execution_id")
+        if not isinstance(parent_execution_id, str) or not parent_execution_id.strip():
+            parent_execution_id = None
         activity_id = self.store.start_activity(
             tool=display_tool,
             kind=kind,
             purpose=f"Call {display_tool}",
+            preview=parent_execution_id,
+            parent_execution_id=parent_execution_id,
             **activity_context,
         )
         try:
