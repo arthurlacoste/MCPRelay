@@ -87,7 +87,7 @@ def _login_page(error: str = "") -> str:
     return f"""<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1"><title>Gate · Authorize</title>
 <style>*{{box-sizing:border-box}}body{{margin:0;min-height:100vh;display:grid;place-items:center;background:#fbfbfc;color:#17181b;font:14px/1.45 system-ui,sans-serif}}main{{width:min(390px,90vw);text-align:center}}.logo{{font-size:24px;font-weight:800}}.logo span{{padding:4px 6px;border-radius:3px;background:#17181b;color:#fff;font-size:10px;letter-spacing:.08em;vertical-align:middle}}p{{color:#737984}}form{{display:grid;gap:12px;margin-top:26px}}input,button{{padding:13px;border:1px solid #dfe2e8;border-radius:8px;font:inherit}}button{{background:#17181b;color:#fff;cursor:pointer}}.alert{{color:#b42318}}</style></head>
-<body><main><div class="logo">gate</div><h1>Authorize Gate</h1>
+<body><main><div class="logo">gate</div>
 <p>Authenticate to inspect Gate activity.</p>{alert}<form method="post" action="/rt/login">
 <input name="secret" type="password" autocomplete="current-password" placeholder="Access secret" required autofocus>
 <button>Open trajectory</button></form></main></body></html>"""

@@ -25,6 +25,7 @@ def test_realtime_page_requires_login(tmp_path):
     assert response.status_code == 200
     assert "Authenticate to inspect" in response.text
     assert "realtime" not in response.text.lower()
+    assert "Authorize Gate" not in response.text
 
 
 def test_authenticated_realtime_page_uses_split_inspector(tmp_path, monkeypatch):

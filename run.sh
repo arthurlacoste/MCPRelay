@@ -201,37 +201,6 @@ cleanup_stale_ngrok() {
     die "Could not stop stale ngrok processes: $(printf '%s' "$remaining" | tr '\n' ' ')"
 }
 
-show_banner() {
-    local line index=0
-    local -a colors=(31 33 32 36 34 35)
-
-    while IFS= read -r line; do
-        if [ -t 1 ]; then
-            printf '\033[1;%sm%s\033[0m\n' "${colors[$index]}" "$line"
-        else
-            printf '%s\n' "$line"
-        fi
-        index=$(( (index + 1) % ${#colors[@]} ))
-    done <<'EOF'
-oooooo     oooo ooooo  .oooooo..o ooooo   .oooooo.   ooooo      ooo
- `888.     .8'  `888' d8P'    `Y8 `888'  d8P'  `Y8b  `888b.     `8'
-  `888.   .8'    888  Y88bo.       888  888      888  8 `88b.    8
-   `888. .8'     888   `"Y8888o.   888  888      888  8   `88b.  8
-    `888.8'      888       `"Y88b  888  888      888  8     `88b.8
-     `888'       888  oo     .d8P  888  `88b    d88'  8       `888
-      `8'       o888o 8""88888P'  o888o  `Y8bood8P'  o8o        `8
-
-formerly Gate, made with <3 by arthak
-
-EOF
-}
-
-clear_screen() {
-    if [ -t 1 ]; then
-        printf '\033[2J\033[H'
-    fi
-}
-
 show_connection_details() {
     local public_url access_secret
     public_url="$(env_value MCP_BASE_URL)"
@@ -708,9 +677,6 @@ if [ -n "$RUNTIME_COMMAND" ]; then
 else
     set --
 fi
-
-clear_screen
-show_banner
 
 case "${1:-}" in
     start)   start_daemon ;;

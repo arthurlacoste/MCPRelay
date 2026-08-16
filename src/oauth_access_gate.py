@@ -158,8 +158,6 @@ def login_page(request_id: str, details: dict, error: str | None = None) -> str:
 *{{box-sizing:border-box}}
 body{{min-height:100vh;margin:0;padding:2rem 1.25rem;display:grid;place-items:center;background:var(--background);color:var(--text);font:16px/1.45 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}}
 main{{width:min(100%,26rem);text-align:center}}
-.brand{{margin-bottom:2.5rem}}
-.brand img{{display:block;width:min(100%,20rem);height:auto;margin:0 auto}}
 h1{{margin:0;font-size:clamp(1.8rem,7vw,2.35rem);line-height:1.12;letter-spacing:-.04em}}
 .intro{{margin:.75rem 0 2rem;color:var(--muted)}}
 form{{display:grid;gap:.75rem}}
@@ -182,7 +180,6 @@ button{{padding:.75rem 1rem;border:1px solid transparent;font-weight:650;cursor:
 </head>
 <body>
 <main>
-<header class="brand"><img src="/oauth/assets/vision.webp" alt="Gate Vision"></header>
 <h1>Authorize Gate</h1>
 <p class="intro"><strong>{client_name}</strong> requests access.</p>
 {message}

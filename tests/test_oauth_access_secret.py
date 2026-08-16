@@ -51,7 +51,7 @@ def test_authorization_page_shows_request_details(oauth_client, registered_clien
 
 def test_authorization_page_uses_centered_responsive_theme(oauth_client, registered_client):
     response = start_authorization(oauth_client, registered_client)
-    assert 'src="/oauth/assets/vision.webp"' in response.text
+    assert "vision.webp" not in response.text
     assert 'class="primary"' in response.text
     assert 'class="secondary"' in response.text
     assert 'class="request-details"' in response.text
@@ -59,11 +59,9 @@ def test_authorization_page_uses_centered_responsive_theme(oauth_client, registe
     assert response.text.index('class="secondary"') < response.text.index('class="request-details"')
 
 
-def test_oauth_vision_asset_is_served(oauth_client):
+def test_oauth_vision_asset_is_not_exposed(oauth_client):
     response = oauth_client.get("/oauth/assets/vision.webp")
-    assert response.status_code == 200
-    assert response.headers["content-type"] == "image/webp"
-    assert response.content.startswith(b"RIFF")
+    assert response.status_code == 404
 
 
 def test_authorization_can_be_denied(oauth_client, registered_client):
