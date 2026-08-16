@@ -1,8 +1,21 @@
+import time
+
+import jwt
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from starlette.requests import Request
 
 from src.realtime_calls import RealtimeCallStore
 from src import realtime_web
+
+
+def bearer_request(token: str) -> Request:
+    return Request({
+        "type": "http",
+        "method": "GET",
+        "path": "/rt/api/calls",
+        "headers": [(b"authorization", f"Bearer {token}".encode())],
+    })
 
 
 def test_realtime_page_requires_login(tmp_path):
@@ -86,6 +99,42 @@ def test_realtime_api_requires_authentication(tmp_path):
     response = TestClient(app).get("/rt/api/calls")
     assert response.status_code == 401
     assert response.json()["error"] == "unauthorized"
+
+
+def test_realtime_auth_rejects_regular_mcp_token_scope():
+    import lightweight_oauth
+
+    now = int(time.time())
+    regular_token = jwt.encode(
+        {
+            "iss": lightweight_oauth.ISSUER,
+            "sub": "local-user",
+            "aud": lightweight_oauth.AUDIENCE,
+            "iat": now,
+            "exp": now + 3600,
+            "scope": "openid profile email",
+        },
+        lightweight_oauth.private_key,
+        algorithm="RS256",
+        headers={"kid": lightweight_oauth.KID},
+    )
+
+    assert realtime_web._authenticated(bearer_request(regular_token)) is False
+    assert realtime_web._authenticated(bearer_request(realtime_web._session_token())) is True
+
+
+def test_realtime_login_rejects_oversized_body_before_form_parsing(tmp_path):
+    app = FastAPI()
+    realtime_web.register_realtime_routes(app, RealtimeCallStore(), tmp_path)
+
+    response = TestClient(app).post(
+        "/rt/login",
+        content=b"secret=" + b"x" * (realtime_web.MAX_LOGIN_BODY_BYTES + 1),
+        headers={"content-type": "application/x-www-form-urlencoded"},
+    )
+
+    assert response.status_code == 413
+    assert response.json()["error"] == "request_too_large"
 
 
 def test_realtime_api_returns_trajectory_snapshot_when_authenticated(tmp_path, monkeypatch):
