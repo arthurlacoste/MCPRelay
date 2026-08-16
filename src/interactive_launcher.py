@@ -22,6 +22,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from dotenv import dotenv_values
+from changelog_parser import changelog_section
 from ngrok_target import gateway_health_url, resolve_ngrok_target
 from terminal_rendering import TerminalFrameRenderer, restore_terminal_output
 
@@ -145,13 +146,9 @@ def latest_changelog(version: str | None = None) -> str:
         text = CHANGELOG_FILE.read_text(encoding="utf-8")
     except OSError:
         return "Changelog unavailable."
-    marker = f"## {current}"
-    start = text.find(marker)
-    if start < 0:
+    section = changelog_section(text, current)
+    if section is None:
         return "No changelog entry found."
-    start += len(marker)
-    end = text.find("\n## ", start)
-    section = text[start:end if end >= 0 else None].strip()
     return section or "No changes listed."
 
 

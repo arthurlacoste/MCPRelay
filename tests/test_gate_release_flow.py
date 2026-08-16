@@ -14,6 +14,20 @@ def test_version_notes_extracts_only_requested_release(tmp_path):
     assert version_notes(changelog, "0.2.0") == "- New CLI"
 
 
+def test_version_notes_reads_release_please_linked_heading(tmp_path):
+    changelog = tmp_path / "CHANGELOG.md"
+    changelog.write_text(
+        "# Changelog\n\n"
+        "## [0.1.26](https://github.com/spelcc/gate/compare/v0.1.25...v0.1.26) (2026-08-16)\n\n"
+        "### Added\n\n"
+        "* Discover mode\n\n"
+        "## [0.1.25](https://example.test/previous) (2026-08-15)\n\n"
+        "* Previous\n"
+    )
+
+    assert version_notes(changelog, "0.1.26") == "### Added\n\n* Discover mode"
+
+
 def test_update_running_gate_prompts_stops_and_restarts(tmp_path):
     events = []
 

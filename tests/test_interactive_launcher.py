@@ -209,6 +209,24 @@ def test_latest_changelog_returns_current_version_section(monkeypatch, tmp_path)
     assert interactive_launcher.latest_changelog("0.1.7") == "### Added\n\n- New menu."
 
 
+def test_latest_changelog_reads_release_please_heading(monkeypatch, tmp_path):
+    changelog = tmp_path / "CHANGELOG.md"
+    changelog.write_text(
+        "# Changelog\n\n"
+        "## [0.1.26](https://github.com/spelcc/gate/compare/v0.1.25...v0.1.26) (2026-08-16)\n\n"
+        "### Added\n\n"
+        "* add discover-first MCP tool exposure\n\n"
+        "## [0.1.25](https://example.test/previous) (2026-08-15)\n\n"
+        "* Previous.\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(interactive_launcher, "CHANGELOG_FILE", changelog)
+
+    assert interactive_launcher.latest_changelog("0.1.26") == (
+        "### Added\n\n* add discover-first MCP tool exposure"
+    )
+
+
 def test_controls_are_aligned_in_one_key_column():
     lines = interactive_launcher.control_lines("0.1.8")
 
