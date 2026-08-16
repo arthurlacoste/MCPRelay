@@ -33,3 +33,30 @@ def test_invalid_tool_exposure_mode_falls_back_to_discover(caplog):
     assert mode == 'discover'
     assert 'MCP_TOOL_EXPOSURE_MODE' in caplog.text
     assert 'discover' in caplog.text
+
+
+def test_disabled_tool_is_not_added_to_gate_discovery_catalog(monkeypatch, tmp_path):
+    from src.gate_tool_catalog import GateToolCatalog
+    from src.tool_registry import configurable_tool
+
+    config = tmp_path / "tools.toml"
+    config.write_text("[tools]\nhidden_admin = false\n")
+    monkeypatch.setenv("MCP_TOOLS_CONFIG", str(config))
+    monkeypatch.setenv("MCP_TOOL_EXPOSURE_MODE", "discover")
+    load_tool_config.cache_clear()
+
+    class FakeMCP:
+        def __init__(self):
+            self._gate_tool_catalog = GateToolCatalog()
+
+        def tool(self, **_kwargs):
+            return lambda fn: fn
+
+    mcp = FakeMCP()
+
+    @configurable_tool(mcp)
+    def hidden_admin() -> str:
+        return "nope"
+
+    assert mcp._gate_tool_catalog.search("hidden_admin")["total"] == 0
+    load_tool_config.cache_clear()

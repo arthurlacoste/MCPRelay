@@ -534,7 +534,7 @@ def test_proxy_reuses_single_initialized_stdio_session(tmp_path):
     assert result.content[0].text == "ok"
 
 
-def test_gateway_defaults_to_seven_discovery_tools(tmp_path):
+def test_gateway_defaults_to_eight_discovery_tools(tmp_path):
     import os
     import subprocess
     from pathlib import Path
@@ -568,9 +568,70 @@ def test_gateway_defaults_to_seven_discovery_tools(tmp_path):
         "mcp_tool_read",
         "mcp_tools_search",
         "run_command",
+        "skills_create",
         "skills_read",
         "skills_search",
     ]
+
+
+def test_discover_mode_hidden_gate_tools_are_searchable_readable_and_callable(tmp_path):
+    import os
+    import subprocess
+    from pathlib import Path
+
+    config = tmp_path / "mcp.json"
+    config.write_text('{"mcpServers": {}}')
+    env = os.environ.copy()
+    env["PYTHONPATH"] = str(Path(__file__).resolve().parents[1] / "src")
+    empty_config = tmp_path / "empty-config"
+    empty_config.mkdir()
+    env["MCP_CONFIG_ROOT"] = str(empty_config)
+    env["MCP_SERVERS_CONFIG"] = str(config)
+    env["ENABLE_OAUTH"] = "false"
+    env["MCP_COMMAND_QUEUE_ENABLED"] = "false"
+    env["MCP_TOOL_EXPOSURE_MODE"] = "discover"
+    script = '''
+import asyncio, json, mcp_gateway
+
+def unpack(result):
+    if result.structured_content is not None:
+        return result.structured_content
+    return json.loads(result.content[0].text)
+
+async def main():
+    exposed = sorted(t.name for t in await mcp_gateway.mcp.list_tools())
+    search = unpack(await mcp_gateway.mcp.call_tool(
+        "mcp_tools_search", {"query": "auth status", "server_name": "gate"}
+    ))
+    read = unpack(await mcp_gateway.mcp.call_tool(
+        "mcp_tool_read", {"server_name": "gate", "tool_name": "public_file_share"}
+    ))
+    called = unpack(await mcp_gateway.mcp.call_tool(
+        "mcp_tool_call", {"server_name": "gate", "tool_name": "auth_status", "arguments": {}}
+    ))
+    print(json.dumps({"exposed": exposed, "search": search, "read": read, "called": called}))
+
+asyncio.run(main())
+'''
+    result = subprocess.run(
+        [sys.executable, "-c", script],
+        env=env,
+        text=True,
+        capture_output=True,
+        check=True,
+    )
+    payload = json.loads(result.stdout.strip().splitlines()[-1])
+
+    assert "skills_create" in payload["exposed"]
+    assert "auth_status" not in payload["exposed"]
+    assert "public_file_share" not in payload["exposed"]
+    assert payload["search"]["matches"][0]["server"] == "gate"
+    assert payload["search"]["matches"][0]["name"] == "auth_status"
+    assert "inputSchema" not in payload["search"]["matches"][0]
+    assert payload["read"]["server"] == "gate"
+    assert payload["read"]["name"] == "public_file_share"
+    assert payload["read"]["inputSchema"]["required"] == ["path"]
+    assert payload["called"]["structured_content"]["oauth_enabled"] is False
 
 
 def test_discover_mode_keeps_queue_helpers_when_queue_is_enabled(tmp_path):
@@ -668,6 +729,7 @@ def test_gateway_invalid_exposure_mode_falls_back_to_discover(tmp_path):
         "mcp_tool_read",
         "mcp_tools_search",
         "run_command",
+        "skills_create",
         "skills_read",
         "skills_search",
     ]
