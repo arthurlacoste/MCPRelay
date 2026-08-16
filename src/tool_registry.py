@@ -15,6 +15,7 @@ DISCOVER_CORE_TOOLS = frozenset({
     'run_command',
     'skills_search',
     'skills_read',
+    'skills_create',
     'mcp_servers_list',
     'mcp_tools_search',
     'mcp_tool_read',
@@ -63,7 +64,12 @@ def is_tool_enabled(name: str, config: dict[str, Any] | None = None) -> bool:
 def configurable_tool(mcp, name: str | None = None, **tool_options: Any) -> Callable:
     def decorator(func):
         tool_name = name or func.__name__
-        if not is_tool_enabled(tool_name) or not is_tool_exposed(tool_name):
+        if not is_tool_enabled(tool_name):
+            return func
+        catalog = getattr(mcp, '_gate_tool_catalog', None)
+        if catalog is not None:
+            catalog.register(func, name=tool_name, options=tool_options)
+        if not is_tool_exposed(tool_name):
             return func
         options = {'name': name, **tool_options} if name else tool_options
         return mcp.tool(**options)(func)
