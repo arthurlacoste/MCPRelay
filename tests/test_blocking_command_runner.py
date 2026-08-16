@@ -61,3 +61,14 @@ def test_blocking_monitor_state_includes_reusable_log_metadata(tmp_path):
 
     assert states[0]["command"] == "echo full-command"
     assert states[0]["log_path"] == str(tmp_path / "logs" / f"{states[0]['execution_id']}.log")
+
+
+def test_blocking_runner_publishes_conversation_id(tmp_path):
+    states = []
+    runner = BlockingCommandRunner(tmp_path, state_observer=states.append)
+
+    result = runner.run("printf ok", conversation_id="conv-blocking")
+
+    assert result.exit_code == 0
+    assert states
+    assert all(state["conversation_id"] == "conv-blocking" for state in states)

@@ -25,13 +25,14 @@ from command_queue import CommandQueue
 from blocking_command_runner import BlockingCommandRunner
 from command_guard import GuardService, SecretRedactor, current_guard_request
 from environment_config import gateway_paths, load_gateway_environment
-from lightweight_oauth import app as oauth_app
+from lightweight_oauth import app as oauth_app, set_activity_observer
 from terminal_app import TERMINAL_APP_HTML, TERMINAL_APP_URI
 from tool_registry import configurable_tool, tool_exposure_mode
 from mcp_proxy import MCPProxyManager
 from mcp_discovery_tools import register_mcp_discovery_tools
 from runtime_features import RuntimeFeatures, runtime_mode_summary
 from realtime_calls import RealtimeCallStore
+from activity_monitor import GateActivityMiddleware
 from skill_catalog import skills_read as read_skill, skills_search as search_skills
 from skill_writer import create_skill, install_builtin_skills
 from tool_metadata import tool_metadata
@@ -55,6 +56,13 @@ PUBLIC_SHARES_FILE = GATEWAY_PATHS.data / 'public_file_shares.json'
 STREAM_DIR.mkdir(parents=True, exist_ok=True)
 CONVERSATION_DIR.mkdir(parents=True, exist_ok=True)
 PUBLIC_SHARES_FILE.parent.mkdir(exist_ok=True)
+
+realtime_store = RealtimeCallStore(
+    max_entries=max(1, int(os.getenv('GATE_REALTIME_MAX_ENTRIES', '200'))),
+    snapshot_path=REALTIME_CALLS_FILE,
+    redact_text=SECRET_REDACTOR.redact_text,
+)
+set_activity_observer(realtime_store)
 
 LOCAL_OAUTH_ISSUER = os.getenv(
     'LOCAL_OAUTH_ISSUER',
@@ -302,6 +310,7 @@ mcp = FastMCP(
     lifespan=gateway_lifespan,
     **mcp_kwargs
 )
+mcp.add_middleware(GateActivityMiddleware(realtime_store))
 
 
 @configurable_tool(
@@ -726,11 +735,6 @@ def command_finished(execution_id: str, state: dict) -> None:
 
 command_queue = None
 blocking_runner = None
-realtime_store = RealtimeCallStore(
-    max_entries=max(1, int(os.getenv('GATE_REALTIME_MAX_ENTRIES', '200'))),
-    snapshot_path=REALTIME_CALLS_FILE,
-    redact_text=SECRET_REDACTOR.redact_text,
-)
 if RUNTIME_FEATURES.command_queue_enabled:
     command_queue = CommandQueue(
         COMMAND_DATABASE,
@@ -796,6 +800,7 @@ def _run_command_blocking(
         cwd=cwd,
         timeout_seconds=timeout_seconds,
         purpose=purpose,
+        conversation_id=conversation_id,
     )
     log_action('run_command_end', {
         'command': command,

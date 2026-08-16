@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import threading
 import re
+import secrets
 from collections import deque
 from datetime import UTC, datetime
 from pathlib import Path
@@ -15,6 +17,18 @@ MAX_PURPOSE_CHARS = 240
 MAX_TOOL_CHARS = 80
 MAX_COMMAND_CHARS = 8_000
 _ANSI_RE = re.compile(r"\x1b(?:\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1b\\))")
+
+
+def _opaque_session_digest(session_id: str) -> str:
+    return hashlib.sha256(session_id.encode("utf-8")).hexdigest()[:16]
+
+
+def auto_conversation_id(session_id: str) -> str:
+    return f"conv_auto_{_opaque_session_digest(session_id)}"
+
+
+def session_ref(session_id: str) -> str:
+    return f"mcp_{_opaque_session_digest(session_id)}"
 
 
 def sanitize_command(value: str) -> str:
@@ -152,6 +166,60 @@ class RealtimeCallStore:
                 self._recent.appendleft(item)
             self._write_snapshot()
 
+    def start_activity(
+        self,
+        *,
+        tool: str,
+        kind: str = "tool",
+        purpose: str | None = None,
+        conversation_id: str | None = None,
+        session_ref: str | None = None,
+        request_id: str | None = None,
+        client_id: str | None = None,
+        preview: str | None = None,
+    ) -> str:
+        activity_id = f"activity_{secrets.token_hex(8)}"
+        now = datetime.now(UTC).isoformat()
+        self.update({
+            "execution_id": activity_id,
+            "status": "running",
+            "created_at": now,
+            "started_at": now,
+            "finished_at": None,
+            "duration_ms": 0,
+            "tool": tool,
+            "kind": kind,
+            "purpose": purpose,
+            "conversation_id": conversation_id,
+            "session_ref": session_ref,
+            "request_id": request_id,
+            "client_id": client_id,
+            "preview": preview,
+        })
+        return activity_id
+
+    def finish_activity(self, activity_id: str, *, status: str = "success", **updates) -> None:
+        with self._lock:
+            current = self._active.get(activity_id)
+            if current is None:
+                return
+            started_at = current.get("started_at") or current.get("created_at")
+            try:
+                duration_ms = max(0, int(
+                    (datetime.now(UTC) - datetime.fromisoformat(started_at)).total_seconds() * 1000
+                ))
+            except (TypeError, ValueError):
+                duration_ms = int(current.get("duration_ms") or 0)
+            payload = {
+                **current,
+                **updates,
+                "execution_id": activity_id,
+                "status": status,
+                "finished_at": datetime.now(UTC).isoformat(),
+                "duration_ms": duration_ms,
+            }
+        self.update(payload)
+
     def _trim_queued(self) -> None:
         overflow = len(self._active) - self.max_entries
         if overflow <= 0:
@@ -176,7 +244,8 @@ class RealtimeCallStore:
         command = sanitize_command(self.redact_text(str(call.get("command") or "")))
         command_truncated = len(command) > MAX_COMMAND_CHARS
         command = command[:MAX_COMMAND_CHARS]
-        preview = single_line(command)
+        raw_preview = call.get("preview") if call.get("preview") is not None else command
+        preview = self.redact_text(single_line(str(raw_preview or "")))
         purpose = self.redact_text(single_line(call.get("purpose"))) or infer_purpose(command)
         return {
             "execution_id": str(call["execution_id"]),
@@ -186,7 +255,13 @@ class RealtimeCallStore:
             "finished_at": call.get("finished_at"),
             "duration_ms": int(call.get("duration_ms") or 0),
             "tool": shorten(single_line(call.get("tool")) or "run_command", MAX_TOOL_CHARS),
+            "kind": shorten(single_line(call.get("kind")) or "tool", 32),
             "purpose": shorten(purpose, MAX_PURPOSE_CHARS),
+            "conversation_id": single_line(call.get("conversation_id")) or None,
+            "session_ref": single_line(call.get("session_ref")) or None,
+            "request_id": single_line(call.get("request_id")) or None,
+            "client_id": single_line(call.get("client_id")) or None,
+            "http_status": call.get("http_status"),
             "command": command,
             "preview": shorten(preview, MAX_PREVIEW_CHARS),
             "log_ref": _snapshot_log_ref(call),

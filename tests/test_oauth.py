@@ -611,3 +611,67 @@ class TestEdgeCases:
                 },
             )
             assert r.status_code == 200
+
+
+def test_oauth_register_is_published_to_realtime_activity(oauth_client, temp_data_dir):
+    import lightweight_oauth as oauth_mod
+    from realtime_calls import RealtimeCallStore
+
+    store = RealtimeCallStore()
+    previous = oauth_mod.set_activity_observer(store)
+    try:
+        response = oauth_client.post("/oauth/register", json={
+            "redirect_uris": ["https://client.example/callback"],
+            "client_name": "Realtime test",
+        })
+    finally:
+        oauth_mod.set_activity_observer(previous)
+
+    assert response.status_code == 200
+    call = store.snapshot()["calls"][0]
+    assert call["kind"] == "oauth"
+    assert call["tool"] == "oauth.register"
+    assert call["status"] == "success"
+    assert call["http_status"] == 200
+    assert call["conversation_id"] is None
+    assert "client_secret" not in repr(call)
+    assert response.json()["client_secret"] not in repr(call)
+
+
+def test_oauth_authorize_and_failed_token_are_correlated_without_secret_leak(oauth_client, temp_data_dir):
+    import lightweight_oauth as oauth_mod
+    from realtime_calls import RealtimeCallStore
+
+    store = RealtimeCallStore()
+    previous = oauth_mod.set_activity_observer(store)
+    try:
+        registered = oauth_client.post("/oauth/register", json={
+            "redirect_uris": ["https://client.example/callback"],
+            "client_name": "Realtime auth client",
+        }).json()
+        authorize = oauth_client.get("/oauth/authorize", params={
+            "response_type": "code",
+            "client_id": registered["client_id"],
+            "redirect_uri": "https://client.example/callback",
+        })
+        failed_token = oauth_client.post("/oauth/token", data={
+            "grant_type": "authorization_code",
+            "code": "invalid-code",
+            "redirect_uri": "https://client.example/callback",
+            "client_id": registered["client_id"],
+            "client_secret": registered["client_secret"],
+        })
+    finally:
+        oauth_mod.set_activity_observer(previous)
+
+    assert authorize.status_code == 200
+    assert failed_token.status_code == 400
+    calls = store.snapshot()["calls"]
+    authorize_call = next(item for item in calls if item["tool"] == "oauth.authorize")
+    token_call = next(item for item in calls if item["tool"] == "oauth.token")
+    assert authorize_call["client_id"] == registered["client_id"]
+    assert authorize_call["status"] == "success"
+    assert token_call["status"] == "failed"
+    assert token_call["http_status"] == 400
+    assert registered["client_secret"] not in repr(calls)
+    assert "invalid-code" not in repr(calls)

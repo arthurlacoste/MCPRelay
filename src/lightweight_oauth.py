@@ -6,7 +6,7 @@ import os
 import secrets
 import time
 from pathlib import Path
-from urllib.parse import parse_qs, urlencode
+from urllib.parse import urlencode
 
 import jwt
 from cryptography.hazmat.primitives.asymmetric import rsa
@@ -16,6 +16,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Redirect
 
 from environment_config import gateway_paths, load_gateway_environment
 from oauth_access_gate import OAuthAccessGate, client_address, login_page, trusted_proxy_networks
+from http_activity_monitor import OAuthActivityMiddleware, set_activity_observer
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 load_gateway_environment(BASE_DIR)
@@ -36,6 +37,7 @@ LOGIN_MAX_ATTEMPTS = max(1, int(os.getenv("OAUTH_LOGIN_MAX_ATTEMPTS", "5")))
 TRUSTED_PROXY_NETWORKS = trusted_proxy_networks(os.getenv("OAUTH_TRUSTED_PROXY_NETWORKS", ""))
 
 MAX_AUTHORIZATION_BODY_BYTES = 4096
+
 
 
 class AuthorizationBodyLimitMiddleware:
@@ -68,6 +70,7 @@ class AuthorizationBodyLimitMiddleware:
 
 app = FastAPI(title="Lightweight MCP OAuth Server")
 app.add_middleware(AuthorizationBodyLimitMiddleware)
+app.add_middleware(OAuthActivityMiddleware)
 access_gate = OAuthAccessGate()
 
 

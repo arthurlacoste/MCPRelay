@@ -640,6 +640,7 @@ class CommandQueue:
             'execution_id': row['execution_id'], 'status': row['status'], 'command': self.redact_text(row['command']),
             'cwd': row['cwd'], 'pid': row['pid'], 'created_at': row['created_at'],
             'started_at': row['started_at'], 'finished_at': row['finished_at'],
+            'conversation_id': row['conversation_id'],
             'duration_ms': duration, 'exit_code': row['exit_code'], 'last_line': row['last_line'],
             'last_stream': row['last_stream'], 'line_count': row['line_count'],
             'truncated': bool(row['truncated']), 'log_ref': f'logs/commands/{Path(row["log_path"]).name}',

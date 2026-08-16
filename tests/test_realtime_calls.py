@@ -138,3 +138,65 @@ def test_read_call_log_uses_byte_offsets_and_bounded_bytes(tmp_path):
     result = read_call_log(path, offset=3, limit=4)
     assert result["text"] == "二\n"
     assert result["offset"] == 7
+
+
+def test_store_keeps_generic_activity_context_without_leaking_session_id():
+    store = RealtimeCallStore()
+    now = datetime.now(UTC).isoformat()
+    store.update({
+        "execution_id": "activity-1",
+        "status": "running",
+        "created_at": now,
+        "started_at": now,
+        "tool": "skills_search",
+        "kind": "tool",
+        "purpose": "Search skills",
+        "conversation_id": "conv_auto_abc123",
+        "session_ref": "mcp_123456789abc",
+        "request_id": "req-42",
+    })
+
+    item = store.snapshot()["calls"][0]
+    assert item["kind"] == "tool"
+    assert item["conversation_id"] == "conv_auto_abc123"
+    assert item["session_ref"] == "mcp_123456789abc"
+    assert item["request_id"] == "req-42"
+
+
+def test_activity_lifecycle_records_running_then_terminal_state():
+    store = RealtimeCallStore()
+
+    activity_id = store.start_activity(
+        tool="skills_read",
+        kind="tool",
+        purpose="Read skill",
+        conversation_id="conv-auto",
+        session_ref="mcp-session",
+        request_id="req-1",
+    )
+    running = store.snapshot()["calls"][0]
+    assert running["execution_id"] == activity_id
+    assert running["status"] == "running"
+    assert running["finished_at"] is None
+
+    store.finish_activity(activity_id, status="success")
+    done = store.snapshot()["calls"][0]
+    assert done["execution_id"] == activity_id
+    assert done["status"] == "success"
+    assert done["finished_at"] is not None
+    assert done["conversation_id"] == "conv-auto"
+
+
+def test_auto_conversation_id_is_stable_opaque_and_session_scoped():
+    from src import realtime_calls
+
+    first = realtime_calls.auto_conversation_id("raw-session-id-123")
+    again = realtime_calls.auto_conversation_id("raw-session-id-123")
+    other = realtime_calls.auto_conversation_id("another-session")
+
+    assert first == again
+    assert first.startswith("conv_auto_")
+    assert first != other
+    assert "raw-session-id-123" not in first
+    assert realtime_calls.session_ref("raw-session-id-123").startswith("mcp_")
+    assert "raw-session-id-123" not in realtime_calls.session_ref("raw-session-id-123")

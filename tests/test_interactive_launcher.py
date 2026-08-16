@@ -375,3 +375,31 @@ def test_main_handles_sighup_when_available(monkeypatch):
 
     assert interactive_launcher.main() == 0
     assert (interactive_launcher.signal.SIGHUP, interactive_launcher.request_shutdown) in installed
+
+
+def test_realtime_detail_shows_activity_correlation_fields(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(interactive_launcher, "REALTIME_CALLS_FILE", tmp_path / "calls.json")
+    (tmp_path / "calls.json").write_text(
+        __import__("json").dumps({"calls": [{
+            "status": "success",
+            "tool": "oauth.token",
+            "kind": "oauth",
+            "purpose": "POST /oauth/token",
+            "conversation_id": "conv_auto_deadbeef",
+            "session_ref": "mcp_deadbeef",
+            "request_id": "req-123",
+            "http_status": 200,
+        }]}),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(interactive_launcher, "clear_terminal", lambda: None)
+    monkeypatch.setattr(interactive_launcher.shutil, "get_terminal_size", lambda _: (120, 30))
+
+    interactive_launcher.render_realtime_panel(details=True)
+
+    output = capsys.readouterr().out
+    assert "Kind:     oauth" in output
+    assert "Conversation: conv_auto_deadbeef" in output
+    assert "Session:  mcp_deadbeef" in output
+    assert "Request:  req-123" in output
+    assert "HTTP:     200" in output

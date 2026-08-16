@@ -31,7 +31,7 @@ gate uninstall
 gate uninstall --purge
 ```
 
-`gate log` attaches to the redacted realtime call snapshot of a running daemon. In a terminal it refreshes continuously until `Ctrl+C`; when piped, it prints one snapshot. It does not restart Gate or require the legacy `--realtime` startup flag.
+`gate log` attaches to the redacted realtime activity snapshot of a running daemon. It includes Gate tool calls, discovered/downstream MCP calls, resource reads, prompt renders, and semantic OAuth/public-file HTTP activity. `run_command` keeps its richer terminal command/log fields. In a terminal it refreshes continuously until `Ctrl+C`; when piped, it prints one snapshot. It does not restart Gate or require the legacy `--realtime` startup flag.
 
 `gate uninstall` preserves config, data, logs and skills. `gate uninstall --purge` requires typing `DELETE` and removes all Gate data.
 
@@ -650,7 +650,7 @@ Stop the public tunnel whenever it is not in use.
 
 ## Asynchronous command terminal
 
-By default, `./run.sh` uses the historical blocking `run_command` contract. It waits for completion and returns command output directly. The **Realtime calls** monitor remains available in the interactive launcher; command queue tools and the ChatGPT widget are disabled.
+By default, `./run.sh` uses the historical blocking `run_command` contract. It waits for completion and returns command output directly. The **Realtime calls** monitor remains available in the interactive launcher and now tracks all semantic Gate activity, not only commands; command queue tools and the ChatGPT widget are disabled.
 
 Use additive startup flags without changing `config/.env`:
 
@@ -680,6 +680,10 @@ python start_services.py --widget
 `--queue` enables queued commands and their polling tools. `--widget` adds the MCP App resource and output template, and automatically enables the queue because the widget depends on it. The legacy `--realtime` / `-Realtime` aliases remain accepted.
 
 For persistent defaults, configure `MCP_WIDGET_ENABLED` (default `false`) and `MCP_COMMAND_QUEUE_ENABLED` (default `false`). `MCP_REALTIME_STATUS_ENABLED` remains a legacy fallback. Enabling the widget also enables the queue. Command-line flags affect only the launched process tree.
+
+Realtime entries include `kind`, `conversation_id`, `session_ref`, `request_id`, and `client_id` when available; OAuth entries also include `http_status`. Gate never stores OAuth request bodies, authorization codes, client secrets, or access/ID tokens in this snapshot. Routine health checks and static OAuth assets are omitted, while OAuth metadata/JWKS, registration, authorization, token exchange, and public-file downloads are monitored.
+
+When a tool call does not provide `conversation_id`, Gate derives an opaque `conv_auto_*` identifier from FastMCP's session ID and reuses it for that MCP session. The raw MCP session ID is never persisted; `session_ref` is a separate opaque `mcp_*` hash. If an explicit `conversation_id` is later supplied, or `conversation_start` returns one, that value replaces the automatic ID for subsequent calls in the same session. OAuth happens before an MCP session exists, so standalone OAuth activity may legitimately have no `conversation_id`. Gate does not use client IP addresses as conversation identifiers.
 
 After a gateway restart, formerly active commands become `interrupted` and pending commands remain suspended. The widget asks whether to **Relancer** (resume) or **Vider** (cancel) them before any recovered command starts.
 

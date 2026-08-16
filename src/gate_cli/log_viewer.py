@@ -28,15 +28,19 @@ def render_snapshot(snapshot_path: Path, *, width: int = 120, height: int = 30) 
     lines = [
         "Realtime calls",
         "",
-        "STATUS    START     AGE      TOOL                  PURPOSE",
-        "=" * min(width, 100),
+        "STATUS    START     AGE      TOOL                  CONVERSATION         PURPOSE",
+        "=" * min(width, 120),
     ]
     visible = max(1, (height - 7) // 2)
     for call in calls[:visible]:
         status = str(call.get("status", "")).upper()[:8]
         tool = shorten(str(call.get("tool") or "run_command"), 20)
-        purpose = shorten(str(call.get("purpose") or "No purpose"), max(8, width - 54))
-        lines.append(f"{status:<10}{_start_time(call):<10}{format_age(call):<9}{tool:<22}{purpose}")
+        conversation = shorten(str(call.get("conversation_id") or "-"), 18)
+        purpose = shorten(str(call.get("purpose") or "No purpose"), max(8, width - 74))
+        lines.append(
+            f"{status:<10}{_start_time(call):<10}{format_age(call):<9}"
+            f"{tool:<22}{conversation:<20}{purpose}"
+        )
         preview = shorten(str(call.get("preview") or ""), max(8, width - 2))
         if preview:
             lines.append(f"  {preview}")
