@@ -166,7 +166,19 @@ def create_tunnel(name: str) -> bool:
 
 
 def route_dns(name: str, hostname: str) -> bool:
-    return _run(["cloudflared", "tunnel", "route", "dns", name, hostname]).returncode == 0
+    result = _run(
+        ["cloudflared", "tunnel", "route", "dns", name, hostname],
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode == 0:
+        return True
+    combined = f"{result.stdout}\n{result.stderr}".lower()
+    # Some cloudflared versions fail with a non-zero exit when the DNS record
+    # already exists. For an idempotent re-run that is a success.
+    if "already exists" in combined or "duplicate" in combined or "record exists" in combined:
+        return True
+    return False
 
 
 def write_env(path: Path, updates: dict[str, str]) -> None:
@@ -242,9 +254,9 @@ def command_connect(
             print(f"Could not create Cloudflare tunnel '{name}'.")
             return 1
 
+    zone = ""
     if not hostname:
         configured = read_env(env_file).get("MCP_BASE_URL", "")
-        zone = ""
         derived = None
         if configured and current_provider in ("", "cloudflare", "cf"):
             derived = derive_connect_hostname(configured)

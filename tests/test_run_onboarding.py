@@ -606,6 +606,13 @@ def test_daemon_uses_named_cloudflared_tunnel_command():
     assert '(cloudflared tunnel --no-autoupdate run --url "http://127.0.0.1:$NGROK_PORT" "$tunnel_name")' in daemon
 
 
+def test_cloudflare_connect_dns_routing_is_idempotent():
+    content = RUN_SCRIPT.read_text()
+
+    assert "already exists; reusing it" in content
+    assert 'grep -qiE "already exists|duplicate|record exists"' in content
+
+
 def test_onboarding_cloudflare_connect_uses_named_tunnel(tmp_path):
     script, env = _sandbox(
         tmp_path,

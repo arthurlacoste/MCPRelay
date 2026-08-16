@@ -359,6 +359,22 @@ def test_wait_for_cloudflared_ready_returns_when_registered(monkeypatch, tmp_pat
     interactive_launcher.wait_for_cloudflared_ready(Process())
 
 
+def test_cloudflared_failure_hint_flags_ingress_conflict(tmp_path):
+    log = tmp_path / "cloudflared.log"
+    log.write_text(
+        "ERR You can't set the --url flag when using multiple-origin ingress rules\n",
+        encoding="utf-8",
+    )
+    hint = interactive_launcher._cloudflared_failure_hint(log)
+    assert "multiple ingress rules" in hint
+
+
+def test_cloudflared_failure_hint_empty_without_known_issue(tmp_path):
+    log = tmp_path / "cloudflared.log"
+    log.write_text("INF some benign startup message\n", encoding="utf-8")
+    assert interactive_launcher._cloudflared_failure_hint(log) == ""
+
+
 def test_wait_for_cloudflared_ready_reports_failure(monkeypatch, tmp_path):
     log = tmp_path / "cloudflared.log"
     monkeypatch.setattr(interactive_launcher, "CLOUDFLARED_LOG", log)
