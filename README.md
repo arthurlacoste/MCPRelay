@@ -18,6 +18,12 @@ Then run:
 gate
 ```
 
+Public endpoints:
+
+- `<public-url>/mcp` — MCP connector
+- `<public-url>/oauth` — OAuth discovery and authorization
+- `<public-url>/rt` — authenticated real-time calls interface
+
 See the **[installation and usage guide](docs/installation.md)**, if you want to do it the hard way.
 
 ---

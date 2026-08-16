@@ -4,6 +4,20 @@ from unittest.mock import Mock
 from src import interactive_launcher, tunnel_provider
 
 
+def test_connection_details_include_public_realtime_url(tmp_path, monkeypatch):
+    config = tmp_path / ".env"
+    config.write_text(
+        "MCP_BASE_URL=https://gate.example\nOAUTH_ACCESS_SECRET=secret\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(interactive_launcher, "CONFIG_FILE", config)
+
+    assert (
+        "Public realtime: https://gate.example/rt"
+        in interactive_launcher.connection_detail_lines()
+    )
+
+
 def test_log_tail_returns_only_last_lines(tmp_path):
     log = tmp_path / "launcher.log"
     log.write_text("one\ntwo\nthree\nfour\n", encoding="utf-8")
