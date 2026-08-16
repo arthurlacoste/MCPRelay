@@ -264,6 +264,18 @@ On Windows, run the same command as `.venv\\Scripts\\python.exe -c "..."`. Copy 
 
 Git ignores `config/.env`. Never add the ngrok token to it.
 
+The OAuth-protected `/rt` interface captures redacted tool payloads, results,
+and common fields for on-demand inspection. Automatic redaction only covers
+secrets Gate knows about. If calls can contain unknown credentials or private
+content, use metadata-only monitoring:
+
+```dotenv
+GATE_REALTIME_CAPTURE_RAW_DATA=false
+```
+
+This removes payloads, results, and common fields from the realtime store. It
+does not disable command logs; protect the `logs/` directory separately.
+
 ### Configure MCP subservers
 
 Install the pinned Open Computer Use MCP server:

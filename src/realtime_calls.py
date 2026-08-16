@@ -9,6 +9,7 @@ import secrets
 from collections import deque
 from datetime import UTC, datetime
 from pathlib import Path
+from time import monotonic
 from typing import Callable
 
 ACTIVE_STATUSES = {"starting", "running"}
@@ -17,6 +18,10 @@ MAX_PREVIEW_CHARS = 500
 MAX_PURPOSE_CHARS = 240
 MAX_TOOL_CHARS = 80
 MAX_COMMAND_CHARS = 8_000
+MAX_RAW_DATA_CHARS = 32_000
+MAX_FIELD_CHARS = 1_000
+DETAIL_FIELDS = {"command", "payload", "result", "fields"}
+SNAPSHOT_DEBOUNCE_SECONDS = 0.05
 _ANSI_RE = re.compile(r"\x1b(?:\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1b\\))")
 LOGGER = logging.getLogger(__name__)
 
@@ -143,14 +148,28 @@ class RealtimeCallStore:
         max_entries: int = 200,
         snapshot_path: Path | None = None,
         redact_text: Callable[[str], str] | None = None,
+        capture_raw_data: bool = True,
     ) -> None:
         self.max_entries = max(1, int(max_entries))
         self.snapshot_path = Path(snapshot_path) if snapshot_path else None
         self.redact_text = redact_text or (lambda value: value)
+        self.capture_raw_data = bool(capture_raw_data)
         self._active: dict[str, dict] = {}
         self._recent: deque[dict] = deque(maxlen=self.max_entries)
         self._lock = threading.RLock()
+        self._snapshot_condition = threading.Condition()
+        self._snapshot_revision = 0
+        self._snapshot_written_revision = 0
+        self._snapshot_closed = False
+        self._snapshot_thread: threading.Thread | None = None
         self._write_snapshot()
+        if self.snapshot_path:
+            self._snapshot_thread = threading.Thread(
+                target=self._snapshot_worker,
+                name="gate-realtime-snapshot",
+                daemon=True,
+            )
+            self._snapshot_thread.start()
 
     def update(self, call: dict) -> None:
         item = self._sanitize(call)
@@ -166,7 +185,7 @@ class RealtimeCallStore:
                     maxlen=self.max_entries,
                 )
                 self._recent.appendleft(item)
-            self._write_snapshot()
+        self._schedule_snapshot()
 
     def start_activity(
         self,
@@ -180,6 +199,9 @@ class RealtimeCallStore:
         client_id: str | None = None,
         preview: str | None = None,
         parent_execution_id: str | None = None,
+        working_directory: str | None = None,
+        payload=None,
+        fields: dict | None = None,
     ) -> str:
         activity_id = f"activity_{secrets.token_hex(8)}"
         now = datetime.now(UTC).isoformat()
@@ -199,6 +221,9 @@ class RealtimeCallStore:
             "client_id": client_id,
             "preview": preview,
             "parent_execution_id": parent_execution_id,
+            "working_directory": working_directory,
+            "payload": payload,
+            "fields": fields,
         })
         return activity_id
 
@@ -241,8 +266,26 @@ class RealtimeCallStore:
             calls.sort(key=sort_key)
             return {
                 "updated_at": datetime.now(UTC).isoformat(),
-                "calls": calls,
+                "calls": [dict(call) for call in calls],
             }
+
+    def summary_snapshot(self) -> dict:
+        snapshot = self.snapshot()
+        snapshot["calls"] = [
+            {key: value for key, value in call.items() if key not in DETAIL_FIELDS}
+            for call in snapshot["calls"]
+        ]
+        return snapshot
+
+    def get_call(self, execution_id: str) -> dict | None:
+        with self._lock:
+            item = self._active.get(execution_id)
+            if item is None:
+                item = next(
+                    (call for call in self._recent if call["execution_id"] == execution_id),
+                    None,
+                )
+            return dict(item) if item is not None else None
 
     def _sanitize(self, call: dict) -> dict:
         command = sanitize_command(self.redact_text(str(call.get("command") or "")))
@@ -251,6 +294,18 @@ class RealtimeCallStore:
         raw_preview = call.get("preview") if call.get("preview") is not None else command
         preview = self.redact_text(single_line(str(raw_preview or "")))
         purpose = self.redact_text(single_line(call.get("purpose"))) or infer_purpose(command)
+        payload = self._json_text(call.get("payload")) if self.capture_raw_data else ""
+        result = self._json_text(call.get("result")) if self.capture_raw_data else ""
+        fields = {}
+        if self.capture_raw_data:
+            fields = {
+                shorten(single_line(str(key)), 80): shorten(
+                    self.redact_text(single_line(self._json_text(value))),
+                    MAX_FIELD_CHARS,
+                )
+                for key, value in (call.get("fields") or {}).items()
+                if single_line(str(key))
+            }
         return {
             "execution_id": str(call["execution_id"]),
             "status": str(call.get("status") or "queued"),
@@ -266,13 +321,97 @@ class RealtimeCallStore:
             "request_id": single_line(call.get("request_id")) or None,
             "client_id": single_line(call.get("client_id")) or None,
             "parent_execution_id": single_line(call.get("parent_execution_id")) or None,
+            "working_directory": self.redact_text(single_line(
+                call.get("working_directory") or call.get("cwd") or call.get("workdir")
+            )) or None,
             "http_status": call.get("http_status"),
             "command": command,
             "preview": shorten(preview, MAX_PREVIEW_CHARS),
             "log_ref": _snapshot_log_ref(call),
             "command_truncated": command_truncated,
             "exit_code": call.get("exit_code"),
+            "payload": payload,
+            "result": result,
+            "fields": fields,
         }
+
+    def _json_text(self, value) -> str:
+        try:
+            if value is None:
+                return ""
+            if isinstance(value, str):
+                return sanitize_command(self.redact_text(value))[:MAX_RAW_DATA_CHARS]
+
+            def fallback(item):
+                model_dump = getattr(item, "model_dump", None)
+                if callable(model_dump):
+                    return model_dump(mode="json")
+                return str(item)
+
+            text = json.dumps(value, ensure_ascii=False, indent=2, default=fallback)
+            return sanitize_command(self.redact_text(text))[:MAX_RAW_DATA_CHARS]
+        except Exception as exc:
+            LOGGER.warning("Could not serialize realtime activity data: %s", exc)
+            return ""
+
+    def _schedule_snapshot(self) -> None:
+        if not self.snapshot_path:
+            return
+        with self._snapshot_condition:
+            if self._snapshot_closed:
+                return
+            self._snapshot_revision += 1
+            self._snapshot_condition.notify()
+
+    def _snapshot_worker(self) -> None:
+        while True:
+            with self._snapshot_condition:
+                while (
+                    self._snapshot_revision <= self._snapshot_written_revision
+                    and not self._snapshot_closed
+                ):
+                    self._snapshot_condition.wait()
+                if (
+                    self._snapshot_closed
+                    and self._snapshot_revision <= self._snapshot_written_revision
+                ):
+                    return
+                revision = self._snapshot_revision
+                if not self._snapshot_closed:
+                    self._snapshot_condition.wait(timeout=SNAPSHOT_DEBOUNCE_SECONDS)
+                    if self._snapshot_revision != revision:
+                        continue
+            self._write_snapshot()
+            with self._snapshot_condition:
+                self._snapshot_written_revision = max(
+                    self._snapshot_written_revision,
+                    revision,
+                )
+                self._snapshot_condition.notify_all()
+
+    def flush_snapshot(self, timeout: float = 2.0) -> bool:
+        if not self.snapshot_path:
+            return True
+        deadline = monotonic() + max(0.0, timeout)
+        with self._snapshot_condition:
+            target = self._snapshot_revision
+            self._snapshot_condition.notify()
+            while self._snapshot_written_revision < target:
+                remaining = deadline - monotonic()
+                if remaining <= 0:
+                    return False
+                self._snapshot_condition.wait(timeout=remaining)
+        return True
+
+    def close(self, timeout: float = 2.0) -> None:
+        thread = self._snapshot_thread
+        if thread is None:
+            return
+        with self._snapshot_condition:
+            self._snapshot_closed = True
+            self._snapshot_condition.notify_all()
+        thread.join(timeout=max(0.0, timeout))
+        self._snapshot_thread = None
 
     def _write_snapshot(self) -> None:
         if not self.snapshot_path:

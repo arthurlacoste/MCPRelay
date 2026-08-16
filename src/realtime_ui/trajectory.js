@@ -1,10 +1,13 @@
 const $ = selector => document.querySelector(selector)
 const THINKING_MIN_MS = 250
+const BOTTOM_THRESHOLD_PX = 32
 const state = {
   calls: [], mode: 'duration', compact: false, showStates: false, showThinking: true,
-  query: '', conversation: null, selected: null, tab: 'summary',
+  query: '', conversation: null, selected: null, tab: 'summary', pendingBottomScroll: true,
 }
 const resultCache = new Map()
+const detailCache = new Map()
+const detailPending = new Set()
 
 function escapeHtml(value) {
   return String(value ?? '').replace(/[&<>"']/g, char => (
@@ -79,6 +82,7 @@ function syntheticThinking(left, right) {
     preview: `No tool call for ${formatDuration(end - start)}`,
     conversation_id: right.conversation_id || left.conversation_id,
     session_ref: right.session_ref || left.session_ref,
+    working_directory: right.working_directory || left.working_directory,
     started_at: new Date(start).toISOString(), finished_at: new Date(end).toISOString(),
     duration_ms: end - start, synthetic: true,
     previous_tool: left.tool, next_tool: right.tool,
@@ -88,18 +92,21 @@ function syntheticThinking(left, right) {
 function projectedCalls() {
   const real = orderedCalls()
   if (!state.showThinking) return real
-  const byConversation = new Map()
-  for (const call of real.filter(isToolActivity)) {
-    const key = turnKey(call)
-    const group = byConversation.get(key) || []
-    group.push(call)
-    byConversation.set(key, group)
-  }
+  const tools = real.filter(isToolActivity).sort((left, right) => timing(left).start - timing(right).start)
   const thinking = []
-  for (const group of byConversation.values()) {
-    for (let index = 1; index < group.length; index += 1) {
-      const item = syntheticThinking(group[index - 1], group[index])
-      if (item) thinking.push(item)
+  if (tools.length) {
+    let coveredBy = tools[0]
+    let coveredUntil = timing(coveredBy).end
+    for (let index = 1; index < tools.length; index += 1) {
+      const next = tools[index]
+      if (timing(next).start > coveredUntil) {
+        const item = syntheticThinking(coveredBy, next)
+        if (item) thinking.push(item)
+      }
+      if (timing(next).end >= coveredUntil) {
+        coveredBy = next
+        coveredUntil = timing(next).end
+      }
     }
   }
   return [...real, ...thinking].sort((left, right) => timing(left).start - timing(right).start)
@@ -115,31 +122,49 @@ function conversationModels() {
   const groups = new Map()
   for (const call of state.calls) {
     const key = turnKey(call)
-    const model = groups.get(key) || { key, count: 0, latest: 0, purpose: 'Untitled conversation' }
+    const model = groups.get(key) || { key, count: 0, latest: 0, purpose: 'Untitled conversation', directory: '' }
     const started = timing(call).start
     model.count += 1
     model.latest = Math.max(model.latest, started)
+    if (call.working_directory) model.directory = call.working_directory
     if (!isStateCall(call) && started >= (model.purposeAt || 0)) {
       model.purpose = call.purpose || call.tool
       model.purposeAt = started
     }
     groups.set(key, model)
   }
-  return [...groups.values()].sort((left, right) => right.latest - left.latest)
+  return [...groups.values()].sort((left, right) => (
+    (left.directory || '\uffff').localeCompare(right.directory || '\uffff') || right.latest - left.latest
+  ))
+}
+
+function directoryLabel(path) {
+  if (!path) return 'Other'
+  const parts = path.replace(/\\/g, '/').split('/').filter(Boolean)
+  return parts.at(-1) || path
 }
 
 function renderConversations() {
   const models = conversationModels()
+  let previousDirectory = null
+  const grouped = models.flatMap(model => {
+    const directory = model.directory || ''
+    const heading = directory !== previousDirectory
+      ? `<div class="directory" title="${escapeHtml(directory)}">${escapeHtml(directoryLabel(directory))}</div>` : ''
+    previousDirectory = directory
+    return [heading, `<button class="conversation ${state.conversation === model.key ? 'active' : ''}"
+      data-key="${escapeHtml(model.key)}" title="${escapeHtml(model.purpose)}">${escapeHtml(model.purpose)}
+      <small>${escapeHtml(model.key)} · ${model.count} calls · ${formatTime(model.latest)}</small></button>`]
+  })
   $('#conversations').innerHTML = [
     `<button class="conversation ${state.conversation === null ? 'active' : ''}" data-key="">All calls<small>${state.calls.length} calls</small></button>`,
-    ...models.map(model => `<button class="conversation ${state.conversation === model.key ? 'active' : ''}"
-      data-key="${escapeHtml(model.key)}" title="${escapeHtml(model.purpose)}">${escapeHtml(model.purpose)}
-      <small>${model.count} calls · ${formatTime(model.latest)}</small></button>`),
+    ...grouped,
   ].join('')
   $('#conversations').querySelectorAll('.conversation').forEach(button => {
     button.addEventListener('click', () => {
       state.conversation = button.dataset.key || null
       state.selected = null
+      state.pendingBottomScroll = true
       renderAll()
     })
   })
@@ -148,8 +173,33 @@ function renderConversations() {
 function renderTimeline() {
   const calls = visibleTimelineCalls()
   const host = $('#spans')
-  if (!calls.length) { host.innerHTML = ''; return }
+  const labels = document.querySelectorAll('.lane-labels span')
+  if (!calls.length) {
+    host.innerHTML = ''
+    $('.timeline').style.height = '58px'
+    ;[9, 25, 41].forEach((top, index) => { labels[index].style.top = `${top}px` })
+    return
+  }
   const ranges = calls.map(timing)
+  const levels = calls.map(() => 0)
+  const laneLevels = [1, 1, 1]
+  if (state.mode === 'duration') {
+    const occupiedUntil = [[], [], []]
+    calls.forEach((call, index) => {
+      const callLane = lane(call)
+      const range = ranges[index]
+      let level = occupiedUntil[callLane].findIndex(end => end <= range.start)
+      if (level < 0) level = occupiedUntil[callLane].length
+      occupiedUntil[callLane][level] = range.end
+      levels[index] = level
+      laneLevels[callLane] = Math.max(laneLevels[callLane], level + 1)
+    })
+  }
+  const laneOffsets = [0, laneLevels[0] * 12 + 4, (laneLevels[0] + laneLevels[1]) * 12 + 8]
+  const contentHeight = laneLevels.reduce((sum, count) => sum + count * 12, 0) + 8
+  $('.timeline').style.height = `${Math.max(58, contentHeight + 16)}px`
+  host.style.height = `${contentHeight}px`
+  laneOffsets.forEach((top, index) => { labels[index].style.top = `${top + 9}px` })
   const domainStart = Math.min(...ranges.map(range => range.start))
   const domainEnd = Math.max(...ranges.map(range => range.end))
   const domain = Math.max(1, domainEnd - domainStart)
@@ -167,9 +217,9 @@ function renderTimeline() {
       'span', call.status === 'failed' ? 'error' : '',
       call.execution_id === state.selected ? 'selected' : '', matches(call) ? '' : 'filtered',
     ].filter(Boolean).join(' ')
-    const gap = sequential ? 1 : 0
+    const gap = call.kind === 'thinking' ? 2 : 1
     return `${boundary}<button class="${classes}" data-id="${escapeHtml(call.execution_id)}"
-      data-lane="${lane(call)}" style="left:calc(${left}% + ${gap}px);width:max(2px,calc(${width}% - ${gap * 2}px))"
+      data-lane="${lane(call)}" style="top:${laneOffsets[lane(call)] + levels[index] * 12}px;left:calc(${left}% + ${gap}px);width:max(1px,calc(${width}% - ${gap * 2}px))"
       title="${escapeHtml(call.tool)} · ${formatDuration(range.duration)}"></button>`
   }).join('')
   host.querySelectorAll('.span').forEach(span => {
@@ -178,6 +228,8 @@ function renderTimeline() {
 }
 
 function renderLedger() {
+  const ledger = $('#ledger')
+  const wasNearBottom = isLedgerNearBottom(ledger)
   const ordered = projectedCalls()
   const stateStacks = new Map()
   const lastRunByTurn = new Map()
@@ -195,9 +247,12 @@ function renderLedger() {
     }
     if (matches(call)) calls.push(call)
   }
-  const ledger = $('#ledger')
   ledger.classList.toggle('compact', state.compact)
-  if (!calls.length) { ledger.innerHTML = '<p class="empty">No calls yet.</p>'; return }
+  if (!calls.length) {
+    ledger.innerHTML = '<p class="empty">No calls yet.</p>'
+    $('#scroll-bottom').hidden = true
+    return
+  }
   let previousTurn = null
   ledger.innerHTML = calls.map(call => {
     const range = timing(call)
@@ -226,22 +281,55 @@ function renderLedger() {
   ledger.querySelectorAll('.row, .state-stack').forEach(row => {
     row.addEventListener('click', () => selectCall(row.dataset.id))
   })
+  const shouldScrollToBottom = state.pendingBottomScroll || wasNearBottom
+  state.pendingBottomScroll = false
+  requestAnimationFrame(() => {
+    if (shouldScrollToBottom) ledger.scrollTop = ledger.scrollHeight
+    updateScrollBottomButton()
+  })
+}
+
+function isLedgerNearBottom(ledger = $('#ledger')) {
+  return ledger.scrollHeight - ledger.clientHeight - ledger.scrollTop <= BOTTOM_THRESHOLD_PX
+}
+
+function updateScrollBottomButton() {
+  $('#scroll-bottom').hidden = isLedgerNearBottom()
+}
+
+function goToLatestCalls() {
+  $('#ledger').scrollTo({ top: $('#ledger').scrollHeight, behavior: 'smooth' })
 }
 
 function currentCall() {
   return projectedCalls().find(call => call.execution_id === state.selected) || null
 }
 
+function detailedCall(call) {
+  return call ? { ...call, ...(detailCache.get(call.execution_id) || {}) } : null
+}
+
+function detailValue(call, name, fallback) {
+  if (call[name]) return call[name]
+  if (!call.synthetic && !detailCache.has(call.execution_id)) return 'Loading…'
+  return fallback
+}
+
 function summaryHtml(call) {
   const range = timing(call)
+  const fields = Object.entries(call.fields || {})
+  const fieldsSection = fields.length ? `<section class="section"><h3>Fields ›</h3><dl class="overview compact-overview common-fields">
+    ${fields.map(([key, value]) => `<dt>${escapeHtml(key)}</dt><dd>${escapeHtml(String(value))}</dd>`).join('')}
+  </dl></section>` : ''
   return `<dl class="overview">
     <dt>Hierarchy</dt><dd>${escapeHtml(turnKey(call))}</dd>
     <dt>Status</dt><dd>${escapeHtml(call.status)}</dd>
     <dt>Purpose</dt><dd>${escapeHtml(call.purpose)}</dd>
     <dt>Duration</dt><dd>${formatDuration(range.duration)}</dd>
   </dl>
-  <section class="section"><h3>Payload ›</h3><pre>${escapeHtml(call.command || call.preview || 'No payload')}</pre></section>
-  <section class="section"><h3>Result ›</h3><pre id="summary-result">${escapeHtml(resultCache.get(call.execution_id) || 'Loading…')}</pre></section>
+  ${fieldsSection}
+  <section class="section"><h3>Payload ›</h3><pre>${escapeHtml(detailValue(call, 'payload', call.command || call.preview || 'No payload'))}</pre></section>
+  <section class="section"><h3>Result ›</h3><pre id="summary-result">${escapeHtml(call.result || resultCache.get(call.execution_id) || detailValue(call, 'result', 'No output log available.'))}</pre></section>
   <section class="section"><h3>Timing ›</h3><dl class="overview compact-overview">
     <dt>Started</dt><dd>${formatTime(range.start)}</dd><dt>Finished</dt><dd>${call.finished_at ? formatTime(range.end) : 'Running'}</dd>
     <dt>Duration</dt><dd>${formatDuration(range.duration)}</dd><dt>Source</dt><dd>${call.synthetic ? 'Previous tool result → next tool call' : 'Gate timestamps'}</dd>
@@ -250,8 +338,8 @@ function summaryHtml(call) {
 
 function detailHtml(call) {
   const range = timing(call)
-  if (state.tab === 'payload') return `<pre>${escapeHtml(call.command || call.preview || 'No payload')}</pre>`
-  if (state.tab === 'result') return `<pre>${escapeHtml(resultCache.get(call.execution_id) || 'Loading…')}</pre>`
+  if (state.tab === 'payload') return `<pre>${escapeHtml(detailValue(call, 'payload', call.command || call.preview || 'No payload'))}</pre>`
+  if (state.tab === 'result') return `<pre>${escapeHtml(call.result || resultCache.get(call.execution_id) || detailValue(call, 'result', 'No output log available.'))}</pre>`
   if (state.tab === 'timing') return `<dl class="overview">
     <dt>Started</dt><dd>${formatTime(range.start)}</dd><dt>Finished</dt><dd>${call.finished_at ? formatTime(range.end) : 'Running'}</dd>
     <dt>Duration</dt><dd>${formatDuration(range.duration)}</dd><dt>Source</dt><dd>${call.synthetic ? 'Previous tool result → next tool call' : 'Gate timestamps'}</dd>
@@ -261,6 +349,7 @@ function detailHtml(call) {
 
 async function loadResult(call) {
   if (resultCache.has(call.execution_id)) return
+  if (call.result) { resultCache.set(call.execution_id, call.result); return }
   if (call.synthetic) {
     resultCache.set(call.execution_id, 'Synthetic interval derived from adjacent tool timestamps.')
     renderDetail()
@@ -275,8 +364,23 @@ async function loadResult(call) {
   renderDetail()
 }
 
+async function loadDetail(call) {
+  if (call.synthetic || detailCache.has(call.execution_id) || detailPending.has(call.execution_id)) return
+  detailPending.add(call.execution_id)
+  try {
+    const response = await fetch(`/rt/api/calls/${encodeURIComponent(call.execution_id)}`)
+    detailCache.set(call.execution_id, response.ok ? await response.json() : {})
+  } catch {
+    detailCache.set(call.execution_id, {})
+  } finally {
+    detailPending.delete(call.execution_id)
+  }
+  if (state.selected === call.execution_id) renderDetail()
+}
+
 function renderDetail() {
-  const call = currentCall()
+  const summary = currentCall()
+  const call = detailedCall(summary)
   const inspector = $('#inspector')
   inspector.hidden = !call
   if (!call) return
@@ -286,7 +390,8 @@ function renderDetail() {
   document.querySelectorAll('.detail-tabs button').forEach(button => {
     button.classList.toggle('active', button.dataset.tab === state.tab)
   })
-  loadResult(call)
+  if (!call.synthetic && !detailCache.has(call.execution_id)) loadDetail(call)
+  else loadResult(call)
 }
 
 function selectCall(id) {
@@ -307,8 +412,19 @@ async function load() {
   if (response.status === 401) { location.reload(); return }
   const payload = await response.json()
   state.calls = payload.calls || []
+  const knownIds = new Set(state.calls.map(call => call.execution_id))
+  for (const call of state.calls) {
+    const cached = detailCache.get(call.execution_id)
+    if (cached && (
+      cached.status !== call.status || cached.finished_at !== call.finished_at
+      || cached.duration_ms !== call.duration_ms
+    )) detailCache.delete(call.execution_id)
+  }
+  for (const id of detailCache.keys()) if (!knownIds.has(id)) detailCache.delete(id)
+  for (const id of resultCache.keys()) if (!knownIds.has(id) && !id.startsWith('thinking:')) resultCache.delete(id)
   if (state.conversation && !state.calls.some(call => turnKey(call) === state.conversation)) {
     state.conversation = null
+    state.pendingBottomScroll = true
   }
   if (state.selected && !currentCall()) state.selected = null
   renderAll()
@@ -340,6 +456,8 @@ $('#thinking-toggle').addEventListener('click', event => {
   renderAll()
 })
 $('#search').addEventListener('input', event => { state.query = event.currentTarget.value.trim().toLowerCase(); renderAll() })
+$('#ledger').addEventListener('scroll', updateScrollBottomButton, { passive: true })
+$('#scroll-bottom').addEventListener('click', goToLatestCalls)
 $('#refresh').addEventListener('click', load)
 $('#close').addEventListener('click', () => { state.selected = null; renderAll() })
 document.querySelectorAll('.detail-tabs button').forEach(button => button.addEventListener('click', () => {

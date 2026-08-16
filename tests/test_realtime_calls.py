@@ -1,4 +1,5 @@
 import os
+import time
 from pathlib import Path
 from datetime import UTC, datetime, timedelta
 
@@ -63,6 +64,74 @@ def test_store_masks_secrets_and_terminal_controls_in_display_fields():
     assert "\x1b" not in item["purpose"]
 
 
+def test_store_redacts_and_bounds_generic_payload_and_result():
+    redactor = SecretRedactor(("top-secret-value",))
+    store = RealtimeCallStore(redact_text=redactor.redact_text)
+    activity_id = store.start_activity(
+        tool="skills_search",
+        payload={"query": "top-secret-value", "extra": "x" * 40_000},
+        fields={"query": "top-secret-value"},
+    )
+    store.finish_activity(activity_id, result={"token": "top-secret-value", "ok": True})
+
+    item = store.snapshot()["calls"][0]
+    assert "top-secret-value" not in item["payload"]
+    assert "top-secret-value" not in item["result"]
+    assert "top-secret-value" not in repr(item["fields"])
+    assert len(item["payload"]) == 32_000
+
+
+def test_metadata_only_store_drops_raw_payload_result_and_common_fields():
+    store = RealtimeCallStore(capture_raw_data=False)
+    activity_id = store.start_activity(
+        tool="skills_search",
+        payload={"query": "inline-secret"},
+        fields={"query": "inline-secret"},
+    )
+    store.finish_activity(activity_id, result={"token": "inline-secret"})
+
+    item = store.snapshot()["calls"][0]
+    assert item["payload"] == ""
+    assert item["result"] == ""
+    assert item["fields"] == {}
+
+
+def test_summary_snapshot_omits_heavy_detail_fields_and_get_call_keeps_them():
+    store = RealtimeCallStore()
+    store.update({
+        **call("detail", "success", datetime.now(UTC).isoformat(), command="echo detailed"),
+        "payload": {"query": "large"},
+        "result": {"ok": True},
+        "fields": {"query": "large"},
+    })
+
+    summary = store.summary_snapshot()["calls"][0]
+    detail = store.get_call("detail")
+    assert {"command", "payload", "result", "fields"}.isdisjoint(summary)
+    assert detail["command"] == "echo detailed"
+    assert '"query": "large"' in detail["payload"]
+    assert store.get_call("missing") is None
+
+
+def test_unserializable_activity_data_does_not_break_store(caplog):
+    class BrokenPayload:
+        def model_dump(self, *, mode):
+            raise RuntimeError("serialization failed")
+
+    store = RealtimeCallStore()
+    store.update({
+        "execution_id": "safe-observer",
+        "status": "success",
+        "payload": BrokenPayload(),
+        "result": BrokenPayload(),
+    })
+
+    item = store.snapshot()["calls"][0]
+    assert item["payload"] == ""
+    assert item["result"] == ""
+    assert "serialization failed" in caplog.text
+
+
 def test_recent_buffer_is_bounded_but_active_calls_remain():
     store = RealtimeCallStore(max_entries=2)
     now = datetime.now(UTC).isoformat()
@@ -102,6 +171,7 @@ def test_snapshot_is_private_and_display_values_are_bounded(tmp_path):
     assert len(item["purpose"]) == 240
     if os.name != "nt":
         assert path.stat().st_mode & 0o777 == 0o600
+    store.close()
 
 
 def test_shorten_and_age_formatting():
@@ -155,6 +225,7 @@ def test_store_keeps_generic_activity_context_without_leaking_session_id():
         "conversation_id": "conv_auto_abc123",
         "session_ref": "mcp_123456789abc",
         "request_id": "req-42",
+        "cwd": "/projects/irz",
     })
 
     item = store.snapshot()["calls"][0]
@@ -162,6 +233,7 @@ def test_store_keeps_generic_activity_context_without_leaking_session_id():
     assert item["conversation_id"] == "conv_auto_abc123"
     assert item["session_ref"] == "mcp_123456789abc"
     assert item["request_id"] == "req-42"
+    assert item["working_directory"] == "/projects/irz"
 
 
 def test_activity_lifecycle_records_running_then_terminal_state():
@@ -213,7 +285,28 @@ def test_snapshot_write_failure_does_not_break_activity(monkeypatch, tmp_path, c
     monkeypatch.setattr(Path, "write_text", fail_write)
 
     activity_id = store.start_activity(tool="skills_search", purpose="Search skills")
+    assert store.flush_snapshot()
 
     assert activity_id.startswith("activity_")
     assert store.snapshot()["calls"][0]["tool"] == "skills_search"
     assert "snapshot" in caplog.text.lower()
+    store.close()
+
+
+def test_snapshot_updates_are_coalesced_off_the_update_path(monkeypatch, tmp_path):
+    store = RealtimeCallStore(snapshot_path=tmp_path / "realtime_calls.json")
+    writes = []
+
+    def record_write():
+        writes.append(time.monotonic())
+
+    monkeypatch.setattr(store, "_write_snapshot", record_write)
+    started = time.monotonic()
+    for index in range(10):
+        store.update(call(str(index), "success", datetime.now(UTC).isoformat()))
+    elapsed = time.monotonic() - started
+
+    assert elapsed < 0.05
+    assert store.flush_snapshot()
+    assert len(writes) == 1
+    store.close()

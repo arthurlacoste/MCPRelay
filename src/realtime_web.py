@@ -10,9 +10,11 @@ from fastapi import Form, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 
 from realtime_calls import RealtimeCallStore, read_call_log
+from request_body_limit import RequestBodyLimitMiddleware
 
 SESSION_COOKIE = "gate_rt_session"
 UI_DIR = Path(__file__).resolve().parent / "realtime_ui"
+MAX_LOGIN_BODY_BYTES = 4096
 
 
 def _token_from_request(request: Request) -> str | None:
@@ -28,8 +30,14 @@ def _authenticated(request: Request) -> bool:
         return False
     try:
         from lightweight_oauth import AUDIENCE, ISSUER, public_key
-        jwt.decode(token, public_key, algorithms=["RS256"], audience=AUDIENCE, issuer=ISSUER)
-        return True
+        claims = jwt.decode(
+            token,
+            public_key,
+            algorithms=["RS256"],
+            audience=AUDIENCE,
+            issuer=ISSUER,
+        )
+        return "rt" in str(claims.get("scope") or "").split()
     except (ImportError, jwt.InvalidTokenError, ValueError):
         return False
 
@@ -48,13 +56,19 @@ def _login_page(error: str = "") -> str:
     return f"""<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1"><title>Gate · Authorize</title>
 <style>*{{box-sizing:border-box}}body{{margin:0;min-height:100vh;display:grid;place-items:center;background:#fbfbfc;color:#17181b;font:14px/1.45 system-ui,sans-serif}}main{{width:min(390px,90vw);text-align:center}}.logo{{font-size:24px;font-weight:800}}.logo span{{padding:4px 6px;border-radius:3px;background:#17181b;color:#fff;font-size:10px;letter-spacing:.08em;vertical-align:middle}}p{{color:#737984}}form{{display:grid;gap:12px;margin-top:26px}}input,button{{padding:13px;border:1px solid #dfe2e8;border-radius:8px;font:inherit}}button{{background:#17181b;color:#fff;cursor:pointer}}.alert{{color:#b42318}}</style></head>
-<body><main><div class="logo">gate</div><h1>Authorize Gate</h1>
+<body><main><div class="logo">gate</div>
 <p>Authenticate to inspect Gate activity.</p>{alert}<form method="post" action="/rt/login">
 <input name="secret" type="password" autocomplete="current-password" placeholder="Access secret" required autofocus>
 <button>Open trajectory</button></form></main></body></html>"""
 
 
 def register_realtime_routes(app, store: RealtimeCallStore, logs_dir: Path) -> None:
+    app.add_middleware(
+        RequestBodyLimitMiddleware,
+        path="/rt/login",
+        max_bytes=MAX_LOGIN_BODY_BYTES,
+    )
+
     @app.get("/rt")
     def realtime_page(request: Request):
         if not _authenticated(request):
@@ -89,13 +103,22 @@ def register_realtime_routes(app, store: RealtimeCallStore, logs_dir: Path) -> N
     def realtime_calls(request: Request):
         if not _authenticated(request):
             return JSONResponse({"error": "unauthorized"}, status_code=401, headers={"WWW-Authenticate": "Bearer"})
-        return store.snapshot()
+        return store.summary_snapshot()
+
+    @app.get("/rt/api/calls/{execution_id}")
+    def realtime_call(execution_id: str, request: Request):
+        if not _authenticated(request):
+            return JSONResponse({"error": "unauthorized"}, status_code=401)
+        item = store.get_call(execution_id)
+        if item is None:
+            return JSONResponse({"error": "not_found"}, status_code=404)
+        return item
 
     @app.get("/rt/api/calls/{execution_id}/log")
     def realtime_log(execution_id: str, request: Request, offset: int = 0, limit: int = 262144):
         if not _authenticated(request):
             return JSONResponse({"error": "unauthorized"}, status_code=401)
-        item = next((call for call in store.snapshot()["calls"] if call["execution_id"] == execution_id), None)
+        item = store.get_call(execution_id)
         if not item or not item.get("log_ref"):
             return JSONResponse({"error": "not_found"}, status_code=404)
         return JSONResponse(read_call_log(logs_dir / Path(item["log_ref"]).name, offset, min(limit, 262144)))

@@ -208,6 +208,7 @@ def connection_detail_lines() -> list[str]:
     return [
         f"Public MCP:      {public_url}/mcp",
         f"Public OAuth:    {public_url}/oauth",
+        f"Public realtime: {public_url}/rt",
         f"Local MCP:       http://127.0.0.1:{NGROK_PORT}/mcp",
         f"Local OAuth:     http://127.0.0.1:{NGROK_PORT}/oauth",
         f"OAuth health:    http://127.0.0.1:{NGROK_PORT}/oauth/health",

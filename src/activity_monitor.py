@@ -9,6 +9,40 @@ from realtime_calls import RealtimeCallStore, auto_conversation_id, session_ref
 
 
 CONVERSATION_STATE_KEY = "gate_conversation_id"
+COMMON_ARGUMENT_FIELDS = (
+    "query", "limit", "offset", "url", "path", "file_path", "cwd", "workdir", "execution_id",
+    "server_name", "tool_name", "conversation_id",
+)
+
+
+def _common_fields(arguments: dict[str, Any]) -> dict[str, Any]:
+    nested = arguments.get("arguments")
+    sources = (nested, arguments) if isinstance(nested, dict) else (arguments,)
+    fields = {}
+    for key in COMMON_ARGUMENT_FIELDS:
+        for source in sources:
+            if key in source:
+                fields[key] = source[key]
+                break
+    return fields
+
+
+def _working_directory(arguments: dict[str, Any]) -> str | None:
+    nested = arguments.get("arguments")
+    source = nested if isinstance(nested, dict) else arguments
+    value = source.get("cwd") or source.get("workdir")
+    return value if isinstance(value, str) and value.strip() else None
+
+
+def _raw_result(result) -> dict[str, Any] | Any:
+    raw: dict[str, Any] = {}
+    structured = getattr(result, "structured_content", None)
+    content = getattr(result, "content", None)
+    if structured is not None:
+        raw["structured_content"] = structured
+    if content is not None:
+        raw["content"] = content
+    return raw or result
 
 
 class GateActivityMiddleware(Middleware):
@@ -84,6 +118,9 @@ class GateActivityMiddleware(Middleware):
             purpose=f"Call {display_tool}",
             preview=parent_execution_id,
             parent_execution_id=parent_execution_id,
+            working_directory=_working_directory(arguments),
+            payload=arguments,
+            fields=_common_fields(arguments),
             **activity_context,
         )
         try:
@@ -106,7 +143,12 @@ class GateActivityMiddleware(Middleware):
                 await context.fastmcp_context.set_state(CONVERSATION_STATE_KEY, result_conversation_id)
             activity_context["conversation_id"] = result_conversation_id
 
-        self.store.finish_activity(activity_id, status="success", **activity_context)
+        self.store.finish_activity(
+            activity_id,
+            status="success",
+            result=_raw_result(result),
+            **activity_context,
+        )
         return result
 
     async def _record_non_tool(self, context: MiddlewareContext, call_next, *, tool: str, kind: str):

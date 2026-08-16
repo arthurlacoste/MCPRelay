@@ -62,7 +62,11 @@ realtime_store = RealtimeCallStore(
     max_entries=max(1, int(os.getenv('GATE_REALTIME_MAX_ENTRIES', '200'))),
     snapshot_path=REALTIME_CALLS_FILE,
     redact_text=SECRET_REDACTOR.redact_text,
+    capture_raw_data=os.getenv('GATE_REALTIME_CAPTURE_RAW_DATA', 'true').lower() in {
+        '1', 'true', 'yes', 'on',
+    },
 )
+atexit.register(realtime_store.close)
 set_activity_observer(realtime_store)
 
 LOCAL_OAUTH_ISSUER = os.getenv(

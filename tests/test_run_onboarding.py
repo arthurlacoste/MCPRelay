@@ -317,6 +317,12 @@ def test_onboarding_persists_url_secret_and_hash():
     assert 'chmod 600 "$CONFIG_FILE"' in content
 
 
+def test_connection_details_include_public_realtime_url():
+    content = RUN_SCRIPT.read_text()
+
+    assert "printf 'Public realtime: %s/rt\\n' \"$public_url\"" in content
+
+
 def test_onboarding_reuses_complete_configuration():
     content = RUN_SCRIPT.read_text()
 
@@ -359,13 +365,13 @@ def test_ngrok_inspector_is_shown_for_running_modes():
     assert 'NGROK_INSPECT_URL = "http://127.0.0.1:4040"' in launcher
 
 
-def test_vision_banner_is_shown_at_script_start():
+def test_cli_starts_without_ascii_banner_or_screen_clear():
     content = RUN_SCRIPT.read_text()
 
-    assert "oooooo     oooo ooooo  .oooooo..o" in content
-    assert "formerly Gate, made with <3 by arthak" in content
-    assert "printf '\\033[2J\\033[H'" in content
-    assert content.index("clear_screen\nshow_banner\n\ncase") < content.index('case "${1:-}"')
+    assert "oooooo     oooo ooooo  .oooooo..o" not in content
+    assert "formerly Gate, made with <3 by arthak" not in content
+    assert "printf '\\033[2J\\033[H'" not in content
+    assert "show_banner" not in content
 
 
 def test_setup_repairs_missing_secret_without_touching_other_values(tmp_path):
