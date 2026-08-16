@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.26](https://github.com/spelcc/gate/compare/v0.1.25...v0.1.26) (2026-08-16)
+
+
+### Added
+
+* add discover-first MCP tool exposure ([#66](https://github.com/spelcc/gate/issues/66)) ([06ba0e3](https://github.com/spelcc/gate/commit/06ba0e3374ebc988b88a59d2398e164b93d8f53b))
+
 ## [0.1.25](https://github.com/spelcc/gate/compare/v0.1.24...v0.1.25) (2026-08-15)
 
 
