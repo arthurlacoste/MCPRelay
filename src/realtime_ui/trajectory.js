@@ -219,30 +219,45 @@ function timelineContentWidth(calls, viewportWidth) {
 }
 
 function timelineLayout(calls, ranges, viewportWidth, mode = 'duration') {
-  const contentWidth = timelineContentWidth(calls, Math.max(1, viewportWidth))
+  const layoutWidth = timelineContentWidth(calls, Math.max(1, viewportWidth))
   const domainStart = Math.min(...ranges.map(range => range.start))
   const domainEnd = Math.max(...ranges.map(range => range.end))
   const domain = Math.max(1, domainEnd - domainStart)
-  const occupiedUntil = [-Infinity, -Infinity, -Infinity]
-  const items = calls.map((call, index) => {
+  const visibleByLane = [[], [], []]
+  const items = []
+  calls.forEach((call, index) => {
     const callLane = lane(call)
     const range = ranges[index]
     const gap = call.kind === 'thinking' ? 2 : 1
     const sequential = mode === 'turns'
     const left = sequential
-      ? index / calls.length * contentWidth
-      : (range.start - domainStart) / domain * contentWidth
+      ? index / calls.length * layoutWidth
+      : (range.start - domainStart) / domain * layoutWidth
     const naturalWidth = sequential
-      ? contentWidth / calls.length
-      : range.duration / domain * contentWidth
+      ? layoutWidth / calls.length
+      : range.duration / domain * layoutWidth
     const renderedStart = left + gap
     const renderedWidth = Math.max(TIMELINE_MIN_SPAN_PX, naturalWidth - gap * 2)
-    const renderedEnd = renderedStart + renderedWidth
-    const visible = renderedStart >= occupiedUntil[callLane] + TIMELINE_SPAN_GAP_PX
-    if (visible) occupiedUntil[callLane] = renderedEnd
-    return { left: renderedStart, width: renderedWidth, visible }
+    const item = { left: renderedStart, width: renderedWidth, visible: true }
+    const visibleStack = visibleByLane[callLane]
+    while (visibleStack.length) {
+      const previousIndex = visibleStack.at(-1)
+      const previous = items[previousIndex]
+      if (renderedStart >= previous.left + previous.width + TIMELINE_SPAN_GAP_PX) break
+      const previousRange = ranges[previousIndex]
+      const onlyMarkerInflation = range.start >= previousRange.end
+      if (!onlyMarkerInflation || range.duration <= previousRange.duration) {
+        item.visible = false
+        break
+      }
+      previous.visible = false
+      visibleStack.pop()
+    }
+    if (item.visible) visibleStack.push(index)
+    items.push(item)
   })
-  return { contentWidth, domainStart, domain, items }
+  const contentWidth = Math.max(layoutWidth, ...items.map(item => item.left + item.width))
+  return { contentWidth, scaleWidth: layoutWidth, domainStart, domain, items }
 }
 
 function conversationModels() {
@@ -356,8 +371,8 @@ function renderTimeline() {
     const range = ranges[index]
     const item = layout.items[index]
     const boundaryLeft = state.mode === 'turns'
-      ? index / calls.length * layout.contentWidth
-      : (range.start - layout.domainStart) / layout.domain * layout.contentWidth
+      ? index / calls.length * layout.scaleWidth
+      : (range.start - layout.domainStart) / layout.domain * layout.scaleWidth
     const turn = turnKey(call)
     const boundary = turn !== previousTurn && index > 0
       ? `<i class="turn-boundary" style="left:${boundaryLeft}px"></i>` : ''

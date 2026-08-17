@@ -88,10 +88,10 @@ def test_realtime_assets_are_authenticated(tmp_path, monkeypatch):
     assert "function timelineContentWidth(calls, viewportWidth)" in script.text
     assert "function timelineLayout(calls, ranges, viewportWidth, mode = 'duration')" in script.text
     assert "TIMELINE_MIN_SPAN_PX = 8" in script.text
-    assert "const occupiedUntil = [-Infinity, -Infinity, -Infinity]" in script.text
+    assert "const visibleByLane = [[], [], []]" in script.text
     assert "const viewportWidth = Math.max(1, track.clientWidth)" in script.text
     assert "const renderedWidth = Math.max(TIMELINE_MIN_SPAN_PX" in script.text
-    assert "const visible = renderedStart >= occupiedUntil[callLane] + TIMELINE_SPAN_GAP_PX" in script.text
+    assert "const onlyMarkerInflation = range.start >= previousRange.end" in script.text
     assert "if (!item.visible) return boundary" in script.text
     assert 'style="left:${item.left}px;width:${item.width}px"' in script.text
     assert 'class="badge-icon"' in script.text
@@ -128,6 +128,7 @@ def test_realtime_assets_are_authenticated(tmp_path, monkeypatch):
     assert "--scrollbar-track: #17181c" in stylesheet.text
     assert ".row.error .badge { background: #3a1d20; color: #ff7379; }" in stylesheet.text
     assert ".track { position: relative; overflow-x: auto; overflow-y: hidden" in stylesheet.text
+    assert "scrollbar-width: thin" in stylesheet.text
     assert ".span { position: absolute; height: 9px; min-width: 8px" in stylesheet.text
 
 

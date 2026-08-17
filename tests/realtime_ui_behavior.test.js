@@ -98,6 +98,33 @@ const turnLayout = timelineLayout(levelCalls, levelRanges, 20, 'turns')
 assert.equal(turnLayout.contentWidth, 30)
 assert.equal(turnLayout.items.every(item => item.width >= 8), true)
 
+const adjacentCalls = [
+  call('read', 'first', 0, 50, { kind: 'thinking' }),
+  call('read', 'tiny-a', 51, 52, { kind: 'thinking' }),
+  call('read', 'tiny-b', 53, 54, { kind: 'thinking' }),
+  call('read', 'prominent-later', 60, 200, { kind: 'thinking' }),
+]
+const adjacentRanges = adjacentCalls.map(item => ({
+  start: Date.parse(item.started_at), end: Date.parse(item.finished_at), duration: item.duration_ms,
+}))
+const adjacentLayout = timelineLayout(adjacentCalls, adjacentRanges, 200, 'duration')
+assert.equal(adjacentLayout.items.at(-1).visible, true)
+
+const unevenTurnCalls = [
+  call('read', 'input-a', 0, 1, { kind: 'http' }),
+  call('read', 'tool-a', 1, 2),
+  call('read', 'tool-b', 2, 3),
+  call('read', 'tool-c', 3, 4),
+  call('read', 'input-b', 4, 5, { kind: 'http' }),
+]
+const unevenTurnRanges = unevenTurnCalls.map(item => ({
+  start: Date.parse(item.started_at), end: Date.parse(item.finished_at), duration: item.duration_ms,
+}))
+const unevenTurnLayout = timelineLayout(unevenTurnCalls, unevenTurnRanges, 20, 'turns')
+assert.equal(unevenTurnLayout.scaleWidth, 30)
+assert.equal(unevenTurnLayout.contentWidth > unevenTurnLayout.scaleWidth, true)
+assert.equal(Math.max(...unevenTurnLayout.items.map(item => item.left + item.width)) <= unevenTurnLayout.contentWidth, true)
+
 const classList = values => {
   const classes = new Set(values)
   return {
