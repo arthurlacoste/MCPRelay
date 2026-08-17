@@ -112,13 +112,35 @@ def b64url_int(value: int) -> str:
     return base64.urlsafe_b64encode(raw).rstrip(b"=").decode()
 
 
-def oauth_metadata() -> dict:
+def issuer_for_host(host: str | None) -> str:
+    """Derive the OAuth issuer from the Host header of an incoming request.
+
+    The gateway runs behind arbitrary tunnels (ngrok, Tailscale, Cloudflare),
+    so a hardcoded issuer becomes stale the moment the public host changes.
+    Deriving it per request keeps discovery, registration, and the token
+    ``iss`` claim consistent with whatever host the client actually reached.
+    """
+    if not host:
+        return ISSUER
+    host = host.strip().lower().rstrip(".")
+    return f"https://{host}/oauth"
+
+
+def public_key_pem() -> str:
+    return public_key.public_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PublicFormat.SubjectPublicKeyInfo,
+    ).decode()
+
+
+def oauth_metadata(issuer: str | None = None) -> dict:
+    issuer = issuer or ISSUER
     return {
-        "issuer": ISSUER,
-        "authorization_endpoint": f"{ISSUER}/authorize",
-        "token_endpoint": f"{ISSUER}/token",
-        "registration_endpoint": f"{ISSUER}/register",
-        "jwks_uri": f"{ISSUER}/jwks.json",
+        "issuer": issuer,
+        "authorization_endpoint": f"{issuer}/authorize",
+        "token_endpoint": f"{issuer}/token",
+        "registration_endpoint": f"{issuer}/register",
+        "jwks_uri": f"{issuer}/jwks.json",
         "response_types_supported": ["code"],
         "grant_types_supported": ["authorization_code"],
         "token_endpoint_auth_methods_supported": ["none", "client_secret_post"],
@@ -138,8 +160,23 @@ def oauth_metadata() -> dict:
 @app.get("/oauth/.well-known/openid-configuration")
 @app.get("/.well-known/oauth-authorization-server")
 @app.get("/.well-known/openid-configuration")
-def metadata():
-    return oauth_metadata()
+def metadata(request: Request):
+    return oauth_metadata(issuer_for_host(request.headers.get("host")))
+
+
+@app.get("/.well-known/oauth-protected-resource")
+def protected_resource(request: Request):
+    host = request.headers.get("host")
+    issuer = issuer_for_host(host)
+    resource_base = (
+        f"https://{host.strip().lower().rstrip('.')}"
+        if host
+        else ISSUER.removesuffix("/oauth")
+    )
+    return {
+        "resource": f"{resource_base}/mcp",
+        "authorization_servers": [issuer],
+    }
 
 
 @app.post("/oauth/register")
@@ -278,6 +315,7 @@ def complete_authorization(
 
 @app.post("/oauth/token")
 def token(
+    request: Request,
     grant_type: str = Form(...),
     code: str = Form(...),
     redirect_uri: str = Form(...),
@@ -312,10 +350,11 @@ def token(
         return JSONResponse({"error": "invalid_grant", "error_description": "code expired"}, status_code=400)
 
     now = int(time.time())
+    issuer = issuer_for_host(request.headers.get("host"))
 
     access_token = jwt.encode(
         {
-            "iss": ISSUER,
+            "iss": issuer,
             "sub": "local-user",
             "aud": item["audience"],
             "iat": now,
@@ -329,7 +368,7 @@ def token(
 
     id_token = jwt.encode(
         {
-            "iss": ISSUER,
+            "iss": issuer,
             "sub": "local-user",
             "aud": client_id,
             "iat": now,
