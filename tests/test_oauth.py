@@ -122,6 +122,13 @@ class TestHostRelativeIssuer:
         )
         assert access["iss"] == "https://mj-1.taildc7e9e.ts.net/oauth"
 
+        # Decode and verify the id_token issuer
+        id_token = jwt.decode(
+            resp.json()["id_token"],
+            options={"verify_signature": False},
+        )
+        assert id_token["iss"] == "https://mj-1.taildc7e9e.ts.net/oauth"
+
     def test_verifier_accepts_host_relative_token(self, temp_data_dir):
         """The MCP JWTVerifier validates host-derived tokens (signature from our
         own public key, audience match) without a fixed issuer."""
