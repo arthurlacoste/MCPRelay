@@ -166,10 +166,15 @@ def metadata(request: Request):
 
 @app.get("/.well-known/oauth-protected-resource")
 def protected_resource(request: Request):
-    host = request.headers.get("host") or ""
+    host = request.headers.get("host")
     issuer = issuer_for_host(host)
+    resource_base = (
+        f"https://{host.strip().lower().rstrip('.')}"
+        if host
+        else ISSUER.removesuffix("/oauth")
+    )
     return {
-        "resource": f"https://{host}/mcp",
+        "resource": f"{resource_base}/mcp",
         "authorization_servers": [issuer],
     }
 

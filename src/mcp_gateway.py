@@ -25,7 +25,12 @@ from command_queue import CommandQueue
 from blocking_command_runner import BlockingCommandRunner
 from command_guard import GuardService, SecretRedactor, current_guard_request
 from environment_config import gateway_paths, load_gateway_environment
-from lightweight_oauth import app as oauth_app, set_activity_observer, public_key_pem
+from lightweight_oauth import (
+    ISSUER as OAUTH_ISSUER_FALLBACK,
+    app as oauth_app,
+    public_key_pem,
+    set_activity_observer,
+)
 from terminal_app import TERMINAL_APP_HTML, TERMINAL_APP_URI
 from realtime_web import register_realtime_routes
 from tool_registry import configurable_tool, tool_exposure_mode
@@ -35,10 +40,12 @@ from gate_tool_catalog import GateToolCatalog
 from runtime_features import RuntimeFeatures, runtime_mode_summary
 from realtime_calls import RealtimeCallStore
 from activity_monitor import GateActivityMiddleware
+from oauth_resource_metadata import HostRelativeOAuthMetadataMiddleware
 from skill_catalog import skills_read as read_skill, skills_search as search_skills
 from skill_writer import create_skill, install_builtin_skills
 from tool_metadata import tool_metadata
 from pydantic import AnyHttpUrl
+from starlette.middleware import Middleware
 from starlette.routing import Mount
 
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -70,11 +77,6 @@ realtime_store = RealtimeCallStore(
 atexit.register(realtime_store.close)
 set_activity_observer(realtime_store)
 
-LOCAL_OAUTH_ISSUER = os.getenv(
-    'LOCAL_OAUTH_ISSUER',
-    'https://hull-envision-bunkbed.ngrok-free.dev/oauth'
-)
-
 MCP_BASE_URL = os.getenv(
     'MCP_BASE_URL',
     'https://hull-envision-bunkbed.ngrok-free.dev'
@@ -86,6 +88,17 @@ MCP_AUDIENCE = os.getenv(
 )
 
 ENABLE_OAUTH = os.getenv('ENABLE_OAUTH', 'true').lower() == 'true'
+GATEWAY_HTTP_MIDDLEWARE = (
+    [
+        Middleware(
+            HostRelativeOAuthMetadataMiddleware,
+            fallback_base_url=MCP_BASE_URL,
+            fallback_issuer=OAUTH_ISSUER_FALLBACK,
+        )
+    ]
+    if ENABLE_OAUTH
+    else []
+)
 CHATGPT_STARTUP_BROWSER_ASSIST = os.getenv(
     'CHATGPT_STARTUP_BROWSER_ASSIST',
     'false',
@@ -267,12 +280,12 @@ if ENABLE_OAUTH:
 
     mcp_kwargs['auth'] = RemoteAuthProvider(
         token_verifier=token_verifier,
-        authorization_servers=[AnyHttpUrl(LOCAL_OAUTH_ISSUER)],
+        authorization_servers=[AnyHttpUrl(OAUTH_ISSUER_FALLBACK)],
         base_url=MCP_BASE_URL,
     )
 
     log_action('oauth_enabled', {
-        'issuer': LOCAL_OAUTH_ISSUER,
+        'issuer': OAUTH_ISSUER_FALLBACK,
         'audience': MCP_AUDIENCE,
         'base_url': MCP_BASE_URL,
     })
@@ -505,7 +518,7 @@ def auth_status(conversation_id: str | None = None, chatgpt_url: str | None = No
     ensure_conversation_started(conversation_id, chatgpt_url, source_tool='auth_status')
     return {
         'oauth_enabled': ENABLE_OAUTH,
-        'issuer': LOCAL_OAUTH_ISSUER,
+        'issuer': OAUTH_ISSUER_FALLBACK,
         'audience': MCP_AUDIENCE,
         'base_url': MCP_BASE_URL,
     }
@@ -1076,5 +1089,6 @@ if __name__ == '__main__':
         transport='http',
         host='0.0.0.0',
         port=8761,
-        path='/mcp'
+        path='/mcp',
+        middleware=GATEWAY_HTTP_MIDDLEWARE,
     )
