@@ -85,13 +85,15 @@ def test_realtime_assets_are_authenticated(tmp_path, monkeypatch):
     assert "class=\"conversation-activity\"" in script.text
     assert "call.working_directory" in script.text
     assert "let coveredUntil = timing(coveredBy).end" in script.text
-    assert "function allocateDurationLevels(calls, ranges, timelineWidth)" in script.text
-    assert "const occupiedUntil = [[], [], []]" in script.text
-    assert "const timelineWidth = Math.max(1, host.clientWidth)" in script.text
-    assert "const renderedWidth = Math.max(1" in script.text
-    assert "occupiedUntil[callLane].findIndex(end => end <= renderedStart)" in script.text
-    assert "call.kind === 'thinking' ? 2 : 1" in script.text
-    assert "width:max(1px" in script.text
+    assert "function timelineContentWidth(calls, viewportWidth)" in script.text
+    assert "function timelineLayout(calls, ranges, viewportWidth, mode = 'duration')" in script.text
+    assert "TIMELINE_MIN_SPAN_PX = 8" in script.text
+    assert "const occupiedUntil = [-Infinity, -Infinity, -Infinity]" in script.text
+    assert "const viewportWidth = Math.max(1, track.clientWidth)" in script.text
+    assert "const renderedWidth = Math.max(TIMELINE_MIN_SPAN_PX" in script.text
+    assert "const visible = renderedStart >= occupiedUntil[callLane] + TIMELINE_SPAN_GAP_PX" in script.text
+    assert "if (!item.visible) return boundary" in script.text
+    assert 'style="left:${item.left}px;width:${item.width}px"' in script.text
     assert 'class="badge-icon"' in script.text
     assert '<span>${formatDuration(range.duration)}</span>' in script.text
     assert "pendingBottomScroll: true" in script.text
@@ -125,6 +127,8 @@ def test_realtime_assets_are_authenticated(tmp_path, monkeypatch):
     assert "scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-track)" in stylesheet.text
     assert "--scrollbar-track: #17181c" in stylesheet.text
     assert ".row.error .badge { background: #3a1d20; color: #ff7379; }" in stylesheet.text
+    assert ".track { position: relative; overflow-x: auto; overflow-y: hidden" in stylesheet.text
+    assert ".span { position: absolute; height: 9px; min-width: 8px" in stylesheet.text
 
 
 def test_realtime_ui_behavior_with_node():

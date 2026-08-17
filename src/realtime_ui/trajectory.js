@@ -2,6 +2,8 @@ const $ = selector => document.querySelector(selector)
 const THINKING_MIN_MS = 250
 const ACTIVITY_FADE_MS = 60000
 const BOTTOM_THRESHOLD_PX = 32
+const TIMELINE_MIN_SPAN_PX = 8
+const TIMELINE_SPAN_GAP_PX = 2
 const state = {
   calls: [], mode: 'duration', compact: false, showStates: false, showThinking: true,
   query: '', conversation: null, selected: null, tab: 'summary', pendingBottomScroll: true,
@@ -209,27 +211,38 @@ function visibleTimelineCalls() {
     .filter(matches)
 }
 
-function allocateDurationLevels(calls, ranges, timelineWidth) {
+function timelineContentWidth(calls, viewportWidth) {
+  const laneCounts = [0, 0, 0]
+  for (const call of calls) laneCounts[lane(call)] += 1
+  const densestLane = Math.max(1, ...laneCounts)
+  return Math.max(viewportWidth, densestLane * (TIMELINE_MIN_SPAN_PX + TIMELINE_SPAN_GAP_PX))
+}
+
+function timelineLayout(calls, ranges, viewportWidth, mode = 'duration') {
+  const contentWidth = timelineContentWidth(calls, Math.max(1, viewportWidth))
   const domainStart = Math.min(...ranges.map(range => range.start))
   const domainEnd = Math.max(...ranges.map(range => range.end))
   const domain = Math.max(1, domainEnd - domainStart)
-  const occupiedUntil = [[], [], []]
-  const levels = calls.map(() => 0)
-  const laneLevels = [1, 1, 1]
-  calls.forEach((call, index) => {
+  const occupiedUntil = [-Infinity, -Infinity, -Infinity]
+  const items = calls.map((call, index) => {
     const callLane = lane(call)
     const range = ranges[index]
     const gap = call.kind === 'thinking' ? 2 : 1
-    const renderedStart = (range.start - domainStart) / domain * timelineWidth + gap
-    const renderedWidth = Math.max(1, range.duration / domain * timelineWidth - gap * 2)
+    const sequential = mode === 'turns'
+    const left = sequential
+      ? index / calls.length * contentWidth
+      : (range.start - domainStart) / domain * contentWidth
+    const naturalWidth = sequential
+      ? contentWidth / calls.length
+      : range.duration / domain * contentWidth
+    const renderedStart = left + gap
+    const renderedWidth = Math.max(TIMELINE_MIN_SPAN_PX, naturalWidth - gap * 2)
     const renderedEnd = renderedStart + renderedWidth
-    let level = occupiedUntil[callLane].findIndex(end => end <= renderedStart)
-    if (level < 0) level = occupiedUntil[callLane].length
-    occupiedUntil[callLane][level] = renderedEnd
-    levels[index] = level
-    laneLevels[callLane] = Math.max(laneLevels[callLane], level + 1)
+    const visible = renderedStart >= occupiedUntil[callLane] + TIMELINE_SPAN_GAP_PX
+    if (visible) occupiedUntil[callLane] = renderedEnd
+    return { left: renderedStart, width: renderedWidth, visible }
   })
-  return { levels, laneLevels }
+  return { contentWidth, domainStart, domain, items }
 }
 
 function conversationModels() {
@@ -328,45 +341,34 @@ function focusMobileSearch() {
 function renderTimeline() {
   const calls = visibleTimelineCalls()
   const host = $('#spans')
-  const labels = document.querySelectorAll('.lane-labels span')
+  const track = $('#track')
   if (!calls.length) {
     host.innerHTML = ''
-    $('.timeline').style.height = '58px'
-    ;[9, 25, 41].forEach((top, index) => { labels[index].style.top = `${top}px` })
+    host.style.width = '100%'
     return
   }
   const ranges = calls.map(timing)
-  const domainStart = Math.min(...ranges.map(range => range.start))
-  const domainEnd = Math.max(...ranges.map(range => range.end))
-  const domain = Math.max(1, domainEnd - domainStart)
-  let levels = calls.map(() => 0)
-  let laneLevels = [1, 1, 1]
-  if (state.mode === 'duration') {
-    const timelineWidth = Math.max(1, host.clientWidth)
-    ;({ levels, laneLevels } = allocateDurationLevels(calls, ranges, timelineWidth))
-  }
-  const laneOffsets = [0, laneLevels[0] * 12 + 4, (laneLevels[0] + laneLevels[1]) * 12 + 8]
-  const contentHeight = laneLevels.reduce((sum, count) => sum + count * 12, 0) + 8
-  $('.timeline').style.height = `${Math.max(58, contentHeight + 16)}px`
-  host.style.height = `${contentHeight}px`
-  laneOffsets.forEach((top, index) => { labels[index].style.top = `${top + 9}px` })
+  const viewportWidth = Math.max(1, track.clientWidth)
+  const layout = timelineLayout(calls, ranges, viewportWidth, state.mode)
+  host.style.width = `${layout.contentWidth}px`
   let previousTurn = null
   host.innerHTML = calls.map((call, index) => {
     const range = ranges[index]
-    const sequential = state.mode === 'turns'
-    const left = sequential ? index / calls.length * 100 : (range.start - domainStart) / domain * 100
-    const width = sequential ? 1 / calls.length * 100 : range.duration / domain * 100
+    const item = layout.items[index]
+    const boundaryLeft = state.mode === 'turns'
+      ? index / calls.length * layout.contentWidth
+      : (range.start - layout.domainStart) / layout.domain * layout.contentWidth
     const turn = turnKey(call)
     const boundary = turn !== previousTurn && index > 0
-      ? `<i class="turn-boundary" style="left:${left}%"></i>` : ''
+      ? `<i class="turn-boundary" style="left:${boundaryLeft}px"></i>` : ''
     previousTurn = turn
+    if (!item.visible) return boundary
     const classes = [
       'span', isErrorStatus(call) ? 'error' : '',
       call.execution_id === state.selected ? 'selected' : '', matches(call) ? '' : 'filtered',
     ].filter(Boolean).join(' ')
-    const gap = call.kind === 'thinking' ? 2 : 1
     return `${boundary}<button class="${classes}" data-id="${escapeHtml(call.execution_id)}"
-      data-lane="${lane(call)}" style="top:${laneOffsets[lane(call)] + levels[index] * 12}px;left:calc(${left}% + ${gap}px);width:max(1px,calc(${width}% - ${gap * 2}px))"
+      data-lane="${lane(call)}" style="left:${item.left}px;width:${item.width}px"
       title="${escapeHtml(call.tool)} · ${formatDuration(range.duration)}"></button>`
   }).join('')
   host.querySelectorAll('.span').forEach(span => {
@@ -557,6 +559,7 @@ function selectCall(id) {
   state.selected = id
   renderAll()
   document.querySelector(`.row[data-id="${CSS.escape(id)}"]`)?.scrollIntoView({ block: 'nearest' })
+  document.querySelector(`.span[data-id="${CSS.escape(id)}"]`)?.scrollIntoView({ block: 'nearest', inline: 'nearest' })
 }
 
 function hasActiveTextSelection(selection = (
@@ -667,9 +670,9 @@ const timelineObserver = new ResizeObserver(entries => {
   const width = Math.round(entries[0]?.contentRect.width || 0)
   if (!width || width === observedTimelineWidth) return
   observedTimelineWidth = width
-  if (state.mode === 'duration') renderTimeline()
+  renderTimeline()
 })
-timelineObserver.observe($('#spans'))
+timelineObserver.observe($('#track'))
 window.addEventListener('pagehide', () => {
   timelineObserver.disconnect()
   drawerMedia.removeEventListener('change', handleDrawerBreakpointChange)
@@ -682,9 +685,10 @@ setInterval(() => { if (state.calls.some(call => ['running', 'starting'].include
 }
 
 if (typeof module !== 'undefined') module.exports = {
-  activityAgeMs, allocateDurationLevels, extendRunCommandsThroughStateCalls, focusMobileSearch, handleDrawerKeydown,
+  activityAgeMs, extendRunCommandsThroughStateCalls, focusMobileSearch, handleDrawerKeydown,
   latestEventPurpose, syncDocumentTitle,
   organizeLedgerCalls, resolveStateParent, runParentContext, syntheticThinking,
-  syncConversationDrawerA11y, timing, toggleConversationDrawer, hasActiveTextSelection,
+  syncConversationDrawerA11y, timelineContentWidth, timelineLayout, timing, toggleConversationDrawer,
+  hasActiveTextSelection,
 }
 if (typeof document !== 'undefined' && typeof process === 'undefined') initializeUI()
