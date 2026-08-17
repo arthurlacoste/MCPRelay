@@ -1,7 +1,6 @@
 const assert = require('node:assert/strict')
 const {
   activityAgeMs,
-  allocateDurationLevels,
   extendRunCommandsThroughStateCalls,
   focusMobileSearch,
   handleDrawerKeydown,
@@ -11,6 +10,8 @@ const {
   syncDocumentTitle,
   syntheticThinking,
   syncConversationDrawerA11y,
+  timelineContentWidth,
+  timelineLayout,
   toggleConversationDrawer,
 } = require('../src/realtime_ui/trajectory.js')
 
@@ -79,12 +80,50 @@ const thinking = syntheticThinking(single[0], call('skills_search', 'next', 8000
 assert.equal(thinking.started_at, at(5000))
 assert.equal(thinking.duration_ms, 3000)
 
-const levelCalls = [call('read', 'short', 0, 4), call('read', 'long', 4.1, 100)]
+const denseCalls = Array.from({ length: 40 }, (_, index) => call('read', `dense-${index}`, index * 10, index * 10 + 2))
+assert.equal(timelineContentWidth(denseCalls, 200), 400)
+
+const levelCalls = [
+  call('read', 'short', 0, 4, { kind: 'thinking' }),
+  call('read', 'overlap', 4.1, 8, { kind: 'thinking' }),
+  call('read', 'later', 90, 100, { kind: 'thinking' }),
+]
 const levelRanges = levelCalls.map(item => ({
   start: Date.parse(item.started_at), end: Date.parse(item.finished_at), duration: item.duration_ms,
 }))
-assert.deepEqual(allocateDurationLevels(levelCalls, levelRanges, 100).levels, [0, 0])
-assert.deepEqual(allocateDurationLevels(levelCalls, levelRanges, 10).levels, [0, 1])
+const durationLayout = timelineLayout(levelCalls, levelRanges, 100, 'duration')
+assert.equal(durationLayout.items[0].width >= 8, true)
+assert.deepEqual(durationLayout.items.map(item => item.visible), [true, false, true])
+const turnLayout = timelineLayout(levelCalls, levelRanges, 20, 'turns')
+assert.equal(turnLayout.contentWidth, 30)
+assert.equal(turnLayout.items.every(item => item.width >= 8), true)
+
+const adjacentCalls = [
+  call('read', 'first', 0, 50, { kind: 'thinking' }),
+  call('read', 'tiny-a', 51, 52, { kind: 'thinking' }),
+  call('read', 'tiny-b', 53, 54, { kind: 'thinking' }),
+  call('read', 'prominent-later', 60, 200, { kind: 'thinking' }),
+]
+const adjacentRanges = adjacentCalls.map(item => ({
+  start: Date.parse(item.started_at), end: Date.parse(item.finished_at), duration: item.duration_ms,
+}))
+const adjacentLayout = timelineLayout(adjacentCalls, adjacentRanges, 200, 'duration')
+assert.equal(adjacentLayout.items.at(-1).visible, true)
+
+const unevenTurnCalls = [
+  call('read', 'input-a', 0, 1, { kind: 'http' }),
+  call('read', 'tool-a', 1, 2),
+  call('read', 'tool-b', 2, 3),
+  call('read', 'tool-c', 3, 4),
+  call('read', 'input-b', 4, 5, { kind: 'http' }),
+]
+const unevenTurnRanges = unevenTurnCalls.map(item => ({
+  start: Date.parse(item.started_at), end: Date.parse(item.finished_at), duration: item.duration_ms,
+}))
+const unevenTurnLayout = timelineLayout(unevenTurnCalls, unevenTurnRanges, 20, 'turns')
+assert.equal(unevenTurnLayout.scaleWidth, 30)
+assert.equal(unevenTurnLayout.contentWidth > unevenTurnLayout.scaleWidth, true)
+assert.equal(Math.max(...unevenTurnLayout.items.map(item => item.left + item.width)) <= unevenTurnLayout.contentWidth, true)
 
 const classList = values => {
   const classes = new Set(values)

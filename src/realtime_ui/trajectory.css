@@ -51,9 +51,10 @@ button { color: inherit; }
 .lane-labels { position: relative; border-right: 1px solid var(--line-soft); color: var(--caption); font-size: 10px; }
 .lane-labels span { position: absolute; right: 5px; height: 8px; line-height: 8px; }
 .lane-labels span:nth-child(1) { top: 9px; }.lane-labels span:nth-child(2) { top: 25px; }.lane-labels span:nth-child(3) { top: 41px; }
-.track { position: relative; overflow: hidden; background: #fdfdfd; }
-#spans { position: absolute; top: 8px; right: 0; left: 0; }
-.span { position: absolute; height: 9px; min-width: 2px; border: 0; border-radius: 1px; opacity: .82; cursor: pointer; }
+.track { position: relative; overflow-x: auto; overflow-y: hidden; background: #fdfdfd; overscroll-behavior-x: contain; scrollbar-width: thin; }
+.track::-webkit-scrollbar { height: 6px; }
+#spans { position: relative; top: 8px; width: 100%; min-width: 100%; height: 41px; }
+.span { position: absolute; height: 9px; min-width: 8px; border: 0; border-radius: 1px; opacity: .82; cursor: pointer; }
 .span[data-lane="0"] { top: 0; background: var(--input); }
 .span[data-lane="1"] { top: 16px; background: var(--model); }
 .span[data-lane="2"] { top: 32px; background: var(--tool); }
