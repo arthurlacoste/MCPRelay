@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.1.34](https://github.com/spelcc/gate/compare/v0.1.33...v0.1.34) (2026-08-17)
+
+
+### Added
+
+* **connect:** warn when the Cloudflare login URL wraps in the terminal ([#93](https://github.com/spelcc/gate/issues/93)) ([0bfc4f8](https://github.com/spelcc/gate/commit/0bfc4f856674f790463bd850ae6846f4a1be6720))
+
+
+### Fixed
+
+* **oauth:** derive issuer from request host so tunnel URLs work ([#92](https://github.com/spelcc/gate/issues/92)) ([69befdd](https://github.com/spelcc/gate/commit/69befdd238c7f54b50d2f0cf458e5e3dec0e8a7c))
+
 ## [0.1.33](https://github.com/spelcc/gate/compare/v0.1.32...v0.1.33) (2026-08-16)
 
 
