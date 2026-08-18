@@ -25,6 +25,18 @@ def test_install_script_per_platform():
     assert "tailscale.com/install.sh" in connect.tailscale_install_script("linux")
 
 
+def test_daemon_start_commands_per_platform():
+    brew = lambda name: "/opt/homebrew/bin/brew" if name == "brew" else None
+    assert connect.tailscale_daemon_start_commands("darwin", which=brew) == [
+        ["sudo", "--preserve-env=HOME", "brew", "services", "start", "tailscale"],
+        ["open", "-a", "Tailscale"],
+    ]
+    assert connect.tailscale_daemon_start_commands("linux", which=lambda _: "/usr/bin/systemctl") == [
+        ["sudo", "systemctl", "start", "tailscaled"],
+    ]
+    assert connect.tailscale_daemon_start_commands("windows") == [["sc", "start", "Tailscale"]]
+
+
 # ── Status / login ──────────────────────────────────────────────────────────
 
 
@@ -36,6 +48,16 @@ def test_tailscale_status_parses_running_session():
 def test_tailscale_status_reports_failed_daemon():
     run = lambda *a, **k: completed(code=1, stderr="no state")
     assert "not authenticated" in connect.tailscale_status(run=run)["error"]
+
+
+def test_tailscale_status_detects_missing_daemon_socket():
+    run = lambda *a, **k: completed(
+        code=1,
+        stderr="dial unix /var/run/tailscaled.socket: connect: no such file or directory",
+    )
+    status = connect.tailscale_status(run=run)
+    assert status["daemon_unavailable"]
+    assert connect.tailscale_daemon_unavailable(status)
 
 
 def test_tailscale_status_handles_bad_json():
@@ -108,6 +130,35 @@ def test_funnel_summary_guides_admin_console_when_disabled():
 
 
 # ── End-to-end flow ─────────────────────────────────────────────────────────
+
+
+def test_ensure_tailscale_starts_missing_daemon():
+    calls = []
+    state = {"daemon_running": False}
+
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        if cmd[0] == "sudo":
+            state["daemon_running"] = True
+            return completed()
+        if cmd[1] == "status":
+            if state["daemon_running"]:
+                return completed(stdout=json.dumps({"BackendState": "Running"}))
+            return completed(code=1, stderr="dial unix /var/run/tailscaled.socket: no such file or directory")
+        if cmd[1] == "debug":
+            return completed(stdout=json.dumps({"OperatorUser": connect.current_user()}))
+        if cmd[1] == "funnel":
+            return completed(stdout='{"Funnel": {"On": true}}')
+        return completed()
+
+    ready, _ = connect.ensure_tailscale(
+        which=lambda _: "/usr/bin/tailscale",
+        platform="linux",
+        run=fake_run,
+        print_fn=lambda _: None,
+    )
+    assert ready
+    assert ["sudo", "systemctl", "start", "tailscaled"] in calls
 
 
 def test_ensure_tailscale_full_flow_install_login_operator(tmp_path):

@@ -349,6 +349,24 @@ def run_install(script: str, run=subprocess.run) -> int:
     return run(script, shell=True, check=False).returncode
 
 
+def tailscale_daemon_start_commands(system: str | None = None, which=shutil.which) -> list[list[str]]:
+    """Return platform-specific commands that can start the Tailscale daemon."""
+    system = system or platform_name()
+    if system == "darwin":
+        commands: list[list[str]] = []
+        # The Homebrew formula ships tailscaled as a root launchd service.
+        if which("brew"):
+            commands.append(["sudo", "--preserve-env=HOME", "brew", "services", "start", "tailscale"])
+        # The standalone and App Store variants start their daemon when the app opens.
+        commands.append(["open", "-a", "Tailscale"])
+        return commands
+    if system == "windows":
+        return [["sc", "start", "Tailscale"]]
+    if which("systemctl"):
+        return [["sudo", "systemctl", "start", "tailscaled"]]
+    return [["sudo", "service", "tailscaled", "start"]]
+
+
 def tailscale_status(run=subprocess.run, timeout: float = TAILSCALE_TIMEOUT_SECONDS) -> dict:
     """Return parsed `tailscale status --json`, or a dict describing the failure."""
     try:
@@ -360,15 +378,60 @@ def tailscale_status(run=subprocess.run, timeout: float = TAILSCALE_TIMEOUT_SECO
             timeout=timeout,
         )
     except subprocess.TimeoutExpired:
-        return {"error": "Tailscale status timed out. Check that the Tailscale daemon is running."}
+        return {
+            "error": "Tailscale status timed out. Check that the Tailscale daemon is running.",
+            "daemon_unavailable": True,
+        }
     if result.returncode != 0:
         detail = (result.stderr or result.stdout).strip() or f"exit code {result.returncode}"
-        return {"error": f"Tailscale is not authenticated or the daemon is not running ({detail})."}
+        lowered = detail.lower()
+        daemon_unavailable = any(
+            marker in lowered
+            for marker in (
+                "failed to connect to local tailscale daemon",
+                "tailscaled.socket",
+                "no such file or directory",
+                "daemon is not running",
+            )
+        )
+        return {
+            "error": f"Tailscale is not authenticated or the daemon is not running ({detail}).",
+            "daemon_unavailable": daemon_unavailable,
+        }
     try:
         payload = json.loads(result.stdout or "{}")
     except json.JSONDecodeError:
         return {"error": "Could not read Tailscale session status."}
     return payload
+
+
+def tailscale_daemon_unavailable(status: dict) -> bool:
+    """Return whether status indicates that the local daemon needs starting."""
+    if status.get("daemon_unavailable"):
+        return True
+    return status.get("BackendState") == "Stopped"
+
+
+def start_tailscale_daemon(
+    *,
+    system: str | None = None,
+    which=shutil.which,
+    run=subprocess.run,
+    print_fn: Callable[[str], None] = print,
+) -> bool:
+    """Start Tailscale and verify that its local API becomes reachable."""
+    for command in tailscale_daemon_start_commands(system, which=which):
+        print_fn(f"Tailscale daemon is not running; starting it with: {' '.join(command)}")
+        try:
+            result = run(command, check=False)
+        except OSError:
+            continue
+        if result.returncode != 0:
+            continue
+        status = tailscale_status(run=run)
+        if not tailscale_daemon_unavailable(status):
+            return True
+    return False
 
 
 def tailscale_logged_in(status: dict | None = None, run=subprocess.run) -> tuple[bool, str]:
@@ -496,6 +559,19 @@ def ensure_tailscale(
             return False, "Tailscale installation failed. Install it manually and retry."
 
     payload = tailscale_status(run=run)
+    if tailscale_daemon_unavailable(payload):
+        if not start_tailscale_daemon(
+            system=system,
+            which=which,
+            run=run,
+            print_fn=print_fn,
+        ):
+            return False, (
+                "Could not start the Tailscale daemon. "
+                f"{payload.get('error', 'Check the Tailscale installation and retry.')}"
+            )
+        payload = tailscale_status(run=run)
+
     logged_in, detail = tailscale_logged_in(payload, run=run)
     if not logged_in:
         if not _ask(f"Log in now?\n  {detail}\n\nRun 'sudo tailscale up' (opens a login URL)?", input_fn=input_fn):
