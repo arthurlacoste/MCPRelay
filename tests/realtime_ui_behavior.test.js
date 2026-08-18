@@ -2,6 +2,7 @@ const assert = require('node:assert/strict')
 const {
   activityAgeMs,
   adjacentSelectionId,
+  collapsedStateSelectionId,
   closeInspector,
   extendRunCommandsThroughStateCalls,
   focusMobileSearch,
@@ -14,7 +15,10 @@ const {
   isLeftSwipe,
   latestEventPurpose,
   latestToolCallId,
+  ledgerNavigationExcludedTarget,
   organizeLedgerCalls,
+  releaseLedgerSelectionAnchor,
+  shouldAutoScrollLedger,
   state,
   syncDocumentTitle,
   syntheticThinking,
@@ -75,6 +79,27 @@ assert.equal(adjacentSelectionId(rowIds, 'a', -1), 'a')
 assert.equal(adjacentSelectionId(rowIds, 'c', 1), 'c')
 assert.equal(adjacentSelectionId([], null, 1), null)
 
+assert.equal(shouldAutoScrollLedger(false, true, false), true)
+assert.equal(shouldAutoScrollLedger(false, false, true), true)
+assert.equal(shouldAutoScrollLedger(false, false, false), false)
+assert.equal(shouldAutoScrollLedger(true, true, true), false)
+
+const stateCollapseCalls = [
+  call('run_command', 'run-collapse', 0, 100),
+  call('get_command_state', 'state-collapse-a', 200, 210, { parent_execution_id: 'run-collapse' }),
+  call('get_command_state', 'state-collapse-b', 300, 310, { parent_execution_id: 'run-collapse' }),
+]
+assert.equal(collapsedStateSelectionId(stateCollapseCalls, 'state-collapse-a'), 'state-collapse-b')
+assert.equal(collapsedStateSelectionId(stateCollapseCalls, 'state-collapse-b'), 'state-collapse-b')
+assert.equal(collapsedStateSelectionId(stateCollapseCalls, 'run-collapse'), 'run-collapse')
+
+const excludedTarget = selector => ({ closest: query => query.includes(selector) ? {} : null })
+assert.equal(ledgerNavigationExcludedTarget(excludedTarget('.conversation-drawer')), true)
+assert.equal(ledgerNavigationExcludedTarget(excludedTarget('.toolbar')), true)
+assert.equal(ledgerNavigationExcludedTarget(excludedTarget('.detail-tabs')), true)
+assert.equal(ledgerNavigationExcludedTarget({ closest: () => null }), false)
+assert.equal(ledgerNavigationExcludedTarget(null), false)
+
 assert.equal(isLeftSwipe({ x: 180, y: 100 }, { x: 90, y: 105 }), true)
 assert.equal(isLeftSwipe({ x: 180, y: 100 }, { x: 130, y: 102 }), false)
 assert.equal(isLeftSwipe({ x: 180, y: 100 }, { x: 90, y: 190 }), false)
@@ -111,6 +136,14 @@ const typingNavigation = keyboardEvent('ArrowDown', { tagName: 'INPUT', isConten
 handleLedgerKeydown(typingNavigation, () => { throw new Error('typing must not navigate') })
 assert.equal(typingNavigation.prevented, false)
 
+const repeatedNavigation = keyboardEvent('ArrowDown')
+repeatedNavigation.repeat = true
+handleLedgerKeydown(repeatedNavigation, () => { throw new Error('repeat must not navigate') })
+assert.equal(repeatedNavigation.prevented, false)
+const toolbarNavigation = keyboardEvent('ArrowDown', excludedTarget('.toolbar'))
+handleLedgerKeydown(toolbarNavigation, () => { throw new Error('toolbar must not navigate') })
+assert.equal(toolbarNavigation.prevented, false)
+
 state.selected = 'kept-row'
 state.inspectorOpen = true
 let closeRendered = false
@@ -118,6 +151,10 @@ closeInspector(() => { closeRendered = true })
 assert.equal(state.inspectorOpen, false)
 assert.equal(state.selected, 'kept-row')
 assert.equal(closeRendered, true)
+
+state.ledgerSelectionAnchored = true
+releaseLedgerSelectionAnchor()
+assert.equal(state.ledgerSelectionAnchored, false)
 
 const interleaved = extendRunCommandsThroughStateCalls([
   call('run_command', 'run-a', 0, 100),
