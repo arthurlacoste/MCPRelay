@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.35](https://github.com/spelcc/gate/compare/v0.1.34...v0.1.35) (2026-08-18)
+
+
+### Documentation
+
+* simplify Gate setup in README ([#96](https://github.com/spelcc/gate/issues/96)) ([14f3064](https://github.com/spelcc/gate/commit/14f3064195ee6d4c43690b1cbd1cfcc255b9b3fc))
+
 ## [0.1.34](https://github.com/spelcc/gate/compare/v0.1.33...v0.1.34) (2026-08-17)
 
 
