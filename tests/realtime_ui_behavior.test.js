@@ -1,11 +1,14 @@
 const assert = require('node:assert/strict')
 const {
   activityAgeMs,
+  adjacentSelectionId,
   extendRunCommandsThroughStateCalls,
   focusMobileSearch,
   handleDrawerKeydown,
   hasActiveTextSelection,
+  isLeftSwipe,
   latestEventPurpose,
+  latestToolCallId,
   organizeLedgerCalls,
   syncDocumentTitle,
   syntheticThinking,
@@ -44,6 +47,32 @@ assert.equal(hasActiveTextSelection({ isCollapsed: false, toString: () => 'copy 
 assert.equal(hasActiveTextSelection({ isCollapsed: true, toString: () => 'copy me' }), false)
 assert.equal(hasActiveTextSelection({ isCollapsed: false, toString: () => '' }), false)
 assert.equal(hasActiveTextSelection(null), false)
+
+const navigationCalls = [
+  call('tool_old', 'tool-old', 1000, 1100, { conversation_id: 'turn-a' }),
+  call('get_command_state', 'state-newer', 2000, 2100, { conversation_id: 'turn-a' }),
+  call('prompt_render', 'prompt-newer', 3000, 3100, { conversation_id: 'turn-a', kind: 'prompt' }),
+  call('tool_latest', 'tool-latest', 4000, 4100, { conversation_id: 'turn-a' }),
+  call('tool_other', 'tool-other', 5000, 5100, { conversation_id: 'turn-b' }),
+]
+assert.equal(latestToolCallId(navigationCalls, 'turn-a'), 'tool-latest')
+assert.equal(latestToolCallId(navigationCalls, 'turn-b'), 'tool-other')
+assert.equal(latestToolCallId(navigationCalls), 'tool-other')
+assert.equal(latestToolCallId([], 'turn-a'), null)
+
+const rowIds = ['a', 'b', 'c']
+assert.equal(adjacentSelectionId(rowIds, null, 1), 'a')
+assert.equal(adjacentSelectionId(rowIds, null, -1), 'c')
+assert.equal(adjacentSelectionId(rowIds, 'b', 1), 'c')
+assert.equal(adjacentSelectionId(rowIds, 'b', -1), 'a')
+assert.equal(adjacentSelectionId(rowIds, 'a', -1), 'a')
+assert.equal(adjacentSelectionId(rowIds, 'c', 1), 'c')
+assert.equal(adjacentSelectionId([], null, 1), null)
+
+assert.equal(isLeftSwipe({ x: 180, y: 100 }, { x: 90, y: 105 }), true)
+assert.equal(isLeftSwipe({ x: 180, y: 100 }, { x: 130, y: 102 }), false)
+assert.equal(isLeftSwipe({ x: 180, y: 100 }, { x: 90, y: 190 }), false)
+assert.equal(isLeftSwipe({ x: 90, y: 100 }, { x: 180, y: 100 }), false)
 
 const interleaved = extendRunCommandsThroughStateCalls([
   call('run_command', 'run-a', 0, 100),

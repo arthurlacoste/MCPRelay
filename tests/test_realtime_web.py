@@ -101,6 +101,13 @@ def test_realtime_assets_are_authenticated(tmp_path, monkeypatch):
     assert "function updateScrollBottomButton()" in script.text
     assert "scrollTo({ top: $('#ledger').scrollHeight, behavior: 'smooth' })" in script.text
     assert "function toggleConversationDrawer()" in script.text
+    assert "function openConversation(key)" in script.text
+    assert "latestToolCallId(state.calls, key)" in script.text
+    assert "function handleLedgerKeydown(event)" in script.text
+    assert "document.addEventListener('keydown', handleLedgerKeydown)" in script.text
+    assert "function handleInspectorTouchEnd(event)" in script.text
+    assert "isLeftSwipe(inspectorTouchStart, end)" in script.text
+    assert "state.inspectorOpen = false" in script.text
     assert "function hasActiveTextSelection(" in script.text
     assert "function renderRealtimeUpdate()" in script.text
     assert "document.addEventListener('selectionchange', flushDeferredRealtimeUpdate)" in script.text

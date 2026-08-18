@@ -6,8 +6,8 @@ const TIMELINE_MIN_SPAN_PX = 8
 const TIMELINE_SPAN_GAP_PX = 2
 const state = {
   calls: [], mode: 'duration', compact: false, showStates: false, showThinking: true,
-  query: '', conversation: null, selected: null, tab: 'summary', pendingBottomScroll: true,
-  selectionRefreshPending: false,
+  query: '', conversation: null, selected: null, inspectorOpen: false, tab: 'summary', pendingBottomScroll: true,
+  selectionRefreshPending: false, preserveLedgerPosition: false,
 }
 const resultCache = new Map()
 const detailCache = new Map()
@@ -110,6 +110,28 @@ function isErrorStatus(call) {
 
 function isToolActivity(call) {
   return !isStateCall(call) && !['oauth', 'http', 'prompt', 'resource', 'thinking'].includes(call.kind)
+}
+
+function latestToolCallId(calls, conversation = null) {
+  const eligible = (calls || []).filter(call => (
+    isToolActivity(call) && (conversation === null || turnKey(call) === conversation)
+  ))
+  eligible.sort((left, right) => timing(left).start - timing(right).start)
+  return eligible.at(-1)?.execution_id || null
+}
+
+function adjacentSelectionId(ids, selected, direction) {
+  if (!ids.length) return null
+  const current = ids.indexOf(selected)
+  if (current === -1) return direction < 0 ? ids.at(-1) : ids[0]
+  return ids[Math.max(0, Math.min(ids.length - 1, current + direction))]
+}
+
+function isLeftSwipe(start, end, minimumDistance = 60) {
+  if (!start || !end) return false
+  const dx = end.x - start.x
+  const dy = end.y - start.y
+  return dx <= -minimumDistance && Math.abs(dx) > Math.abs(dy) * 1.25
 }
 
 function runParentContext(calls) {
@@ -307,13 +329,20 @@ function renderConversations() {
   ].join('')
   $('#conversations').querySelectorAll('.conversation').forEach(button => {
     button.addEventListener('click', () => {
-      state.conversation = button.dataset.key || null
-      state.selected = null
-      state.pendingBottomScroll = true
-      closeConversationDrawer()
-      renderAll()
+      openConversation(button.dataset.key || null)
     })
   })
+}
+
+function openConversation(key) {
+  state.conversation = key
+  state.selected = latestToolCallId(state.calls, key)
+  state.inspectorOpen = Boolean(state.selected)
+  state.pendingBottomScroll = !state.selected
+  state.preserveLedgerPosition = Boolean(state.selected)
+  closeConversationDrawer()
+  renderAll()
+  scrollSelectedIntoView()
 }
 
 function closeConversationDrawer() {
@@ -394,9 +423,7 @@ function renderTimeline() {
 function renderLedger() {
   const ledger = $('#ledger')
   const wasNearBottom = isLedgerNearBottom(ledger)
-  const ordered = projectedCalls()
-  const { calls: ledgerCalls, stateStacks } = organizeLedgerCalls(ordered, state.showStates)
-  const calls = ledgerCalls.filter(matches)
+  const { calls, stateStacks } = visibleLedgerModel()
   ledger.classList.toggle('compact', state.compact)
   if (!calls.length) {
     ledger.innerHTML = '<p class="empty">No calls yet.</p>'
@@ -431,11 +458,27 @@ function renderLedger() {
   ledger.querySelectorAll('.row, .state-stack').forEach(row => {
     row.addEventListener('click', () => selectCall(row.dataset.id))
   })
-  const shouldScrollToBottom = state.pendingBottomScroll || wasNearBottom
+  const shouldScrollToBottom = !state.preserveLedgerPosition && (state.pendingBottomScroll || wasNearBottom)
   state.pendingBottomScroll = false
+  state.preserveLedgerPosition = false
   requestAnimationFrame(() => {
     if (shouldScrollToBottom) ledger.scrollTop = ledger.scrollHeight
     updateScrollBottomButton()
+  })
+}
+
+function visibleLedgerModel() {
+  const ordered = projectedCalls()
+  const { calls: ledgerCalls, stateStacks } = organizeLedgerCalls(ordered, state.showStates)
+  return { calls: ledgerCalls.filter(matches), stateStacks }
+}
+
+function ledgerNavigationIds() {
+  const { calls, stateStacks } = visibleLedgerModel()
+  return calls.flatMap(call => {
+    const stacked = stateStacks.get(call.execution_id) || []
+    const lastState = stacked.at(-1)
+    return lastState ? [call.execution_id, lastState.execution_id] : [call.execution_id]
   })
 }
 
@@ -558,8 +601,8 @@ function renderDetail() {
   const summary = currentCall()
   const call = detailedCall(summary)
   const inspector = $('#inspector')
-  inspector.hidden = !call
-  if (!call) return
+  inspector.hidden = !call || !state.inspectorOpen
+  if (!call || !state.inspectorOpen) return
   $('#detail-kind').textContent = (call.kind || 'tool').toUpperCase()
   $('#detail-location').textContent = call.tool
   $('#detail-body').innerHTML = detailHtml(call)
@@ -570,11 +613,55 @@ function renderDetail() {
   else loadResult(call)
 }
 
-function selectCall(id) {
+function scrollSelectedIntoView() {
+  if (!state.selected) return
+  const escaped = CSS.escape(state.selected)
+  document.querySelector(`.row[data-id="${escaped}"], .state-stack[data-id="${escaped}"]`)?.scrollIntoView({ block: 'nearest' })
+  document.querySelector(`.span[data-id="${escaped}"]`)?.scrollIntoView({ block: 'nearest', inline: 'nearest' })
+}
+
+function selectCall(id, openInspector = true) {
   state.selected = id
+  if (openInspector) state.inspectorOpen = true
+  state.preserveLedgerPosition = true
   renderAll()
-  document.querySelector(`.row[data-id="${CSS.escape(id)}"]`)?.scrollIntoView({ block: 'nearest' })
-  document.querySelector(`.span[data-id="${CSS.escape(id)}"]`)?.scrollIntoView({ block: 'nearest', inline: 'nearest' })
+  scrollSelectedIntoView()
+}
+
+function closeInspector() {
+  state.inspectorOpen = false
+  renderDetail()
+}
+
+function typingTarget(target) {
+  return Boolean(target && (target.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName)))
+}
+
+function navigateLedgerSelection(direction) {
+  const id = adjacentSelectionId(ledgerNavigationIds(), state.selected, direction)
+  if (!id) return false
+  selectCall(id, state.inspectorOpen)
+  return true
+}
+
+function handleLedgerKeydown(event) {
+  if (!['ArrowUp', 'ArrowDown'].includes(event.key) || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return
+  if (typingTarget(event.target)) return
+  event.preventDefault()
+  navigateLedgerSelection(event.key === 'ArrowUp' ? -1 : 1)
+}
+
+let inspectorTouchStart = null
+function handleInspectorTouchStart(event) {
+  if (event.touches.length !== 1) { inspectorTouchStart = null; return }
+  inspectorTouchStart = { x: event.touches[0].clientX, y: event.touches[0].clientY }
+}
+
+function handleInspectorTouchEnd(event) {
+  const touch = event.changedTouches[0]
+  const end = touch ? { x: touch.clientX, y: touch.clientY } : null
+  if (isLeftSwipe(inspectorTouchStart, end)) closeInspector()
+  inspectorTouchStart = null
 }
 
 function hasActiveTextSelection(selection = (
@@ -624,7 +711,7 @@ async function load() {
     state.conversation = null
     state.pendingBottomScroll = true
   }
-  if (state.selected && !currentCall()) state.selected = null
+  if (state.selected && !currentCall()) { state.selected = null; state.inspectorOpen = false }
   renderRealtimeUpdate()
 }
 
@@ -651,27 +738,25 @@ $('#thinking-toggle').addEventListener('click', event => {
   state.showThinking = !state.showThinking
   event.currentTarget.classList.toggle('pressed', state.showThinking)
   event.currentTarget.setAttribute('aria-pressed', String(state.showThinking))
-  if (!state.showThinking && state.selected?.startsWith('thinking:')) state.selected = null
+  if (!state.showThinking && state.selected?.startsWith('thinking:')) { state.selected = null; state.inspectorOpen = false }
   renderAll()
 })
 $('#search').addEventListener('input', event => { state.query = event.currentTarget.value.trim().toLowerCase(); renderAll() })
 $('#ledger').addEventListener('scroll', updateScrollBottomButton, { passive: true })
 $('#scroll-bottom').addEventListener('click', goToLatestCalls)
 $('#refresh').addEventListener('click', load)
-$('#all-calls').addEventListener('click', () => {
-  state.conversation = null
-  state.selected = null
-  state.pendingBottomScroll = true
-  closeConversationDrawer()
-  renderAll()
-})
+$('#all-calls').addEventListener('click', () => openConversation(null))
 $('#mobile-buckets').addEventListener('click', toggleConversationDrawer)
 $('#close-conversations').addEventListener('click', closeConversationDrawer)
 $('#mobile-search').addEventListener('click', focusMobileSearch)
 $('.app').addEventListener('click', closeConversationDrawer)
 document.addEventListener('keydown', handleDrawerKeydown)
+document.addEventListener('keydown', handleLedgerKeydown)
 document.addEventListener('selectionchange', flushDeferredRealtimeUpdate)
-$('#close').addEventListener('click', () => { state.selected = null; renderAll() })
+$('#close').addEventListener('click', closeInspector)
+$('#inspector').addEventListener('touchstart', handleInspectorTouchStart, { passive: true })
+$('#inspector').addEventListener('touchend', handleInspectorTouchEnd, { passive: true })
+$('#inspector').addEventListener('touchcancel', () => { inspectorTouchStart = null }, { passive: true })
 document.querySelectorAll('.detail-tabs button').forEach(button => button.addEventListener('click', () => {
   state.tab = button.dataset.tab; renderDetail()
 }))
@@ -700,10 +785,9 @@ setInterval(() => { if (state.calls.some(call => ['running', 'starting'].include
 }
 
 if (typeof module !== 'undefined') module.exports = {
-  activityAgeMs, extendRunCommandsThroughStateCalls, focusMobileSearch, handleDrawerKeydown,
-  latestEventPurpose, syncDocumentTitle,
+  activityAgeMs, adjacentSelectionId, extendRunCommandsThroughStateCalls, focusMobileSearch, handleDrawerKeydown,
+  hasActiveTextSelection, isLeftSwipe, latestEventPurpose, latestToolCallId, syncDocumentTitle,
   organizeLedgerCalls, resolveStateParent, runParentContext, syntheticThinking,
   syncConversationDrawerA11y, timelineContentWidth, timelineLayout, timing, toggleConversationDrawer,
-  hasActiveTextSelection,
 }
 if (typeof document !== 'undefined' && typeof process === 'undefined') initializeUI()
