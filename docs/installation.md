@@ -119,7 +119,7 @@ gate connect ts
 .\run.ps1 -ConnectTs
 ```
 
-It installs the Tailscale CLI when missing (Homebrew on macOS, winget on Windows, the official installer elsewhere), starts the local Tailscale daemon when its API socket is unavailable, walks you through `tailscale up` when you are not logged in, and grants the non-root serve permission Gate needs (`sudo tailscale set --operator=$USER`). On macOS it tries the Homebrew service and then the Tailscale app; on Linux it starts `tailscaled` through systemd (or the service manager), and on Windows it starts the Tailscale service. When everything is ready it prints the launch command.
+It installs the Tailscale CLI when missing (Homebrew on macOS, winget on Windows, the official installer elsewhere), starts the local Tailscale daemon when its API socket is unavailable, walks you through `tailscale up` when you are not logged in, and grants the non-root serve permission Gate needs (`sudo tailscale set --operator=$USER`). A status timeout is reported without launching or restarting a daemon because it may already be running but temporarily unresponsive. On macOS it tries the Homebrew service and then the Tailscale app; the Homebrew command registers a persistent root launchd service that starts at boot. On Linux it starts `tailscaled` through systemd (or the service manager), and on Windows it starts the Tailscale service. When everything is ready it prints the launch command.
 
 Alternatively, set everything up by hand:
 

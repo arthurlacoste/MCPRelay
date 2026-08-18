@@ -38,6 +38,8 @@ FOREIGN_HOSTNAME_HINTS = (
 
 TAILSCALE_TIMEOUT_SECONDS = 10
 TAILSCALE_DAEMON_START_TIMEOUT_SECONDS = 10
+TAILSCALE_DAEMON_STATUS_TIMEOUT_SECONDS = 1
+TAILSCALE_DAEMON_START_COMMAND_TIMEOUT_SECONDS = 30
 TAILSCALE_DAEMON_RETRY_DELAY_SECONDS = 0.25
 FUNNEL_ADMIN_URL = "https://login.tailscale.com/admin/dns"
 
@@ -382,15 +384,15 @@ def tailscale_status(run=subprocess.run, timeout: float = TAILSCALE_TIMEOUT_SECO
         )
     except subprocess.TimeoutExpired:
         return {
-            "error": "Tailscale status timed out. Check that the Tailscale daemon is running.",
-            "daemon_unavailable": True,
+            "error": "Tailscale status timed out. Tailscale may be starting or unresponsive; retry shortly.",
+            "timed_out": True,
         }
     if result.returncode != 0:
         detail = (result.stderr or result.stdout).strip() or f"exit code {result.returncode}"
         lowered = detail.lower()
         daemon_unavailable = (
             "failed to connect to local tailscale daemon" in lowered
-            or "tailscaled.socket:" in lowered
+            or "tailscaled.sock" in lowered
         )
         return {
             "error": f"Tailscale is not authenticated or the daemon is not running ({detail}).",
@@ -421,16 +423,20 @@ def start_tailscale_daemon(
     for command in tailscale_daemon_start_commands(system, which=which):
         print_fn(f"Tailscale daemon is not running; starting it with: {' '.join(command)}")
         try:
-            result = run(command, check=False)
-        except OSError:
+            result = run(
+                command,
+                check=False,
+                timeout=TAILSCALE_DAEMON_START_COMMAND_TIMEOUT_SECONDS,
+            )
+        except (OSError, subprocess.TimeoutExpired):
             continue
         if result.returncode != 0:
             continue
 
         deadline = monotonic_fn() + TAILSCALE_DAEMON_START_TIMEOUT_SECONDS
         while True:
-            status = tailscale_status(run=run)
-            if not tailscale_daemon_unavailable(status):
+            status = tailscale_status(run=run, timeout=TAILSCALE_DAEMON_STATUS_TIMEOUT_SECONDS)
+            if not status.get("timed_out") and not tailscale_daemon_unavailable(status):
                 return True
             if monotonic_fn() >= deadline:
                 break
@@ -572,6 +578,8 @@ def ensure_tailscale(
             return False, "Tailscale installation failed. Install it manually and retry."
 
     payload = tailscale_status(run=run)
+    if payload.get("timed_out"):
+        return False, payload["error"]
     if tailscale_daemon_unavailable(payload):
         if not start_tailscale_daemon(
             system=system,

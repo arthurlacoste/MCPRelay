@@ -75,6 +75,16 @@ def test_tailscale_status_does_not_treat_generic_missing_file_as_daemon_failure(
     assert not connect.tailscale_daemon_unavailable(status)
 
 
+def test_tailscale_status_timeout_is_not_daemon_unavailable():
+    def hung_run(cmd, **kwargs):
+        raise subprocess.TimeoutExpired(cmd, kwargs.get("timeout", connect.TAILSCALE_TIMEOUT_SECONDS))
+
+    status = connect.tailscale_status(run=hung_run)
+    assert status["timed_out"]
+    assert not status.get("daemon_unavailable")
+    assert not connect.tailscale_daemon_unavailable(status)
+
+
 def test_stopped_backend_is_not_daemon_unavailable():
     assert not connect.tailscale_daemon_unavailable({"BackendState": "Stopped"})
 
@@ -215,6 +225,171 @@ def test_start_tailscale_daemon_polls_after_start():
         monotonic_fn=monotonic,
     )
     assert ["sc", "start", "Tailscale"] in calls
+
+
+def test_start_tailscale_daemon_skips_missing_start_binary():
+    def fake_run(cmd, **kwargs):
+        raise OSError(f"{cmd[0]} not found")
+
+    assert not connect.start_tailscale_daemon(
+        system="linux",
+        which=lambda _: "/usr/bin/systemctl",
+        run=fake_run,
+        print_fn=lambda _: None,
+    )
+
+
+def test_start_tailscale_daemon_skips_hung_start_command():
+    calls = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        if cmd[0] == "sudo" or cmd[0] == "sc":
+            raise subprocess.TimeoutExpired(cmd, kwargs.get("timeout"))
+        if cmd[0] == "tailscale":
+            return completed(stdout=json.dumps({"BackendState": "Running"}))
+        return completed()
+
+    assert connect.start_tailscale_daemon(
+        system="darwin",
+        which=lambda name: "/opt/homebrew/bin/brew" if name == "brew" else None,
+        run=fake_run,
+        print_fn=lambda _: None,
+    )
+    assert ["open", "-a", "Tailscale"] in calls
+
+
+def test_start_tailscale_daemon_macos_falls_back_to_app_when_brew_fails():
+    calls = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        if cmd[0] == "sudo":
+            return completed(code=1, stderr="Error: unknown command")
+        if cmd[0] == "tailscale":
+            return completed(stdout=json.dumps({"BackendState": "Running"}))
+        return completed()
+
+    assert connect.start_tailscale_daemon(
+        system="darwin",
+        which=lambda name: "/opt/homebrew/bin/brew" if name == "brew" else None,
+        run=fake_run,
+        print_fn=lambda _: None,
+    )
+    assert ["sudo", "--preserve-env=HOME", "brew", "services", "start", "tailscale"] in calls
+    assert ["open", "-a", "Tailscale"] in calls
+
+
+def test_start_tailscale_daemon_windows_sc_failure_never_polls():
+    calls = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        if cmd[0] == "sc":
+            return completed(code=1, stderr="The service is not responding")
+        return completed(stdout=json.dumps({"BackendState": "Running"}))
+
+    assert not connect.start_tailscale_daemon(
+        system="windows",
+        run=fake_run,
+        print_fn=lambda _: None,
+    )
+    assert ["sc", "start", "Tailscale"] in calls
+    assert not any(cmd[0] == "tailscale" for cmd in calls)
+
+
+def test_start_tailscale_daemon_polls_through_status_timeouts():
+    calls = []
+    now = [0.0]
+
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        if cmd[0] == "tailscale":
+            if sum(call[1] == "status" for call in calls) < 3:
+                raise subprocess.TimeoutExpired(cmd, kwargs.get("timeout"))
+            return completed(stdout=json.dumps({"BackendState": "Running"}))
+        return completed()
+
+    def monotonic():
+        value = now[0]
+        now[0] += 1
+        return value
+
+    assert connect.start_tailscale_daemon(
+        system="windows",
+        run=fake_run,
+        print_fn=lambda _: None,
+        sleep_fn=lambda _: None,
+        monotonic_fn=monotonic,
+    )
+    # Two hung status calls are retried (timeouts are not daemon failures).
+    assert sum(call[1] == "status" for call in calls if call[0] == "tailscale") == 3
+
+
+def test_start_tailscale_daemon_gives_up_after_deadline_when_status_hangs():
+    calls = []
+    now = [0.0]
+
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        if cmd[0] == "tailscale":
+            raise subprocess.TimeoutExpired(cmd, kwargs.get("timeout"))
+        return completed()
+
+    def monotonic():
+        value = now[0]
+        now[0] += 5
+        return value
+
+    assert not connect.start_tailscale_daemon(
+        system="windows",
+        run=fake_run,
+        print_fn=lambda _: None,
+        sleep_fn=lambda _: None,
+        monotonic_fn=monotonic,
+    )
+    # The 10s deadline governs; a hung 1s status call does not exhaust it.
+    assert sum(call[1] == "status" for call in calls if call[0] == "tailscale") == 2
+
+
+def test_ensure_tailscale_timeout_reports_without_starting_daemon():
+    calls = []
+
+    def hung_run(cmd, **kwargs):
+        calls.append(cmd)
+        raise subprocess.TimeoutExpired(cmd, kwargs.get("timeout", connect.TAILSCALE_TIMEOUT_SECONDS))
+
+    ready, message = connect.ensure_tailscale(
+        which=lambda _: "/usr/bin/tailscale",
+        platform="linux",
+        run=hung_run,
+        print_fn=lambda _: None,
+    )
+    assert not ready
+    assert "timed out" in message
+    assert not any("start" in cmd for cmd in calls)
+
+
+def test_ensure_tailscale_windows_sc_failure_explains_elevation():
+    calls = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        if cmd[0] == "sc":
+            return completed(code=1, stderr="Access is denied.")
+        if cmd[0] == "tailscale":
+            return completed(code=1, stderr="Failed to connect to local Tailscale daemon")
+        return completed()
+
+    ready, message = connect.ensure_tailscale(
+        which=lambda _: "/usr/bin/tailscale",
+        platform="windows",
+        run=fake_run,
+        print_fn=lambda _: None,
+    )
+    assert not ready
+    assert "Administrator" in message
+    assert "sc start Tailscale" in message
 
 
 def test_start_tailscale_daemon_reports_failure_after_retries():
