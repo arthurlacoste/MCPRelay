@@ -37,6 +37,14 @@ def test_daemon_start_commands_per_platform():
     assert connect.tailscale_daemon_start_commands("windows") == [["sc", "start", "Tailscale"]]
 
 
+def test_windows_daemon_failure_explains_elevation_requirement():
+    message = connect.tailscale_daemon_failure_message(
+        "windows", {"error": "Access is denied."}
+    )
+    assert "Administrator" in message
+    assert "sc start Tailscale" in message
+
+
 # ── Status / login ──────────────────────────────────────────────────────────
 
 
@@ -58,6 +66,17 @@ def test_tailscale_status_detects_missing_daemon_socket():
     status = connect.tailscale_status(run=run)
     assert status["daemon_unavailable"]
     assert connect.tailscale_daemon_unavailable(status)
+
+
+def test_tailscale_status_does_not_treat_generic_missing_file_as_daemon_failure():
+    run = lambda *a, **k: completed(code=1, stderr="state file: no such file or directory")
+    status = connect.tailscale_status(run=run)
+    assert not status["daemon_unavailable"]
+    assert not connect.tailscale_daemon_unavailable(status)
+
+
+def test_stopped_backend_is_not_daemon_unavailable():
+    assert not connect.tailscale_daemon_unavailable({"BackendState": "Stopped"})
 
 
 def test_tailscale_status_handles_bad_json():
@@ -130,6 +149,99 @@ def test_funnel_summary_guides_admin_console_when_disabled():
 
 
 # ── End-to-end flow ─────────────────────────────────────────────────────────
+
+
+def test_ensure_tailscale_stopped_backend_keeps_login_flow():
+    calls = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        if cmd[1] == "status":
+            return completed(stdout=json.dumps({"BackendState": "Stopped"}))
+        return completed()
+
+    ready, message = connect.ensure_tailscale(
+        which=lambda _: "/usr/bin/tailscale",
+        platform="linux",
+        input_fn=lambda _: "n",
+        run=fake_run,
+        print_fn=lambda _: None,
+    )
+    assert not ready
+    assert "Log in with" in message
+    assert ["sudo", "systemctl", "start", "tailscaled"] not in calls
+
+
+def test_start_tailscale_daemon_uses_macos_brew_service():
+    calls = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        if cmd[0] == "tailscale":
+            return completed(stdout=json.dumps({"BackendState": "Running"}))
+        return completed()
+
+    assert connect.start_tailscale_daemon(
+        system="darwin",
+        which=lambda name: "/opt/homebrew/bin/brew" if name == "brew" else None,
+        run=fake_run,
+        print_fn=lambda _: None,
+    )
+    assert ["sudo", "--preserve-env=HOME", "brew", "services", "start", "tailscale"] in calls
+
+
+def test_start_tailscale_daemon_polls_after_start():
+    calls = []
+    now = [0.0]
+
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        if cmd[0] == "tailscale":
+            if sum(call[1] == "status" for call in calls) < 2:
+                return completed(code=1, stderr="Failed to connect to local Tailscale daemon")
+            return completed(stdout=json.dumps({"BackendState": "Running"}))
+        return completed()
+
+    def monotonic():
+        value = now[0]
+        now[0] += 1
+        return value
+
+    assert connect.start_tailscale_daemon(
+        system="windows",
+        run=fake_run,
+        print_fn=lambda _: None,
+        sleep_fn=lambda _: None,
+        monotonic_fn=monotonic,
+    )
+    assert ["sc", "start", "Tailscale"] in calls
+
+
+def test_start_tailscale_daemon_reports_failure_after_retries():
+    calls = []
+    now = [0.0]
+
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        if cmd[0] == "tailscale":
+            return completed(code=1, stderr="Failed to connect to local Tailscale daemon")
+        return completed()
+
+    def monotonic():
+        value = now[0]
+        now[0] += 5
+        return value
+
+    assert not connect.start_tailscale_daemon(
+        system="linux",
+        which=lambda _: "/usr/bin/systemctl",
+        run=fake_run,
+        print_fn=lambda _: None,
+        sleep_fn=lambda _: None,
+        monotonic_fn=monotonic,
+    )
+    assert ["sudo", "systemctl", "start", "tailscaled"] in calls
+    assert sum(call[1] == "status" for call in calls if call[0] == "tailscale") == 2
 
 
 def test_ensure_tailscale_starts_missing_daemon():

@@ -16,6 +16,7 @@ import platform
 import shutil
 import subprocess
 import sys
+import time
 import urllib.request
 from pathlib import Path
 from typing import Callable
@@ -36,6 +37,8 @@ FOREIGN_HOSTNAME_HINTS = (
 )
 
 TAILSCALE_TIMEOUT_SECONDS = 10
+TAILSCALE_DAEMON_START_TIMEOUT_SECONDS = 10
+TAILSCALE_DAEMON_RETRY_DELAY_SECONDS = 0.25
 FUNNEL_ADMIN_URL = "https://login.tailscale.com/admin/dns"
 
 Run = Callable[..., subprocess.CompletedProcess[str]]
@@ -385,14 +388,9 @@ def tailscale_status(run=subprocess.run, timeout: float = TAILSCALE_TIMEOUT_SECO
     if result.returncode != 0:
         detail = (result.stderr or result.stdout).strip() or f"exit code {result.returncode}"
         lowered = detail.lower()
-        daemon_unavailable = any(
-            marker in lowered
-            for marker in (
-                "failed to connect to local tailscale daemon",
-                "tailscaled.socket",
-                "no such file or directory",
-                "daemon is not running",
-            )
+        daemon_unavailable = (
+            "failed to connect to local tailscale daemon" in lowered
+            or "tailscaled.socket:" in lowered
         )
         return {
             "error": f"Tailscale is not authenticated or the daemon is not running ({detail}).",
@@ -407,9 +405,7 @@ def tailscale_status(run=subprocess.run, timeout: float = TAILSCALE_TIMEOUT_SECO
 
 def tailscale_daemon_unavailable(status: dict) -> bool:
     """Return whether status indicates that the local daemon needs starting."""
-    if status.get("daemon_unavailable"):
-        return True
-    return status.get("BackendState") == "Stopped"
+    return bool(status.get("daemon_unavailable"))
 
 
 def start_tailscale_daemon(
@@ -418,8 +414,10 @@ def start_tailscale_daemon(
     which=shutil.which,
     run=subprocess.run,
     print_fn: Callable[[str], None] = print,
+    sleep_fn: Callable[[float], None] = time.sleep,
+    monotonic_fn: Callable[[], float] = time.monotonic,
 ) -> bool:
-    """Start Tailscale and verify that its local API becomes reachable."""
+    """Start Tailscale and poll until its local API becomes reachable."""
     for command in tailscale_daemon_start_commands(system, which=which):
         print_fn(f"Tailscale daemon is not running; starting it with: {' '.join(command)}")
         try:
@@ -428,10 +426,25 @@ def start_tailscale_daemon(
             continue
         if result.returncode != 0:
             continue
-        status = tailscale_status(run=run)
-        if not tailscale_daemon_unavailable(status):
-            return True
+
+        deadline = monotonic_fn() + TAILSCALE_DAEMON_START_TIMEOUT_SECONDS
+        while True:
+            status = tailscale_status(run=run)
+            if not tailscale_daemon_unavailable(status):
+                return True
+            if monotonic_fn() >= deadline:
+                break
+            sleep_fn(TAILSCALE_DAEMON_RETRY_DELAY_SECONDS)
     return False
+
+
+def tailscale_daemon_failure_message(system: str, status: dict) -> str:
+    """Explain how to recover when the platform service could not be started."""
+    message = "Could not start the Tailscale daemon."
+    if system == "windows":
+        message += " Run Gate from an Administrator shell or start the Tailscale service manually with 'sc start Tailscale'."
+    detail = status.get("error") or "Check the Tailscale installation and retry."
+    return f"{message} {detail}"
 
 
 def tailscale_logged_in(status: dict | None = None, run=subprocess.run) -> tuple[bool, str]:
@@ -566,10 +579,7 @@ def ensure_tailscale(
             run=run,
             print_fn=print_fn,
         ):
-            return False, (
-                "Could not start the Tailscale daemon. "
-                f"{payload.get('error', 'Check the Tailscale installation and retry.')}"
-            )
+            return False, tailscale_daemon_failure_message(system, payload)
         payload = tailscale_status(run=run)
 
     logged_in, detail = tailscale_logged_in(payload, run=run)
