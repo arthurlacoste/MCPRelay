@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.1.36](https://github.com/spelcc/gate/compare/v0.1.35...v0.1.36) (2026-08-18)
+
+
+### Added
+
+* **ui:** add realtime inspector navigation ([#100](https://github.com/spelcc/gate/issues/100)) ([19d8b54](https://github.com/spelcc/gate/commit/19d8b54ac34cdb06d02dd1b8c889a1c815166b04))
+
+
+### Fixed
+
+* **connect:** start Tailscale daemon when unavailable ([#101](https://github.com/spelcc/gate/issues/101)) ([07b73b8](https://github.com/spelcc/gate/commit/07b73b8d8e26fe30552f7a517ff1ac965367c074))
+* force Release Please tag creation ([#99](https://github.com/spelcc/gate/issues/99)) ([d8378c0](https://github.com/spelcc/gate/commit/d8378c03698f0cfe617ee5bf3f6bda85ed1cd78a))
+
 ## [0.1.35](https://github.com/spelcc/gate/compare/v0.1.34...v0.1.35) (2026-08-18)
 
 
