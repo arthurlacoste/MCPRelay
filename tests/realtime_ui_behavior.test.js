@@ -2,14 +2,20 @@ const assert = require('node:assert/strict')
 const {
   activityAgeMs,
   adjacentSelectionId,
+  closeInspector,
   extendRunCommandsThroughStateCalls,
   focusMobileSearch,
   handleDrawerKeydown,
+  handleInspectorTouchEnd,
+  handleInspectorTouchStart,
+  handleLedgerKeydown,
   hasActiveTextSelection,
+  inspectorTouchPoint,
   isLeftSwipe,
   latestEventPurpose,
   latestToolCallId,
   organizeLedgerCalls,
+  state,
   syncDocumentTitle,
   syntheticThinking,
   syncConversationDrawerA11y,
@@ -73,6 +79,45 @@ assert.equal(isLeftSwipe({ x: 180, y: 100 }, { x: 90, y: 105 }), true)
 assert.equal(isLeftSwipe({ x: 180, y: 100 }, { x: 130, y: 102 }), false)
 assert.equal(isLeftSwipe({ x: 180, y: 100 }, { x: 90, y: 190 }), false)
 assert.equal(isLeftSwipe({ x: 90, y: 100 }, { x: 180, y: 100 }), false)
+
+const tabTarget = { closest: selector => selector === '.detail-tabs' ? {} : null }
+const bodyTarget = { closest: () => null }
+const touchAt = (x, y) => ({ clientX: x, clientY: y })
+assert.equal(inspectorTouchPoint({ target: tabTarget, touches: [touchAt(180, 100)] }), null)
+assert.deepEqual(inspectorTouchPoint({ target: bodyTarget, touches: [touchAt(180, 100)] }), { x: 180, y: 100 })
+assert.equal(inspectorTouchPoint({ target: bodyTarget, touches: [] }), null)
+
+let inspectorCloseCount = 0
+handleInspectorTouchStart({ target: bodyTarget, touches: [touchAt(180, 100)] })
+handleInspectorTouchEnd({ changedTouches: [touchAt(90, 105)] }, () => { inspectorCloseCount += 1 })
+assert.equal(inspectorCloseCount, 1)
+handleInspectorTouchStart({ target: tabTarget, touches: [touchAt(180, 100)] })
+handleInspectorTouchEnd({ changedTouches: [touchAt(90, 105)] }, () => { inspectorCloseCount += 1 })
+assert.equal(inspectorCloseCount, 1)
+
+const keyboardEvent = (key, target = null) => ({
+  key, target, altKey: false, ctrlKey: false, metaKey: false, shiftKey: false, prevented: false,
+  preventDefault() { this.prevented = true },
+})
+let navigationDirection = 0
+const navigated = keyboardEvent('ArrowUp')
+handleLedgerKeydown(navigated, direction => { navigationDirection = direction; return true })
+assert.equal(navigationDirection, -1)
+assert.equal(navigated.prevented, true)
+const emptyNavigation = keyboardEvent('ArrowDown')
+handleLedgerKeydown(emptyNavigation, () => false)
+assert.equal(emptyNavigation.prevented, false)
+const typingNavigation = keyboardEvent('ArrowDown', { tagName: 'INPUT', isContentEditable: false })
+handleLedgerKeydown(typingNavigation, () => { throw new Error('typing must not navigate') })
+assert.equal(typingNavigation.prevented, false)
+
+state.selected = 'kept-row'
+state.inspectorOpen = true
+let closeRendered = false
+closeInspector(() => { closeRendered = true })
+assert.equal(state.inspectorOpen, false)
+assert.equal(state.selected, 'kept-row')
+assert.equal(closeRendered, true)
 
 const interleaved = extendRunCommandsThroughStateCalls([
   call('run_command', 'run-a', 0, 100),

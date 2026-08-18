@@ -103,10 +103,14 @@ def test_realtime_assets_are_authenticated(tmp_path, monkeypatch):
     assert "function toggleConversationDrawer()" in script.text
     assert "function openConversation(key)" in script.text
     assert "latestToolCallId(state.calls, key)" in script.text
-    assert "function handleLedgerKeydown(event)" in script.text
+    assert "function handleLedgerKeydown(event, navigate = navigateLedgerSelection)" in script.text
     assert "document.addEventListener('keydown', handleLedgerKeydown)" in script.text
-    assert "function handleInspectorTouchEnd(event)" in script.text
+    assert "function handleInspectorTouchEnd(event, close = closeInspector)" in script.text
     assert "isLeftSwipe(inspectorTouchStart, end)" in script.text
+    assert "event.target?.closest?.('.detail-tabs')" in script.text
+    assert "selectCall(id, state.inspectorOpen, false)" in script.text
+    assert "if (hasVisibleSelection) scrollSelectedIntoView()" in script.text
+    assert "state.pendingBottomScroll = false" in script.text
     assert "state.inspectorOpen = false" in script.text
     assert "function hasActiveTextSelection(" in script.text
     assert "function renderRealtimeUpdate()" in script.text
@@ -134,6 +138,7 @@ def test_realtime_assets_are_authenticated(tmp_path, monkeypatch):
     assert "scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-track)" in stylesheet.text
     assert "--scrollbar-track: #17181c" in stylesheet.text
     assert ".row.error .badge { background: #3a1d20; color: #ff7379; }" in stylesheet.text
+    assert ".row.selected, .state-stack.selected" in stylesheet.text
     assert ".track { position: relative; overflow-x: auto; overflow-y: hidden" in stylesheet.text
     assert "scrollbar-width: thin" in stylesheet.text
     assert ".span { position: absolute; height: 9px; min-width: 8px" in stylesheet.text

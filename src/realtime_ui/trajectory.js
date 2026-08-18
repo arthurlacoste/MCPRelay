@@ -7,7 +7,7 @@ const TIMELINE_SPAN_GAP_PX = 2
 const state = {
   calls: [], mode: 'duration', compact: false, showStates: false, showThinking: true,
   query: '', conversation: null, selected: null, inspectorOpen: false, tab: 'summary', pendingBottomScroll: true,
-  selectionRefreshPending: false, preserveLedgerPosition: false,
+  selectionRefreshPending: false,
 }
 const resultCache = new Map()
 const detailCache = new Map()
@@ -339,7 +339,6 @@ function openConversation(key) {
   state.selected = latestToolCallId(state.calls, key)
   state.inspectorOpen = Boolean(state.selected)
   state.pendingBottomScroll = !state.selected
-  state.preserveLedgerPosition = Boolean(state.selected)
   closeConversationDrawer()
   renderAll()
   scrollSelectedIntoView()
@@ -424,6 +423,12 @@ function renderLedger() {
   const ledger = $('#ledger')
   const wasNearBottom = isLedgerNearBottom(ledger)
   const { calls, stateStacks } = visibleLedgerModel()
+  const pendingBottomScroll = state.pendingBottomScroll
+  const hasVisibleSelection = calls.some(call => {
+    if (call.execution_id === state.selected) return true
+    return (stateStacks.get(call.execution_id) || []).at(-1)?.execution_id === state.selected
+  })
+  state.pendingBottomScroll = false
   ledger.classList.toggle('compact', state.compact)
   if (!calls.length) {
     ledger.innerHTML = '<p class="empty">No calls yet.</p>'
@@ -445,7 +450,7 @@ function renderLedger() {
     const lastState = stacked.at(-1)
     const stackDuration = lastState ? Math.max(0, timing(lastState).end - range.start) : 0
     const stackRow = stacked.length
-      ? `<div class="state-stack" data-id="${escapeHtml(lastState.execution_id)}">… ${stacked.length} state call${stacked.length > 1 ? 's' : ''} · ${formatDuration(stackDuration)}</div>` : ''
+      ? `<div class="state-stack ${lastState.execution_id === state.selected ? 'selected' : ''}" data-id="${escapeHtml(lastState.execution_id)}">… ${stacked.length} state call${stacked.length > 1 ? 's' : ''} · ${formatDuration(stackDuration)}</div>` : ''
     return `${turnLabel}<article class="${classes}" data-id="${escapeHtml(call.execution_id)}">
       <span class="badge"><svg class="badge-icon" viewBox="0 0 18 18" aria-hidden="true">${call.kind === 'thinking'
         ? '<path d="M9 2.5c.7 3.7 2 5 5.5 6.5-3.5 1.5-4.8 2.8-5.5 6.5C8.3 11.8 7 10.5 3.5 9 7 7.5 8.3 6.2 9 2.5Z"/>'
@@ -458,11 +463,10 @@ function renderLedger() {
   ledger.querySelectorAll('.row, .state-stack').forEach(row => {
     row.addEventListener('click', () => selectCall(row.dataset.id))
   })
-  const shouldScrollToBottom = !state.preserveLedgerPosition && (state.pendingBottomScroll || wasNearBottom)
-  state.pendingBottomScroll = false
-  state.preserveLedgerPosition = false
+  const shouldScrollToBottom = !hasVisibleSelection && (pendingBottomScroll || wasNearBottom)
   requestAnimationFrame(() => {
-    if (shouldScrollToBottom) ledger.scrollTop = ledger.scrollHeight
+    if (hasVisibleSelection) scrollSelectedIntoView()
+    else if (shouldScrollToBottom) ledger.scrollTop = ledger.scrollHeight
     updateScrollBottomButton()
   })
 }
@@ -620,17 +624,27 @@ function scrollSelectedIntoView() {
   document.querySelector(`.span[data-id="${escaped}"]`)?.scrollIntoView({ block: 'nearest', inline: 'nearest' })
 }
 
-function selectCall(id, openInspector = true) {
+function syncSelectedElements() {
+  document.querySelectorAll('.row.selected, .state-stack.selected, .span.selected').forEach(element => {
+    element.classList.remove('selected')
+  })
+  if (!state.selected) return
+  const escaped = CSS.escape(state.selected)
+  document.querySelector(`.row[data-id="${escaped}"], .state-stack[data-id="${escaped}"]`)?.classList.add('selected')
+  document.querySelector(`.span[data-id="${escaped}"]`)?.classList.add('selected')
+}
+
+function selectCall(id, openInspector = true, fullRender = true) {
   state.selected = id
   if (openInspector) state.inspectorOpen = true
-  state.preserveLedgerPosition = true
-  renderAll()
+  if (fullRender) renderAll()
+  else { syncSelectedElements(); renderDetail() }
   scrollSelectedIntoView()
 }
 
-function closeInspector() {
+function closeInspector(render = renderDetail) {
   state.inspectorOpen = false
-  renderDetail()
+  render()
 }
 
 function typingTarget(target) {
@@ -640,27 +654,30 @@ function typingTarget(target) {
 function navigateLedgerSelection(direction) {
   const id = adjacentSelectionId(ledgerNavigationIds(), state.selected, direction)
   if (!id) return false
-  selectCall(id, state.inspectorOpen)
+  selectCall(id, state.inspectorOpen, false)
   return true
 }
 
-function handleLedgerKeydown(event) {
+function handleLedgerKeydown(event, navigate = navigateLedgerSelection) {
   if (!['ArrowUp', 'ArrowDown'].includes(event.key) || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return
   if (typingTarget(event.target)) return
-  event.preventDefault()
-  navigateLedgerSelection(event.key === 'ArrowUp' ? -1 : 1)
+  if (navigate(event.key === 'ArrowUp' ? -1 : 1)) event.preventDefault()
+}
+
+function inspectorTouchPoint(event) {
+  if (event.target?.closest?.('.detail-tabs') || event.touches.length !== 1) return null
+  return { x: event.touches[0].clientX, y: event.touches[0].clientY }
 }
 
 let inspectorTouchStart = null
 function handleInspectorTouchStart(event) {
-  if (event.touches.length !== 1) { inspectorTouchStart = null; return }
-  inspectorTouchStart = { x: event.touches[0].clientX, y: event.touches[0].clientY }
+  inspectorTouchStart = inspectorTouchPoint(event)
 }
 
-function handleInspectorTouchEnd(event) {
+function handleInspectorTouchEnd(event, close = closeInspector) {
   const touch = event.changedTouches[0]
   const end = touch ? { x: touch.clientX, y: touch.clientY } : null
-  if (isLeftSwipe(inspectorTouchStart, end)) closeInspector()
+  if (isLeftSwipe(inspectorTouchStart, end)) close()
   inspectorTouchStart = null
 }
 
@@ -753,7 +770,7 @@ $('.app').addEventListener('click', closeConversationDrawer)
 document.addEventListener('keydown', handleDrawerKeydown)
 document.addEventListener('keydown', handleLedgerKeydown)
 document.addEventListener('selectionchange', flushDeferredRealtimeUpdate)
-$('#close').addEventListener('click', closeInspector)
+$('#close').addEventListener('click', () => closeInspector())
 $('#inspector').addEventListener('touchstart', handleInspectorTouchStart, { passive: true })
 $('#inspector').addEventListener('touchend', handleInspectorTouchEnd, { passive: true })
 $('#inspector').addEventListener('touchcancel', () => { inspectorTouchStart = null }, { passive: true })
@@ -786,8 +803,9 @@ setInterval(() => { if (state.calls.some(call => ['running', 'starting'].include
 
 if (typeof module !== 'undefined') module.exports = {
   activityAgeMs, adjacentSelectionId, extendRunCommandsThroughStateCalls, focusMobileSearch, handleDrawerKeydown,
-  hasActiveTextSelection, isLeftSwipe, latestEventPurpose, latestToolCallId, syncDocumentTitle,
+  closeInspector, handleInspectorTouchEnd, handleInspectorTouchStart, handleLedgerKeydown, hasActiveTextSelection, inspectorTouchPoint,
+  isLeftSwipe, latestEventPurpose, latestToolCallId, syncDocumentTitle,
   organizeLedgerCalls, resolveStateParent, runParentContext, syntheticThinking,
-  syncConversationDrawerA11y, timelineContentWidth, timelineLayout, timing, toggleConversationDrawer,
+  state, syncConversationDrawerA11y, timelineContentWidth, timelineLayout, timing, toggleConversationDrawer,
 }
 if (typeof document !== 'undefined' && typeof process === 'undefined') initializeUI()
