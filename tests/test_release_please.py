@@ -21,6 +21,7 @@ def test_release_please_updates_version_and_uses_gate_tags():
     assert config["include-component-in-tag"] is False
     assert config["bump-patch-for-minor-pre-major"] is True
     assert config["draft"] is True
+    assert config["force-tag-creation"] is True
     assert package["package-name"] == "gate"
     assert package["version-file"] == "VERSION"
     assert {section["type"] for section in package["changelog-sections"]} >= {
