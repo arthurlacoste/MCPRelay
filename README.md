@@ -22,7 +22,7 @@ Then:
 
    On first setup, choose how Gate is exposed publicly: **ngrok**, **Tailscale Funnel**, or **Cloudflare Tunnel**. Gate prints the public MCP URL when it starts.
 
-2. Open [ChatGPT settings](https://chatgpt.com/#settings/Personalization), enable **Developer mode** under **Apps → Advanced settings**, then [add Gate as a custom MCP app](docs/installation.md#12-add-the-mcp-dl-plugin) using the `/mcp` URL printed by Gate. As long as Gate is running, ChatGPT can call it from chats where the app is enabled.
+2. Open [ChatGPT settings](https://chatgpt.com/#settings/Personalization) and enable **Developer mode** under **Apps → Advanced settings**. Then [create a custom MCP app directly in ChatGPT](https://chatgpt.com/plugins#settings/Connectors?create-connector=true&redirectAfter=%2Fplugins) using the `/mcp` URL printed by Gate. See the [detailed setup guide](docs/installation.md#12-add-the-mcp-dl-plugin) if needed. As long as Gate is running, ChatGPT can call it from chats where the app is enabled.
 
 Public endpoints:
 
