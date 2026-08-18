@@ -12,11 +12,17 @@ Install Gate on macOS, Linux or WSL:
 curl -fsSL https://spel.cc/gate.sh | bash
 ```
 
-Then run:
+Then:
 
-```bash
-gate
-```
+1. Run Gate:
+
+   ```bash
+   gate
+   ```
+
+   On first setup, choose how Gate is exposed publicly: **ngrok**, **Tailscale Funnel**, or **Cloudflare Tunnel**. Gate prints the public MCP URL when it starts.
+
+2. Open [ChatGPT settings](https://chatgpt.com/#settings/Personalization) and enable **Developer mode** under **Apps → Advanced settings**. Then [create a custom MCP app directly in ChatGPT](https://chatgpt.com/plugins#settings/Connectors?create-connector=true&redirectAfter=%2Fplugins) using the `/mcp` URL printed by Gate. See the [detailed setup guide](docs/installation.md#12-add-the-mcp-dl-plugin) if needed. As long as Gate is running, ChatGPT can call it from chats where the app is enabled.
 
 Public endpoints:
 
@@ -32,37 +38,20 @@ See the **[installation and usage guide](docs/installation.md)**, if you want to
 
 ## 🛠️ Available MCP Tools
 
-Gate starts in **discover mode**. Only seven tools are exposed by default:
+Gate starts in **discover mode**. Only eight tools are exposed by default:
 
 | Tool | Description |
 | --- | --- |
 | `run_command` | Execute a local shell command |
 | `skills_search` | Search the local Agent Skills catalogue |
 | `skills_read` | Read a selected Agent Skill |
+| `skills_create` | Create a validated local Agent Skill package |
 | `mcp_servers_list` | List downstream MCP servers, or refresh their registry |
 | `mcp_tools_search` | Search tools across downstream MCP servers |
 | `mcp_tool_read` | Load the schema for one discovered MCP tool |
 | `mcp_tool_call` | Invoke one discovered MCP tool |
 
 Additional first-party tools and runtime-specific helpers may be available outside this default surface. See the [installation and usage guide](docs/installation.md#configure-the-gateway) for exposure modes and configuration.
-
-### 💻 Commands
-
-`run_command` stays directly exposed because it is Gate's primary local execution tool.
-
-### 🔐 Authentication (`full` mode)
-
-| Tool          | Description                              |
-| ------------- | ---------------------------------------- |
-| `auth_status` | OAuth status: issuer, audience, base_url |
-
-### 📁 File Sharing (`full` mode)
-
-| Tool                 | Description                   |
-| -------------------- | ----------------------------- |
-| `public_file_share`  | Share a file via a public URL |
-| `public_file_list`   | List active shares            |
-| `public_file_revoke` | Revoke a share                |
 
 ### 🔌 Configurable MCP subservers
 
@@ -74,7 +63,7 @@ Downstream tools from `config/mcp.json` remain connected and searchable. Use `mc
 
 ### 🧠 Agent Skills
 
-Gate can expose a trusted local catalogue of [Agent Skills](https://agentskills.io/) through `skills_search` and `skills_read`. Skills remain stored on your machine and can be discovered from ChatGPT without being bundled into the gateway or automatically injected into every conversation.
+Gate can expose a trusted local catalogue of [Agent Skills](https://agentskills.io/) through `skills_search`, `skills_read`, and `skills_create`. Skills remain stored on your machine and can be discovered from ChatGPT without being bundled into the gateway or automatically injected into every conversation.
 
 [See how to configure the Skills catalogue.](docs/installation.md#agent-skills-catalogue)
 
