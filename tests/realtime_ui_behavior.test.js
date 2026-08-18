@@ -1,12 +1,25 @@
 const assert = require('node:assert/strict')
 const {
   activityAgeMs,
+  adjacentSelectionId,
+  collapsedStateSelectionId,
+  closeInspector,
   extendRunCommandsThroughStateCalls,
   focusMobileSearch,
   handleDrawerKeydown,
+  handleInspectorTouchEnd,
+  handleInspectorTouchStart,
+  handleLedgerKeydown,
   hasActiveTextSelection,
+  inspectorTouchPoint,
+  isLeftSwipe,
   latestEventPurpose,
+  latestToolCallId,
+  ledgerNavigationExcludedTarget,
   organizeLedgerCalls,
+  releaseLedgerSelectionAnchor,
+  shouldAutoScrollLedger,
+  state,
   syncDocumentTitle,
   syntheticThinking,
   syncConversationDrawerA11y,
@@ -44,6 +57,104 @@ assert.equal(hasActiveTextSelection({ isCollapsed: false, toString: () => 'copy 
 assert.equal(hasActiveTextSelection({ isCollapsed: true, toString: () => 'copy me' }), false)
 assert.equal(hasActiveTextSelection({ isCollapsed: false, toString: () => '' }), false)
 assert.equal(hasActiveTextSelection(null), false)
+
+const navigationCalls = [
+  call('tool_old', 'tool-old', 1000, 1100, { conversation_id: 'turn-a' }),
+  call('get_command_state', 'state-newer', 2000, 2100, { conversation_id: 'turn-a' }),
+  call('prompt_render', 'prompt-newer', 3000, 3100, { conversation_id: 'turn-a', kind: 'prompt' }),
+  call('tool_latest', 'tool-latest', 4000, 4100, { conversation_id: 'turn-a' }),
+  call('tool_other', 'tool-other', 5000, 5100, { conversation_id: 'turn-b' }),
+]
+assert.equal(latestToolCallId(navigationCalls, 'turn-a'), 'tool-latest')
+assert.equal(latestToolCallId(navigationCalls, 'turn-b'), 'tool-other')
+assert.equal(latestToolCallId(navigationCalls), 'tool-other')
+assert.equal(latestToolCallId([], 'turn-a'), null)
+
+const rowIds = ['a', 'b', 'c']
+assert.equal(adjacentSelectionId(rowIds, null, 1), 'a')
+assert.equal(adjacentSelectionId(rowIds, null, -1), 'c')
+assert.equal(adjacentSelectionId(rowIds, 'b', 1), 'c')
+assert.equal(adjacentSelectionId(rowIds, 'b', -1), 'a')
+assert.equal(adjacentSelectionId(rowIds, 'a', -1), 'a')
+assert.equal(adjacentSelectionId(rowIds, 'c', 1), 'c')
+assert.equal(adjacentSelectionId([], null, 1), null)
+
+assert.equal(shouldAutoScrollLedger(false, true, false), true)
+assert.equal(shouldAutoScrollLedger(false, false, true), true)
+assert.equal(shouldAutoScrollLedger(false, false, false), false)
+assert.equal(shouldAutoScrollLedger(true, true, true), false)
+
+const stateCollapseCalls = [
+  call('run_command', 'run-collapse', 0, 100),
+  call('get_command_state', 'state-collapse-a', 200, 210, { parent_execution_id: 'run-collapse' }),
+  call('get_command_state', 'state-collapse-b', 300, 310, { parent_execution_id: 'run-collapse' }),
+]
+assert.equal(collapsedStateSelectionId(stateCollapseCalls, 'state-collapse-a'), 'state-collapse-b')
+assert.equal(collapsedStateSelectionId(stateCollapseCalls, 'state-collapse-b'), 'state-collapse-b')
+assert.equal(collapsedStateSelectionId(stateCollapseCalls, 'run-collapse'), 'run-collapse')
+
+const excludedTarget = selector => ({ closest: query => query.includes(selector) ? {} : null })
+assert.equal(ledgerNavigationExcludedTarget(excludedTarget('.conversation-drawer')), true)
+assert.equal(ledgerNavigationExcludedTarget(excludedTarget('.toolbar')), true)
+assert.equal(ledgerNavigationExcludedTarget(excludedTarget('.detail-tabs')), true)
+assert.equal(ledgerNavigationExcludedTarget({ closest: () => null }), false)
+assert.equal(ledgerNavigationExcludedTarget(null), false)
+
+assert.equal(isLeftSwipe({ x: 180, y: 100 }, { x: 90, y: 105 }), true)
+assert.equal(isLeftSwipe({ x: 180, y: 100 }, { x: 130, y: 102 }), false)
+assert.equal(isLeftSwipe({ x: 180, y: 100 }, { x: 90, y: 190 }), false)
+assert.equal(isLeftSwipe({ x: 90, y: 100 }, { x: 180, y: 100 }), false)
+
+const tabTarget = { closest: selector => selector === '.detail-tabs' ? {} : null }
+const bodyTarget = { closest: () => null }
+const touchAt = (x, y) => ({ clientX: x, clientY: y })
+assert.equal(inspectorTouchPoint({ target: tabTarget, touches: [touchAt(180, 100)] }), null)
+assert.deepEqual(inspectorTouchPoint({ target: bodyTarget, touches: [touchAt(180, 100)] }), { x: 180, y: 100 })
+assert.equal(inspectorTouchPoint({ target: bodyTarget, touches: [] }), null)
+
+let inspectorCloseCount = 0
+handleInspectorTouchStart({ target: bodyTarget, touches: [touchAt(180, 100)] })
+handleInspectorTouchEnd({ changedTouches: [touchAt(90, 105)] }, () => { inspectorCloseCount += 1 })
+assert.equal(inspectorCloseCount, 1)
+handleInspectorTouchStart({ target: tabTarget, touches: [touchAt(180, 100)] })
+handleInspectorTouchEnd({ changedTouches: [touchAt(90, 105)] }, () => { inspectorCloseCount += 1 })
+assert.equal(inspectorCloseCount, 1)
+
+const keyboardEvent = (key, target = null) => ({
+  key, target, altKey: false, ctrlKey: false, metaKey: false, shiftKey: false, prevented: false,
+  preventDefault() { this.prevented = true },
+})
+let navigationDirection = 0
+const navigated = keyboardEvent('ArrowUp')
+handleLedgerKeydown(navigated, direction => { navigationDirection = direction; return true })
+assert.equal(navigationDirection, -1)
+assert.equal(navigated.prevented, true)
+const emptyNavigation = keyboardEvent('ArrowDown')
+handleLedgerKeydown(emptyNavigation, () => false)
+assert.equal(emptyNavigation.prevented, false)
+const typingNavigation = keyboardEvent('ArrowDown', { tagName: 'INPUT', isContentEditable: false })
+handleLedgerKeydown(typingNavigation, () => { throw new Error('typing must not navigate') })
+assert.equal(typingNavigation.prevented, false)
+
+const repeatedNavigation = keyboardEvent('ArrowDown')
+repeatedNavigation.repeat = true
+handleLedgerKeydown(repeatedNavigation, () => { throw new Error('repeat must not navigate') })
+assert.equal(repeatedNavigation.prevented, false)
+const toolbarNavigation = keyboardEvent('ArrowDown', excludedTarget('.toolbar'))
+handleLedgerKeydown(toolbarNavigation, () => { throw new Error('toolbar must not navigate') })
+assert.equal(toolbarNavigation.prevented, false)
+
+state.selected = 'kept-row'
+state.inspectorOpen = true
+let closeRendered = false
+closeInspector(() => { closeRendered = true })
+assert.equal(state.inspectorOpen, false)
+assert.equal(state.selected, 'kept-row')
+assert.equal(closeRendered, true)
+
+state.ledgerSelectionAnchored = true
+releaseLedgerSelectionAnchor()
+assert.equal(state.ledgerSelectionAnchored, false)
 
 const interleaved = extendRunCommandsThroughStateCalls([
   call('run_command', 'run-a', 0, 100),

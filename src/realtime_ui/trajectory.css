@@ -74,7 +74,7 @@ button { color: inherit; }
 .row::before { position: absolute; left: 30px; top: 0; bottom: 0; width: 1px; background: #d9dce1; content: ""; }
 .row::after { position: absolute; left: 27px; top: 16px; width: 7px; height: 7px; border-radius: 50%; background: #b2b7c0; box-shadow: 0 0 0 2px #fff; content: ""; }
 .row:hover { background: #f7f9fd; }
-.row.selected { background: var(--blue-soft); box-shadow: inset 3px 0 var(--blue); }
+.row.selected, .state-stack.selected { background: var(--blue-soft); box-shadow: inset 3px 0 var(--blue); }
 .badge { width: max-content; padding: 3px 7px; border-radius: 5px; background: var(--tool-soft); color: #d47710; font-size: 10px; font-weight: 700; letter-spacing: .04em; }
 .badge-icon { display: none; width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.45; stroke-linecap: round; stroke-linejoin: round; }
 .row.thinking .badge-icon { fill: currentColor; stroke: none; }
