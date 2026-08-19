@@ -24,7 +24,7 @@ from fastmcp.server.auth.providers.jwt import JWTVerifier
 from command_queue import CommandQueue
 from blocking_command_runner import BlockingCommandRunner
 from command_guard import GuardService, SecretRedactor, current_guard_request
-from environment_config import gateway_paths, load_gateway_environment
+from environment_config import gateway_paths, load_gateway_environment, mcp_servers_config_path
 from lightweight_oauth import (
     ISSUER as OAUTH_ISSUER_FALLBACK,
     app as oauth_app,
@@ -303,7 +303,7 @@ MCP_INSTRUCTIONS = (
 
 COMMAND_GUARD = GuardService.from_environ(os.environ, event_logger=log_action)
 proxy_manager = MCPProxyManager(
-    os.getenv('MCP_SERVERS_CONFIG', 'config/mcp.json'),
+    mcp_servers_config_path(BASE_DIR),
     project_root=BASE_DIR,
     event_logger=log_action,
     command_guard=COMMAND_GUARD,
