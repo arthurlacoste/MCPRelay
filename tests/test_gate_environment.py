@@ -80,11 +80,19 @@ def test_gateway_and_oauth_modules_use_gateway_paths_helper():
 def test_gateway_registry_uses_persistent_config_root_across_versioned_release(tmp_path):
     import json
     import os
+    import shutil
     import subprocess
     import sys
 
     release = tmp_path / "releases" / "v0.1.36"
     release.mkdir(parents=True)
+    source_root = Path(__file__).resolve().parents[1] / "src"
+    release_source = release / "src"
+    shutil.copytree(
+        source_root,
+        release_source,
+        ignore=shutil.ignore_patterns("__pycache__", "*.pyc"),
+    )
     config_root = tmp_path / "config"
     config_root.mkdir()
     (config_root / ".env").write_text(
@@ -94,7 +102,7 @@ def test_gateway_registry_uses_persistent_config_root_across_versioned_release(t
     (config_root / "mcp.json").write_text('{"mcpServers": {}}', encoding="utf-8")
 
     env = os.environ.copy()
-    env["PYTHONPATH"] = str(Path(__file__).resolve().parents[1] / "src")
+    env["PYTHONPATH"] = str(release_source)
     env["MCP_CONFIG_ROOT"] = str(config_root)
     env["MCP_DATA_ROOT"] = str(tmp_path / "data")
     env["MCP_LOG_ROOT"] = str(tmp_path / "logs")
@@ -110,6 +118,7 @@ import mcp_gateway
 async def main():
     await mcp_gateway.proxy_manager.refresh()
     print(json.dumps({
+        "base_dir": str(mcp_gateway.BASE_DIR),
         "config_path": str(mcp_gateway.proxy_manager.registry.config_path),
         "error": mcp_gateway.proxy_manager.registry._last_refresh_error,
     }))
@@ -127,6 +136,7 @@ asyncio.run(main())
     payload = json.loads(result.stdout.strip().splitlines()[-1])
 
     assert payload == {
+        "base_dir": str(release),
         "config_path": str(config_root / "mcp.json"),
         "error": None,
     }
