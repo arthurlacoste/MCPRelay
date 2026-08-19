@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.37](https://github.com/spelcc/gate/compare/v0.1.36...v0.1.37) (2026-08-19)
+
+
+### Fixed
+
+* keep MCP registry in persistent config root ([#103](https://github.com/spelcc/gate/issues/103)) ([cd6d500](https://github.com/spelcc/gate/commit/cd6d500c69f21687443151b86f312c06105ee31a))
+
 ## [0.1.36](https://github.com/spelcc/gate/compare/v0.1.35...v0.1.36) (2026-08-18)
 
 
