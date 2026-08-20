@@ -146,6 +146,7 @@ pre { margin: 0; padding: 14px; overflow: auto; border-radius: 6px; background: 
   .modes::-webkit-scrollbar { display: none; }
   .modes button { flex: 0 0 auto; }
   .search { width: 100%; flex: 1 0 100%; margin-left: 0; }
+  .search input { font-size: 16px; }
   .inspector { position: absolute; z-index: 10; inset: 0; width: 100%; min-width: 0; box-shadow: none; }
   .detail-tabs { overflow-x: auto; gap: 20px; }
   .row { grid-template-columns: 26px minmax(120px, 1fr) 72px; gap: 7px; padding: 6px 9px 6px 36px; }

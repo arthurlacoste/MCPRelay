@@ -56,6 +56,10 @@ def test_authorization_page_uses_centered_responsive_theme(oauth_client, registe
     assert 'class="secondary"' in response.text
     assert 'class="request-details"' in response.text
     assert "prefers-color-scheme:dark" in response.text
+    assert 'content="width=device-width,initial-scale=1"' in response.text
+    assert "body{min-height:100vh" in response.text
+    assert "font:16px/1.45" in response.text
+    assert "font-size:16px;outline:none" in response.text
     assert response.text.index('class="secondary"') < response.text.index('class="request-details"')
 
 

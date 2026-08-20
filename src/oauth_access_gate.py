@@ -163,7 +163,7 @@ h1{{margin:0;font-size:clamp(1.8rem,7vw,2.35rem);line-height:1.12;letter-spacing
 form{{display:grid;gap:.75rem}}
 .sr-only{{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}}
 input,button{{width:100%;min-height:3.35rem;border-radius:.75rem;font:inherit}}
-input{{padding:0 1rem;border:1px solid var(--border);background:var(--field);color:var(--text);outline:none}}
+input{{padding:0 1rem;border:1px solid var(--border);background:var(--field);color:var(--text);font-size:16px;outline:none}}
 input:focus{{border-color:var(--text);box-shadow:0 0 0 1px var(--text)}}
 button{{padding:.75rem 1rem;border:1px solid transparent;font-weight:650;cursor:pointer}}
 .primary{{background:var(--primary);color:var(--primary-text)}}
