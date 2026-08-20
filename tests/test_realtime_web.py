@@ -29,6 +29,8 @@ def test_realtime_page_requires_login(tmp_path):
     assert "Authenticate to inspect" in response.text
     assert "realtime" not in response.text.lower()
     assert "Authorize Gate" not in response.text
+    assert 'content="width=device-width,initial-scale=1"' in response.text
+    assert "input{font-size:16px}" in response.text
 
 
 def test_authenticated_realtime_page_uses_split_inspector(tmp_path, monkeypatch):
@@ -139,6 +141,7 @@ def test_realtime_assets_are_authenticated(tmp_path, monkeypatch):
     assert ".ledger.compact .row { grid-template-columns: 26px minmax(120px, 1fr) 72px" in stylesheet.text
     assert ".sidebar { position: relative; z-index: 20; display: flex; flex: 0 0 58px" in stylesheet.text
     assert ".sidebar.drawer-open .conversation-drawer { transform: translateX(0); }" in stylesheet.text
+    assert ".search input { font-size: 16px; }" in stylesheet.text
     assert ".conversation-activity" in stylesheet.text
     assert "conversation-activity-fade 60s linear both" in stylesheet.text
     assert "scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-track)" in stylesheet.text
