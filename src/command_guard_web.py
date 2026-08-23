@@ -10,45 +10,11 @@ from fastapi.responses import JSONResponse
 
 from command_guard import CustomGuardProvider, GuardRequest, GuardService
 from command_guard_config import CustomGuardRule, CustomGuardStore, GuardConfigError
+from request_body_limit import RequestBodyLimitMiddleware
 
 MAX_COMMAND_GUARD_BODY_BYTES = 65536
 ACTION_HEADER = "X-Gate-Action"
 ACTION_VALUE = "command-guard"
-
-
-class CommandGuardBodyLimitMiddleware:
-    def __init__(self, application, *, max_bytes: int = MAX_COMMAND_GUARD_BODY_BYTES) -> None:
-        self.application = application
-        self.max_bytes = max(1, int(max_bytes))
-
-    async def __call__(self, scope, receive, send):
-        if (
-            scope["type"] != "http"
-            or scope["method"] not in {"POST", "PUT", "DELETE"}
-            or not scope["path"].startswith("/rt/api/command-guards")
-        ):
-            return await self.application(scope, receive, send)
-
-        body = bytearray()
-        more_body = True
-        while more_body:
-            message = await receive()
-            body.extend(message.get("body", b""))
-            if len(body) > self.max_bytes:
-                response = JSONResponse({"error": "request_too_large"}, status_code=413)
-                return await response(scope, receive, send)
-            more_body = message.get("more_body", False)
-
-        sent = False
-
-        async def replay():
-            nonlocal sent
-            if sent:
-                return {"type": "http.request", "body": b"", "more_body": False}
-            sent = True
-            return {"type": "http.request", "body": bytes(body), "more_body": False}
-
-        return await self.application(scope, replay, send)
 
 
 def register_command_guard_routes(
@@ -58,7 +24,12 @@ def register_command_guard_routes(
     authenticated: Callable[[Request], bool],
     event_logger: Callable[[str, dict[str, Any]], None] | None = None,
 ) -> None:
-    app.add_middleware(CommandGuardBodyLimitMiddleware)
+    app.add_middleware(
+        RequestBodyLimitMiddleware,
+        path_prefix="/rt/api/command-guards",
+        methods=("POST", "PUT", "DELETE"),
+        max_bytes=MAX_COMMAND_GUARD_BODY_BYTES,
+    )
     mutation_lock = threading.RLock()
 
     def unauthorized() -> JSONResponse:

@@ -57,6 +57,12 @@ def test_builtin_avoids_data_and_preview_false_positives(command):
     assert BuiltinGuardProvider().inspect(GuardRequest("run_command", {}, command)).decision == "allow"
 
 
+def test_builtin_preserves_shell_separator_when_removing_wrappers():
+    result = BuiltinGuardProvider().inspect(GuardRequest("run_command", {}, 'echo safe; sudo rm -rf /'))
+    assert result.decision == "deny"
+    assert result.rule_id == "filesystem.root-home-delete"
+
+
 def test_builtin_inspects_chains_substitutions_inline_shell_ssh_and_wsl():
     provider = BuiltinGuardProvider()
     commands = [

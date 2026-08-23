@@ -93,7 +93,7 @@ def _rm_commands(match: re.Match[str], request: GuardRequest) -> tuple[str, ...]
 
 def normalize_command(command: str) -> str:
     command = re.sub(r"(?<![\w.-])(?:[A-Za-z]:[\\/]|/)(?:[^\s'\";&|]+[\\/])+(?=(?:rm|git|docker|kubectl|terraform|mkfs)(?:\.exe)?\b)", "", command, flags=re.IGNORECASE)
-    command = re.sub(r"(?:^|[;&|]\s*)(?:(?:sudo|command|nohup)\s+)*(?:env(?:\s+\w+=\S+)*\s+)?(?:busybox\s+)?", lambda match: match.group(0)[-2:] if match.group(0).rstrip().endswith(tuple(";&|")) else "", command, flags=re.IGNORECASE)
+    command = re.sub(r"(?P<separator>^|[;&|]\s*)(?:(?:sudo|command|nohup)\s+)*(?:env(?:\s+\w+=\S+)*\s+)?(?:busybox\s+)?", lambda match: match.group("separator"), command, flags=re.IGNORECASE)
     command = re.sub(r"\bgit\s+(?:-C\s+\S+\s+)+", "git ", command, flags=re.IGNORECASE)
     command = re.sub(r"\brm\s+--recursive\s+--force\b|\brm\s+--force\s+--recursive\b", "rm -rf", command, flags=re.IGNORECASE)
     command = re.sub(r"\bgit\s+clean\s+(?:--force|-f)\s+(?:--directories|-d)\b", "git clean -fd", command, flags=re.IGNORECASE)
