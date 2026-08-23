@@ -19,15 +19,6 @@ def free_port():
         return sock.getsockname()[1]
 
 
-def occupy_high_port(port: int):
-    """Bind a specific high port; skipped environments raise OSError."""
-    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    sock.bind(("0.0.0.0", port))
-    sock.listen(1)
-    return sock, port
-
-
 def occupy_port():
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -132,16 +123,14 @@ class FakeResponse:
         return False
 
 
-def test_select_gateway_port_caps_fallback_at_top_of_tcp_range():
-    sock, port = occupy_high_port(65533)
-    try:
-        selected, notice = select_gateway_port(
-            {"GATEWAY_PORT": str(port), "GATEWAY_AUTO_PORT": "true"},
-            probe=lambda _port: False,
-        )
-    finally:
-        sock.close()
-    assert selected == port + 1
+def test_select_gateway_port_caps_fallback_at_top_of_tcp_range(monkeypatch):
+    monkeypatch.setattr(gateway_port, "is_port_available", lambda p: p != 65533)
+    selected, notice = select_gateway_port(
+        {"GATEWAY_PORT": "65533", "GATEWAY_AUTO_PORT": "true"},
+        allow_fallback=True,
+        probe=lambda _port: False,
+    )
+    assert selected == 65534
     assert notice is not None
 
 

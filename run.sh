@@ -914,8 +914,12 @@ fi
 parse_runtime_args "$@"
 
 configured_port="${GATEWAY_PORT:-$(env_value GATEWAY_PORT 2>/dev/null || true)}"
-if [[ "$configured_port" =~ ^[0-9]+$ ]] && [ "$configured_port" -ge 1 ] && [ "$configured_port" -le 65535 ]; then
-    NGROK_PORT="$configured_port"
+if [ -n "$configured_port" ]; then
+    if [[ "$configured_port" =~ ^[0-9]+$ ]] && [ "$configured_port" -ge 1 ] && [ "$configured_port" -le 65535 ]; then
+        NGROK_PORT="$configured_port"
+    else
+        die "Invalid GATEWAY_PORT value: $configured_port (must be an integer between 1 and 65535)."
+    fi
 fi
 export GATEWAY_PORT="$NGROK_PORT"
 

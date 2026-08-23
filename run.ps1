@@ -22,8 +22,12 @@ function Get-EnvValue([string]$Name) {
 }
 
 $ConfiguredPort = if ($env:GATEWAY_PORT) { $env:GATEWAY_PORT } else { Get-EnvValue "GATEWAY_PORT" }
-if ($ConfiguredPort -match '^\d+$' -and [int]$ConfiguredPort -ge 1 -and [int]$ConfiguredPort -le 65535) {
-    $TunnelPort = [int]$ConfiguredPort
+if ($ConfiguredPort) {
+    if ($ConfiguredPort -match '^\d+$' -and [int]$ConfiguredPort -ge 1 -and [int]$ConfiguredPort -le 65535) {
+        $TunnelPort = [int]$ConfiguredPort
+    } else {
+        throw "Invalid GATEWAY_PORT value: '$ConfiguredPort'. Must be an integer between 1 and 65535."
+    }
 }
 $env:GATEWAY_PORT = "$TunnelPort"
 
