@@ -3,6 +3,7 @@ import pty
 import select
 import shutil
 import signal
+import socket
 import stat
 import subprocess
 import sys
@@ -13,7 +14,14 @@ from pathlib import Path
 RUN_SCRIPT = Path(__file__).resolve().parents[1] / "run.sh"
 VENV_PYTHON = Path(sys.executable)
 INTERACTIVE_LAUNCHER = RUN_SCRIPT.parent / "src" / "interactive_launcher.py"
+GATEWAY_PORT_MODULE = RUN_SCRIPT.parent / "src" / "gateway_port.py"
 NGROK_TARGET = RUN_SCRIPT.parent / "src" / "ngrok_target.py"
+
+
+def _free_port() -> int:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.bind(("127.0.0.1", 0))
+        return sock.getsockname()[1]
 TERMINAL_RENDERING = RUN_SCRIPT.parent / "src" / "terminal_rendering.py"
 CHANGELOG_PARSER = RUN_SCRIPT.parent / "src" / "changelog_parser.py"
 
@@ -53,6 +61,7 @@ def _sandbox(tmp_path: Path, env_content: str) -> tuple[Path, dict[str, str]]:
     env = os.environ.copy()
     env["PATH"] = f"{fake_bin}:{env['PATH']}"
     env["GATE_PID_FILE"] = str(tmp_path / "mcp_gateway.pid")
+    env["GATEWAY_PORT"] = str(_free_port())
     env["MCP_CONFIG_ROOT"] = str(tmp_path / "config")
     env["MCP_LOG_ROOT"] = str(tmp_path / "logs")
     for _runtime_key in (
@@ -79,6 +88,7 @@ def _enable_interactive_fakes(tmp_path: Path) -> None:
     assert INTERACTIVE_LAUNCHER.exists(), "interactive supervisor missing"
     (tmp_path / "src").mkdir()
     shutil.copy2(INTERACTIVE_LAUNCHER, tmp_path / "src" / "interactive_launcher.py")
+    shutil.copy2(GATEWAY_PORT_MODULE, tmp_path / "src" / "gateway_port.py")
     shutil.copy2(NGROK_TARGET, tmp_path / "src" / "ngrok_target.py")
     shutil.copy2(TERMINAL_RENDERING, tmp_path / "src" / "terminal_rendering.py")
     shutil.copy2(CHANGELOG_PARSER, tmp_path / "src" / "changelog_parser.py")
@@ -96,7 +106,9 @@ def _enable_interactive_fakes(tmp_path: Path) -> None:
         "def run(port):\n"
         "    s = HTTPServer(('0.0.0.0', port), H)\n"
         "    while True: s.handle_request()\n"
-        "for p in (8761, 4040):\n"
+        "import os as _os\n"
+        "_gw_port = int(_os.environ.get('GATEWAY_PORT', '8761'))\n"
+        "for p in (_gw_port, 4040):\n"
         "    threading.Thread(target=run, args=(p,), daemon=True).start()\n"
         "def stop(*_): raise SystemExit(0)\n"
         "signal.signal(signal.SIGINT, stop)\n"
@@ -383,7 +395,7 @@ def test_onboarding_reuses_active_tailscale_funnel(tmp_path):
         "#!/usr/bin/env bash\n"
         'case "$1" in\n'
         "  status) echo '{\"BackendState\":\"Running\"}' ;;\n"
-        "  funnel) echo '{\"Foreground\":{\"n\":{\"Web\":{\"mj-1.taildc7e9e.ts.net:443\":{\"Handlers\":{\"/\":{\"Proxy\":\"http://127.0.0.1:8761\"}}}}}}}' ;;\n"
+        "  funnel) echo '{\"Foreground\":{\"n\":{\"Web\":{\"mj-1.taildc7e9e.ts.net:443\":{\"Handlers\":{\"/\":{\"Proxy\":\"http://127.0.0.1:'\"$GATEWAY_PORT\"'\"}}}}}}}' ;;\n"
         "esac\n"
         "exit 0\n",
     )

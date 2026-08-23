@@ -1075,10 +1075,11 @@ def resolve_command_recovery(action: Literal['resume', 'clear']) -> dict:
 
 
 if __name__ == '__main__':
+    GATEWAY_PORT = int(os.getenv('GATEWAY_PORT', '8761'))
     print(f"Gate runtime: {runtime_mode_summary(RUNTIME_FEATURES)}", flush=True)
     log_action('gateway_start', {
         'host': '0.0.0.0',
-        'port': 8761,
+        'port': GATEWAY_PORT,
         'oauth_enabled': ENABLE_OAUTH,
         'command_queue_enabled': RUNTIME_FEATURES.command_queue_enabled,
         'realtime_monitor_enabled': True,
@@ -1088,7 +1089,7 @@ if __name__ == '__main__':
     mcp.run(
         transport='http',
         host='0.0.0.0',
-        port=8761,
+        port=GATEWAY_PORT,
         path='/mcp',
         middleware=GATEWAY_HTTP_MIDDLEWARE,
     )

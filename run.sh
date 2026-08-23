@@ -17,7 +17,7 @@ CHATGPT_CONNECTOR_URL="https://chatgpt.com/plugins#settings/Connectors?create-co
 
 resolve_ngrok_target() {
     PYTHONPATH="$PROJECT_DIR/src" "$PROJECT_DIR/.venv/bin/python" -c \
-        'from ngrok_target import resolve_ngrok_target; print(resolve_ngrok_target(8761))'
+        "from ngrok_target import resolve_ngrok_target; print(resolve_ngrok_target('$NGROK_PORT'))"
 }
 
 info() { printf '\n\033[1;34m%s\033[0m\n' "$*"; }
@@ -912,6 +912,17 @@ if [ "${1:-}" = "connect" ]; then
 fi
 
 parse_runtime_args "$@"
+
+configured_port="${GATEWAY_PORT:-$(env_value GATEWAY_PORT 2>/dev/null || true)}"
+if [ -n "$configured_port" ]; then
+    if [[ "$configured_port" =~ ^[0-9]+$ ]] && [ "$configured_port" -ge 1 ] && [ "$configured_port" -le 65535 ]; then
+        NGROK_PORT="$configured_port"
+    else
+        die "Invalid GATEWAY_PORT value: $configured_port (must be an integer between 1 and 65535)."
+    fi
+fi
+export GATEWAY_PORT="$NGROK_PORT"
+
 if [ -n "$RUNTIME_COMMAND" ]; then
     set -- "$RUNTIME_COMMAND"
 else
