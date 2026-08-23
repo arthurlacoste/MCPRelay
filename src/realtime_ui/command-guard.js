@@ -108,7 +108,7 @@ function switchGateView(view, targetDocument = (typeof document !== 'undefined' 
     else button.removeAttribute('aria-current')
   })
   targetDocument.body?.classList.toggle('guard-mode', guardMode)
-  targetDocument.title = guardMode ? 'Commande guard' : 'Real-time calls'
+  targetDocument.title = guardMode ? 'Command guard' : 'Real-time calls'
   return view
 }
 
