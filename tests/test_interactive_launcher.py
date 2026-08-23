@@ -522,6 +522,7 @@ def test_main_installs_update_after_services_stop(monkeypatch, tmp_path):
     services = Process()
     ngrok = Process()
     monkeypatch.setattr(interactive_launcher.signal, "signal", lambda *args: None)
+    monkeypatch.setenv("GATEWAY_PORT", "8761")
     monkeypatch.setattr(interactive_launcher, "select_port", lambda: (8761, None))
     monkeypatch.setattr(interactive_launcher, "start_services", lambda: services)
     monkeypatch.setattr(interactive_launcher, "start_tunnel", lambda: (ngrok, "test"))
@@ -709,6 +710,7 @@ def test_main_handles_sighup_when_available(monkeypatch):
         return
 
     installed = []
+    monkeypatch.setenv("GATEWAY_PORT", "8761")
     monkeypatch.setattr(interactive_launcher.signal, "signal", lambda sig, handler: installed.append((sig, handler)))
     monkeypatch.setattr(interactive_launcher, "select_port", lambda: (8761, None))
     monkeypatch.setattr(

@@ -25,6 +25,7 @@ $ConfiguredPort = if ($env:GATEWAY_PORT) { $env:GATEWAY_PORT } else { Get-EnvVal
 if ($ConfiguredPort -match '^\d+$' -and [int]$ConfiguredPort -ge 1 -and [int]$ConfiguredPort -le 65535) {
     $TunnelPort = [int]$ConfiguredPort
 }
+$env:GATEWAY_PORT = "$TunnelPort"
 
 function Set-EnvValue([string]$Name, [string]$Value) {
     New-Item -ItemType Directory -Path $ConfigRoot -Force | Out-Null

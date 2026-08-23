@@ -917,6 +917,7 @@ configured_port="${GATEWAY_PORT:-$(env_value GATEWAY_PORT 2>/dev/null || true)}"
 if [[ "$configured_port" =~ ^[0-9]+$ ]] && [ "$configured_port" -ge 1 ] && [ "$configured_port" -le 65535 ]; then
     NGROK_PORT="$configured_port"
 fi
+export GATEWAY_PORT="$NGROK_PORT"
 
 if [ -n "$RUNTIME_COMMAND" ]; then
     set -- "$RUNTIME_COMMAND"

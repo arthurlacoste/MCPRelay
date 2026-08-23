@@ -186,6 +186,7 @@ def stop_all(*_):
 
 
 def main(argv=None):
+    """Select the gateway port, spawn services, and supervise restarts."""
     options = parse_args(argv)
     child_env = service_environment(options)
     ensure_venv()

@@ -12,6 +12,7 @@ from collections.abc import Mapping
 
 DEFAULT_GATEWAY_PORT = 8761
 FALLBACK_ATTEMPTS = 10
+MAX_TCP_PORT = 65535
 
 
 class PortSelectionError(RuntimeError):
@@ -23,6 +24,7 @@ def _environ(environ: Mapping[str, str] | None) -> Mapping[str, str]:
 
 
 def resolve_configured_port(environ: Mapping[str, str] | None = None) -> int:
+    """Return the configured gateway port, validated against the TCP range."""
     raw = str(_environ(environ).get("GATEWAY_PORT", "")).strip()
     if not raw:
         return DEFAULT_GATEWAY_PORT
@@ -36,6 +38,7 @@ def resolve_configured_port(environ: Mapping[str, str] | None = None) -> int:
 
 
 def auto_fallback_enabled(environ: Mapping[str, str] | None = None) -> bool:
+    """Whether GATEWAY_AUTO_PORT opts into picking the next free port."""
     return str(_environ(environ).get("GATEWAY_AUTO_PORT", "")).strip().lower() in {
         "1",
         "true",
@@ -45,6 +48,7 @@ def auto_fallback_enabled(environ: Mapping[str, str] | None = None) -> bool:
 
 
 def is_port_available(port: int, host: str = "0.0.0.0") -> bool:
+    """Return True when a TCP listener could bind the given port right now."""
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
         sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         try:
@@ -74,6 +78,7 @@ def looks_like_gate(port: int, timeout: float = 0.5) -> bool:
 
 
 def busy_port_message(port: int, gate_detected: bool) -> str:
+    """Human-facing guidance for a busy gateway port."""
     if gate_detected:
         return (
             f"Gateway port {port} is used by another running copy of Gate.\n"
@@ -114,14 +119,18 @@ def select_gateway_port(
     if probe(configured):
         raise PortSelectionError(busy_port_message(configured, True))
 
-    for candidate in range(configured + 1, configured + FALLBACK_ATTEMPTS + 1):
+    top = min(configured + FALLBACK_ATTEMPTS, MAX_TCP_PORT)
+    for candidate in range(configured + 1, top + 1):
         if is_port_available(candidate):
             return candidate, (
                 f"Gateway port {configured} is busy; using {candidate} instead "
                 "(set GATEWAY_PORT in config/.env to make this permanent)."
             )
 
+    if top <= configured:
+        raise PortSelectionError(
+            f"Gateway port {configured} is busy and no higher TCP port exists."
+        )
     raise PortSelectionError(
-        f"No free port found between {configured + 1} and "
-        f"{configured + FALLBACK_ATTEMPTS}."
+        f"No free port found between {configured + 1} and {top}."
     )

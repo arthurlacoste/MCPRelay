@@ -19,6 +19,15 @@ def free_port():
         return sock.getsockname()[1]
 
 
+def occupy_high_port(port: int):
+    """Bind a specific high port; skipped environments raise OSError."""
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    sock.bind(("0.0.0.0", port))
+    sock.listen(1)
+    return sock, port
+
+
 def occupy_port():
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -121,6 +130,42 @@ class FakeResponse:
 
     def __exit__(self, *args):
         return False
+
+
+def test_select_gateway_port_caps_fallback_at_top_of_tcp_range():
+    sock, port = occupy_high_port(65533)
+    try:
+        selected, notice = select_gateway_port(
+            {"GATEWAY_PORT": str(port), "GATEWAY_AUTO_PORT": "true"},
+            probe=lambda _port: False,
+        )
+    finally:
+        sock.close()
+    assert selected == port + 1
+    assert notice is not None
+
+
+def test_select_gateway_port_refuses_when_no_higher_port_exists(monkeypatch):
+    monkeypatch.setattr(gateway_port, "is_port_available", lambda _port: False)
+    with pytest.raises(PortSelectionError) as excinfo:
+        select_gateway_port(
+            {"GATEWAY_PORT": "65535", "GATEWAY_AUTO_PORT": "true"},
+            allow_fallback=True,
+            probe=lambda _port: False,
+        )
+    message = str(excinfo.value)
+    assert "no higher TCP port" in message
+
+
+def test_select_gateway_port_reports_exhausted_range_before_top(monkeypatch):
+    monkeypatch.setattr(gateway_port, "is_port_available", lambda _port: False)
+    with pytest.raises(PortSelectionError) as excinfo:
+        select_gateway_port(
+            {"GATEWAY_PORT": "65530", "GATEWAY_AUTO_PORT": "true"},
+            allow_fallback=True,
+            probe=lambda _port: False,
+        )
+    assert "No free port found between 65531 and 65535" in str(excinfo.value)
 
 
 def test_looks_like_gate_recognizes_health_payload(monkeypatch):
