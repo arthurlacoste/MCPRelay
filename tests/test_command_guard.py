@@ -228,3 +228,75 @@ def test_dcg_preserves_structured_remediation_commands(monkeypatch):
     monkeypatch.setattr("command_guard.subprocess.run", lambda *a, **k: next(calls))
     result = DcgGuardProvider().inspect(GuardRequest("run_command", {}, "git reset --hard", "/tmp"))
     assert result.remediation.commands == ("git status", "git stash")
+
+
+def custom_rule(**overrides):
+    from command_guard_config import CustomGuardRule
+    payload = {
+        "id": "protect-model",
+        "label": "Protect model",
+        "enabled": True,
+        "match_type": "contains",
+        "pattern": "--model openai/",
+        "reason": "Remote model use is blocked here.",
+        "remediation": {"summary": "Use the local model.", "commands": ["opencode models"]},
+    }
+    payload.update(overrides)
+    return CustomGuardRule.from_mapping(payload)
+
+
+def test_builtin_catalog_exposes_18_logical_read_only_descriptions():
+    rules = BuiltinGuardProvider().describe_rules()
+    assert len(rules) == 18
+    by_id = {rule["id"]: rule for rule in rules}
+    assert len(by_id["filesystem.rm-recursive-force"]["patterns"]) == 2
+    assert all({"id", "category", "patterns", "reason", "remediation_summary"} <= set(rule) for rule in rules)
+
+
+def test_custom_contains_and_glob_rules_deny_case_insensitively():
+    from command_guard import CustomGuardProvider
+    contains = custom_rule(pattern="--MODEL OPENAI/")
+    glob = custom_rule(id="protect-prod", match_type="glob", pattern="*deploy *production*")
+    provider = CustomGuardProvider([contains, glob])
+    first = provider.inspect(GuardRequest("run_command", {}, "opencode run --model openai/example"))
+    second = provider.inspect(GuardRequest("run_command", {}, "tool deploy app production now"))
+    assert first.rule_id == "custom.protect-model"
+    assert second.rule_id == "custom.protect-prod"
+
+
+def test_disabled_custom_rule_allows_and_multiple_rules_are_supported():
+    from command_guard import CustomGuardProvider
+    provider = CustomGuardProvider([
+        custom_rule(enabled=False),
+        custom_rule(id="protect-prod", pattern="deploy production"),
+    ])
+    assert provider.inspect(GuardRequest("run_command", {}, "opencode run --model openai/example")).decision == "allow"
+    assert provider.inspect(GuardRequest("run_command", {}, "deploy production now")).rule_id == "custom.protect-prod"
+
+
+def test_custom_rules_run_before_builtin_and_dcg(monkeypatch):
+    custom = custom_rule(pattern="git branch")
+    builtin_service = GuardService(provider="builtin", custom_rules=[custom])
+    command = "git branch " + "-D old"
+    result = builtin_service.inspect(GuardRequest("run_command", {}, command))
+    assert result.guard == "custom"
+    assert result.rule_id == "custom.protect-model"
+
+    dcg_service = GuardService(provider="dcg", fallback="builtin", custom_rules=[custom])
+    monkeypatch.setattr(dcg_service.providers["dcg"], "inspect", lambda request: (_ for _ in ()).throw(AssertionError("dcg should not run")))
+    assert dcg_service.inspect(GuardRequest("run_command", {}, command)).guard == "custom"
+
+
+def test_disabled_provider_bypasses_custom_rules():
+    service = GuardService(provider="disabled", fallback="builtin", custom_rules=[custom_rule()])
+    result = service.inspect(GuardRequest("run_command", {}, "opencode run --model openai/example"))
+    assert result.decision == "allow"
+    assert result.guard == "disabled"
+
+
+def test_replace_custom_rules_updates_matching_immediately():
+    service = GuardService(custom_rules=[custom_rule(pattern="first-marker")])
+    assert service.inspect(GuardRequest("run_command", {}, "echo first-marker")).guard == "custom"
+    service.replace_custom_rules([custom_rule(pattern="second-marker")])
+    assert service.inspect(GuardRequest("run_command", {}, "echo first-marker")).decision == "allow"
+    assert service.inspect(GuardRequest("run_command", {}, "echo second-marker")).guard == "custom"

@@ -1,0 +1,78 @@
+.command-guard-view { background: var(--bg); }
+.guard-scroll { flex: 1; overflow: auto; }
+.guard-content { width: min(1040px, calc(100% - 48px)); margin: 0 auto; padding: 28px 0 60px; }
+.guard-banner { margin-bottom: 18px; padding: 12px 14px; border: 1px solid #e2b74f; border-radius: 8px; background: #fff8dc; color: #775b13; }
+.guard-summary { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; margin-bottom: 30px; }
+.guard-summary > div { padding: 14px 16px; border: 1px solid var(--line); border-radius: 9px; background: var(--bg); }
+.guard-summary span { display: block; margin-bottom: 3px; color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .04em; }
+.guard-summary strong { font-size: 15px; font-weight: 600; }
+.guard-section { margin-top: 28px; }
+.guard-section-head { display: flex; align-items: end; justify-content: space-between; gap: 16px; margin-bottom: 12px; }
+.guard-section h2 { margin: 0; font-size: 17px; }
+.guard-section p { margin: 3px 0 0; color: var(--muted); }
+.guard-list { display: grid; gap: 8px; }
+.guard-empty { padding: 24px; border: 1px dashed var(--line); border-radius: 8px; text-align: center; }
+.guard-card { border: 1px solid var(--line); border-radius: 9px; background: var(--bg); }
+.guard-card summary { position: relative; display: grid; grid-template-columns: minmax(160px, .8fr) minmax(160px, 1fr) minmax(220px, 1.5fr); gap: 16px; padding: 13px 15px; align-items: center; cursor: pointer; list-style: none; }
+.guard-card summary::-webkit-details-marker { display: none; }
+.guard-card summary::after { content: "›"; justify-self: end; color: var(--caption); font-size: 20px; transform: rotate(90deg); }
+.guard-card[open] summary::after { transform: rotate(-90deg); }
+.guard-card-title strong { display: block; font-weight: 600; }
+.guard-card-title small, .guard-kind { color: var(--muted); }
+.guard-kind { font: 11px ui-monospace, SFMono-Regular, Menlo, monospace; }
+.guard-pattern { overflow: hidden; font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; text-overflow: ellipsis; white-space: nowrap; }
+.guard-reason { color: var(--muted); }
+.guard-details { padding: 0 15px 15px; border-top: 1px solid var(--line-soft); }
+.guard-details h3 { margin: 14px 0 5px; color: var(--muted); font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; }
+.guard-details pre { font-size: 11px; }
+.custom-card { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 12px; padding: 14px 15px; align-items: start; border: 1px solid var(--line); border-radius: 9px; background: var(--bg); }
+.custom-card.disabled { opacity: .58; }
+.guard-toggle { position: relative; width: 38px; height: 22px; margin-top: 1px; }
+.guard-toggle input { position: absolute; opacity: 0; pointer-events: none; }
+.guard-toggle span { position: absolute; inset: 0; border-radius: 999px; background: #b9bec7; cursor: pointer; transition: 120ms ease; }
+.guard-toggle span::after { position: absolute; top: 3px; left: 3px; width: 16px; height: 16px; border-radius: 50%; background: #fff; content: ""; transition: 120ms ease; }
+.guard-toggle input:checked + span { background: var(--blue); }
+.guard-toggle input:checked + span::after { transform: translateX(16px); }
+.custom-main { min-width: 0; }
+.custom-main strong { display: block; margin-bottom: 4px; font-size: 14px; }
+.custom-meta { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 6px; color: var(--muted); font-size: 11px; }
+.custom-pattern { margin-bottom: 5px; overflow-wrap: anywhere; font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; }
+.custom-reason { color: var(--muted); }
+.custom-actions { display: flex; gap: 5px; }
+.custom-actions button, .guard-form-actions button, .primary-button { min-height: 34px; padding: 0 11px; border: 1px solid var(--line); border-radius: 7px; background: var(--bg); cursor: pointer; }
+.primary-button { border-color: #285fc8; background: var(--blue); color: #fff; }
+.danger-button { color: #c6222a; }
+.guard-form { margin: 0 0 14px; padding: 16px; border: 1px solid var(--line); border-radius: 10px; background: var(--sidebar); }
+.guard-form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.guard-form label { display: grid; gap: 5px; color: var(--muted); font-size: 12px; }
+.guard-form label.wide { grid-column: 1 / -1; }
+.guard-form input, .guard-form select, .guard-form textarea { width: 100%; padding: 9px 10px; border: 1px solid var(--line); border-radius: 7px; outline: 0; background: var(--bg); color: var(--text); font: inherit; }
+.guard-form input:focus, .guard-form select:focus, .guard-form textarea:focus { border-color: var(--blue); }
+.guard-form input, .guard-form select { min-height: 38px; font-size: 16px; }
+.guard-form textarea { resize: vertical; }
+.guard-form label.check { display: flex; grid-column: 1 / -1; align-items: center; gap: 8px; color: var(--text); }
+.guard-form label.check input { width: 16px; min-height: 0; height: 16px; }
+.guard-form-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }
+.guard-form-error, .guard-test-result { margin-top: 12px; padding: 9px 11px; border-radius: 7px; }
+.guard-form-error { background: #ffe9e9; color: #a61d24; }
+.guard-test-result { background: var(--blue-soft); color: var(--text); font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; }
+.guard-test-result.denied { background: #ffe9e9; color: #a61d24; }
+
+@media (prefers-color-scheme: dark) {
+  .guard-banner { border-color: #6e5a24; background: #292416; color: #e1c36d; }
+  .guard-form-error, .guard-test-result.denied { background: #3a1d20; color: #ff7379; }
+}
+
+@media (max-width: 850px) {
+  .guard-content { width: calc(100% - 24px); padding-top: 18px; }
+  .guard-summary { grid-template-columns: 1fr 1fr; }
+  .guard-section-head { align-items: stretch; flex-direction: column; }
+  .guard-section-head .primary-button { align-self: flex-start; }
+  .guard-card summary { grid-template-columns: minmax(0, 1fr); gap: 5px; }
+  .guard-card summary::after { position: absolute; right: 28px; }
+  .custom-card { grid-template-columns: auto minmax(0, 1fr); }
+  .custom-actions { grid-column: 2; justify-content: flex-start; }
+  .guard-form-grid { grid-template-columns: 1fr; }
+  .guard-form label.wide, .guard-form label.check { grid-column: 1; }
+  .guard-form-actions { flex-wrap: wrap; }
+}
