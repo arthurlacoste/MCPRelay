@@ -110,6 +110,70 @@ def test_ngrok_startup_failure_points_to_ngrok_log():
     )
 
 
+def test_main_fails_fast_when_gateway_port_is_busy(monkeypatch, capsys):
+    monkeypatch.setattr(interactive_launcher.signal, "signal", lambda *args: None)
+
+    def busy(environ):
+        raise interactive_launcher.PortSelectionError(
+            "Gateway port 8761 is already in use by another process."
+        )
+
+    monkeypatch.setattr(interactive_launcher, "select_gateway_port", busy)
+
+    def unexpected(*args, **kwargs):
+        raise AssertionError("start_services must not run when the port is busy")
+
+    monkeypatch.setattr(interactive_launcher, "start_services", unexpected)
+
+    assert interactive_launcher.main() == 1
+    error = capsys.readouterr().err
+    assert "Gateway port 8761 is already in use" in error
+
+
+def test_select_port_merges_env_file_with_process_environment(monkeypatch, tmp_path):
+    config = tmp_path / ".env"
+    config.write_text("GATEWAY_PORT=9001\n", encoding="utf-8")
+    seen = {}
+    monkeypatch.setattr(interactive_launcher, "CONFIG_FILE", config)
+    monkeypatch.setattr(
+        interactive_launcher,
+        "select_gateway_port",
+        lambda environ: seen.update(environ) or (int(environ["GATEWAY_PORT"]), None),
+    )
+
+    monkeypatch.delenv("GATEWAY_PORT", raising=False)
+    assert interactive_launcher.select_port()[0] == 9001
+
+    monkeypatch.setenv("GATEWAY_PORT", "9100")
+    assert interactive_launcher.select_port()[0] == 9100
+
+
+def test_monitor_reports_gateway_output_on_unexpected_exit(monkeypatch, tmp_path, capsys):
+    log = tmp_path / "launcher.log"
+    log.write_text(
+        "gateway port 8761 is already in use; "
+        "stop the existing gateway before starting a new one\n",
+        encoding="utf-8",
+    )
+
+    class Process:
+        pid = 123
+        returncode = 1
+        def poll(self):
+            return self.returncode
+
+    monkeypatch.setattr(interactive_launcher, "STOP_REQUESTED", False)
+    monkeypatch.setattr(interactive_launcher, "SERVICE_LOG", log)
+    monkeypatch.setattr(interactive_launcher, "render_screen", lambda *args: None)
+
+    assert interactive_launcher.monitor(Process(), Process(), "active", None) == 1
+
+    error = capsys.readouterr().err
+    assert "Gateway stopped unexpectedly (exit 1)" in error
+    assert "gateway port 8761 is already in use" in error
+    assert f"Full log: {log}" in error
+
+
 def test_start_ngrok_uses_resolved_target(monkeypatch, tmp_path):
     process = Mock()
     popen = Mock(return_value=process)
@@ -458,6 +522,7 @@ def test_main_installs_update_after_services_stop(monkeypatch, tmp_path):
     services = Process()
     ngrok = Process()
     monkeypatch.setattr(interactive_launcher.signal, "signal", lambda *args: None)
+    monkeypatch.setattr(interactive_launcher, "select_port", lambda: (8761, None))
     monkeypatch.setattr(interactive_launcher, "start_services", lambda: services)
     monkeypatch.setattr(interactive_launcher, "start_tunnel", lambda: (ngrok, "test"))
     monkeypatch.setattr(interactive_launcher, "wait_for_gateway_health", lambda *args, **kwargs: None)
@@ -645,6 +710,7 @@ def test_main_handles_sighup_when_available(monkeypatch):
 
     installed = []
     monkeypatch.setattr(interactive_launcher.signal, "signal", lambda sig, handler: installed.append((sig, handler)))
+    monkeypatch.setattr(interactive_launcher, "select_port", lambda: (8761, None))
     monkeypatch.setattr(
         interactive_launcher,
         "start_services",

@@ -44,6 +44,16 @@ Cross-platform guide for macOS, Linux, and Windows. The local gateway listens on
 
 On macOS, Gate targets ngrok at the active LAN address instead of `localhost`. This prevents another loopback-only process on port `8761` from shadowing Gate. Set `GATE_NGROK_TARGET` to override the detected upstream.
 
+### Changing the gateway port
+
+The default port is `8761`. If an unrelated app occupies it, set a different port once in `config/.env` and every component (gateway, launcher, tunnel) follows:
+
+```text
+GATEWAY_PORT=8762
+```
+
+Optionally set `GATEWAY_AUTO_PORT=true` so the interactive launcher picks the next free port automatically. Gate still refuses to start when the port is held by *another copy of Gate*, because two gateways sharing one data directory would corrupt state — stop the other copy instead.
+
 ## 1. Requirements
 
 - GitHub account with repository access.

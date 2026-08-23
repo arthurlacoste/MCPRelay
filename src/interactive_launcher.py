@@ -23,6 +23,7 @@ from pathlib import Path
 
 from dotenv import dotenv_values
 from changelog_parser import changelog_section
+from gateway_port import PortSelectionError, select_gateway_port
 from ngrok_target import gateway_health_url, resolve_ngrok_target
 from terminal_rendering import TerminalFrameRenderer, restore_terminal_output
 
@@ -625,6 +626,12 @@ def wait_for_cloudflared_ready(process: subprocess.Popen | ExistingProcess, time
         time.sleep(0.2)
     raise StartupError(f"Cloudflare Tunnel did not become ready. Check {CLOUDFLARED_LOG}.")
 
+def select_port() -> tuple[int, str | None]:
+    """Resolve the gateway port from process env and config/.env."""
+    effective = {**dotenv_values(CONFIG_FILE), **os.environ}
+    return select_gateway_port(effective)
+
+
 def start_services() -> subprocess.Popen:
     SERVICE_LOG.parent.mkdir(parents=True, exist_ok=True)
     with SERVICE_LOG.open("w", encoding="utf-8") as log_file:
@@ -700,7 +707,12 @@ def monitor(services, tunnel, keep_awake: str, update_result: list[str | None] |
         render_screen(services, tunnel, keep_awake, update_result[0] if update_result else None, panel)
         while not STOP_REQUESTED:
             if services.poll() is not None:
-                print("Error: Gateway stopped unexpectedly.", file=sys.stderr)
+                message = f"Error: Gateway stopped unexpectedly (exit {services.returncode})."
+                details = log_tail(SERVICE_LOG)
+                if details:
+                    message += f"\n\nLast output:\n{details}"
+                message += f"\nFull log: {SERVICE_LOG}"
+                print(message, file=sys.stderr, flush=True)
                 return 1
             if tunnel is not None and tunnel.poll() is not None:
                 provider = configured_tunnel_provider()
@@ -793,7 +805,7 @@ def monitor(services, tunnel, keep_awake: str, update_result: list[str | None] |
 
 
 def main() -> int:
-    global UPDATE_REQUESTED
+    global UPDATE_REQUESTED, NGROK_PORT, GATEWAY_HEALTH_URL
     services = None
     tunnel = None
     exit_code = 0
@@ -804,6 +816,15 @@ def main() -> int:
         signal.signal(signal.SIGHUP, request_shutdown)
 
     try:
+        try:
+            selected_port, port_notice = select_port()
+        except PortSelectionError as exc:
+            raise StartupError(str(exc)) from None
+        os.environ["GATEWAY_PORT"] = str(selected_port)
+        NGROK_PORT = selected_port
+        GATEWAY_HEALTH_URL = gateway_health_url(selected_port)
+        if port_notice:
+            print(port_notice, file=sys.stderr, flush=True)
         services = start_services()
         wait_for_gateway_health(services)
         tunnel, keep_awake = start_tunnel()

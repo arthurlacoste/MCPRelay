@@ -17,7 +17,6 @@ import os
 import argparse
 import signal
 import shutil
-import socket
 import subprocess
 import sys
 import time
@@ -25,6 +24,9 @@ from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent
 SRC_DIR = BASE_DIR / "src"
+sys.path.insert(0, str(SRC_DIR))
+
+from gateway_port import PortSelectionError, select_gateway_port
 
 
 def venv_python_path(base_dir: Path, platform_name: str = os.name) -> Path:
@@ -37,8 +39,6 @@ PYTHON = venv_python_path(BASE_DIR)
 REQUIREMENTS = BASE_DIR / "requirements.txt"
 LOG_DIR = Path(os.environ.get("MCP_LOG_ROOT", BASE_DIR / "logs")) / "services"
 LOG_DIR.mkdir(parents=True, exist_ok=True)
-GATEWAY_HOST = "0.0.0.0"
-GATEWAY_PORT = 8761
 
 SERVICES = [
     {
@@ -72,16 +72,6 @@ def service_environment(options) -> dict[str, str]:
     if options.widget:
         env["MCP_WIDGET_ENABLED"] = "true"
     return env
-
-
-def is_port_available(host: str, port: int) -> bool:
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        try:
-            sock.bind((host, port))
-        except OSError:
-            return False
-    return True
 
 
 def find_compatible_python() -> str | None:
@@ -201,9 +191,13 @@ def main(argv=None):
     ensure_venv()
     ensure_deps()
 
-    if not is_port_available(GATEWAY_HOST, GATEWAY_PORT):
-        print(f"gateway port {GATEWAY_PORT} is already in use; stop the existing gateway before starting a new one")
+    try:
+        gateway_port_number, notice = select_gateway_port(allow_fallback=False)
+    except PortSelectionError as exc:
+        print(exc, file=sys.stderr)
         sys.exit(1)
+
+    child_env["GATEWAY_PORT"] = str(gateway_port_number)
 
     signal.signal(signal.SIGINT, stop_all)
     signal.signal(signal.SIGTERM, stop_all)
@@ -214,9 +208,9 @@ def main(argv=None):
     print("services running")
     print(f"gateway log: {LOG_DIR / 'gateway.log'}")
     print()
-    print("  MCP    → http://localhost:8761/mcp")
-    print("  OAuth  → http://localhost:8761/oauth/...")
-    print("  Health → http://localhost:8761/oauth/health")
+    print(f"  MCP    → http://localhost:{gateway_port_number}/mcp")
+    print(f"  OAuth  → http://localhost:{gateway_port_number}/oauth/...")
+    print(f"  Health → http://localhost:{gateway_port_number}/oauth/health")
     print()
     print("press Ctrl+C to stop")
 
