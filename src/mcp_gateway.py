@@ -24,6 +24,7 @@ from fastmcp.server.auth.providers.jwt import JWTVerifier
 from command_queue import CommandQueue
 from blocking_command_runner import BlockingCommandRunner
 from command_guard import GuardService, SecretRedactor, current_guard_request
+from command_guard_config import CustomGuardStore, GuardConfigError
 from environment_config import gateway_paths, load_gateway_environment, mcp_servers_config_path
 from lightweight_oauth import (
     ISSUER as OAUTH_ISSUER_FALLBACK,
@@ -302,6 +303,13 @@ MCP_INSTRUCTIONS = (
 )
 
 COMMAND_GUARD = GuardService.from_environ(os.environ, event_logger=log_action)
+COMMAND_GUARD_STORE = CustomGuardStore(GATEWAY_PATHS.config / "command-guards.json")
+try:
+    COMMAND_GUARD.replace_custom_rules(COMMAND_GUARD_STORE.load())
+except GuardConfigError as exc:
+    logger.warning("Ignoring invalid custom command guard config: %s", exc)
+    log_action("command_guard_config_invalid", {"error": type(exc).__name__})
+
 proxy_manager = MCPProxyManager(
     mcp_servers_config_path(BASE_DIR),
     project_root=BASE_DIR,
@@ -441,7 +449,10 @@ def serve_public_file(share_id: str):
     )
 
 
-register_realtime_routes(oauth_app, realtime_store, STREAM_DIR)
+register_realtime_routes(
+    oauth_app, realtime_store, STREAM_DIR,
+    command_guard=COMMAND_GUARD, command_guard_store=COMMAND_GUARD_STORE, event_logger=log_action,
+)
 mcp._additional_http_routes.append(Mount('/', app=oauth_app, name='oauth'))
 
 

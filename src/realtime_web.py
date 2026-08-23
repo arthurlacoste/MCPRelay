@@ -11,6 +11,7 @@ from fastapi import Form, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 
 from realtime_calls import RealtimeCallStore, read_call_log
+from command_guard_web import register_command_guard_routes
 from request_body_limit import RequestBodyLimitMiddleware
 
 SESSION_COOKIE = "gate_rt_session"
@@ -19,7 +20,7 @@ MAX_LOGIN_BODY_BYTES = 4096
 
 
 def _realtime_page() -> str:
-    assets = (UI_DIR / "trajectory.css", UI_DIR / "trajectory.js")
+    assets = (UI_DIR / "trajectory.css", UI_DIR / "trajectory.js", UI_DIR / "command-guard.css", UI_DIR / "command-guard.js")
     digest_input = b"".join(
         asset.name.encode("utf-8") + b"\0" + hashlib.sha256(asset.read_bytes()).digest()
         for asset in assets
@@ -73,7 +74,7 @@ def _login_page(error: str = "") -> str:
 <button>Open trajectory</button></form></main></body></html>"""
 
 
-def register_realtime_routes(app, store: RealtimeCallStore, logs_dir: Path) -> None:
+def register_realtime_routes(app, store: RealtimeCallStore, logs_dir: Path, *, command_guard=None, command_guard_store=None, event_logger=None) -> None:
     app.add_middleware(
         RequestBodyLimitMiddleware,
         path="/rt/login",
@@ -88,7 +89,7 @@ def register_realtime_routes(app, store: RealtimeCallStore, logs_dir: Path) -> N
 
     @app.get("/rt/assets/{name}")
     def realtime_asset(name: str, request: Request):
-        if not _authenticated(request) or name not in {"trajectory.css", "trajectory.js", "gate.svg"}:
+        if not _authenticated(request) or name not in {"trajectory.css", "trajectory.js", "command-guard.css", "command-guard.js", "gate.svg"}:
             return JSONResponse({"error": "unauthorized"}, status_code=401)
         if name == "gate.svg":
             return FileResponse(UI_DIR / name, media_type="image/svg+xml")
@@ -137,3 +138,6 @@ def register_realtime_routes(app, store: RealtimeCallStore, logs_dir: Path) -> N
         if not item or not item.get("log_ref"):
             return JSONResponse({"error": "not_found"}, status_code=404)
         return JSONResponse(read_call_log(logs_dir / Path(item["log_ref"]).name, offset, min(limit, 262144)))
+
+    if command_guard is not None and command_guard_store is not None:
+        register_command_guard_routes(app, command_guard, command_guard_store, _authenticated, event_logger)

@@ -153,6 +153,21 @@ def test_realtime_assets_are_authenticated(tmp_path, monkeypatch):
     assert ".span { position: absolute; height: 9px; min-width: 8px" in stylesheet.text
 
 
+def test_command_guard_ui_behavior_with_node():
+    node = shutil.which("node")
+    if node is None:
+        import pytest
+        pytest.skip("Node.js is unavailable")
+    result = subprocess.run(
+        [node, "tests/command_guard_ui_behavior.test.js"],
+        cwd=realtime_web.UI_DIR.parent.parent,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    assert result.stdout.strip() == "command guard UI behavior: ok"
+
+
 def test_realtime_ui_behavior_with_node():
     node = shutil.which("node")
     if node is None:
@@ -243,3 +258,36 @@ def test_realtime_api_returns_trajectory_snapshot_when_authenticated(tmp_path, m
 
     missing = TestClient(app).get("/rt/api/calls/missing")
     assert missing.status_code == 404
+
+
+def test_realtime_page_exposes_command_guard_view_and_assets(tmp_path, monkeypatch):
+    app = FastAPI()
+    realtime_web.register_realtime_routes(app, RealtimeCallStore(), tmp_path)
+    monkeypatch.setattr(realtime_web, "_authenticated", lambda request: True)
+    client = TestClient(app)
+    page = client.get("/rt")
+    assert 'id="nav-command-guard"' in page.text
+    assert 'id="view-command-guard"' in page.text
+    assert 'id="guard-form"' in page.text
+    assert 'command-guard.css?v=' in page.text
+    assert 'command-guard.js?v=' in page.text
+    assert client.get("/rt/assets/command-guard.css").status_code == 200
+    assert client.get("/rt/assets/command-guard.js").status_code == 200
+
+
+def test_realtime_registration_can_mount_command_guard_api(tmp_path, monkeypatch):
+    from command_guard import GuardService
+    from command_guard_config import CustomGuardStore
+
+    app = FastAPI()
+    service = GuardService()
+    store = CustomGuardStore(tmp_path / "command-guards.json")
+    monkeypatch.setattr(realtime_web, "_authenticated", lambda request: True)
+    realtime_web.register_realtime_routes(
+        app, RealtimeCallStore(), tmp_path,
+        command_guard=service, command_guard_store=store,
+    )
+    response = TestClient(app).get("/rt/api/command-guards")
+    assert response.status_code == 200
+    assert response.json()["provider"] == "builtin"
+    assert len(response.json()["builtin"]) == 18

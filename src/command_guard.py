@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ast
+import fnmatch
 import json
 import os
 import platform
@@ -8,9 +9,12 @@ import re
 import shlex
 import shutil
 import subprocess
+import threading
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, Literal, Mapping, Protocol
+from typing import Any, Callable, Iterable, Literal, Mapping, Protocol
+
+from command_guard_config import CustomGuardRule, validate_rules
 
 
 Decision = Literal["allow", "deny"]
@@ -87,6 +91,16 @@ def _rm_commands(match: re.Match[str], request: GuardRequest) -> tuple[str, ...]
     )
 
 
+def normalize_command(command: str) -> str:
+    command = re.sub(r"(?<![\w.-])(?:[A-Za-z]:[\\/]|/)(?:[^\s'\";&|]+[\\/])+(?=(?:rm|git|docker|kubectl|terraform|mkfs)(?:\.exe)?\b)", "", command, flags=re.IGNORECASE)
+    command = re.sub(r"(?P<separator>^|[;&|]\s*)(?:(?:sudo|command|nohup)\s+)*(?:env(?:\s+\w+=\S+)*\s+)?(?:busybox\s+)?", lambda match: match.group("separator"), command, flags=re.IGNORECASE)
+    command = re.sub(r"\bgit\s+(?:-C\s+\S+\s+)+", "git ", command, flags=re.IGNORECASE)
+    command = re.sub(r"\brm\s+--recursive\s+--force\b|\brm\s+--force\s+--recursive\b", "rm -rf", command, flags=re.IGNORECASE)
+    command = re.sub(r"\bgit\s+clean\s+(?:--force|-f)\s+(?:--directories|-d)\b", "git clean -fd", command, flags=re.IGNORECASE)
+    command = re.sub(r"\bgit\s+push\s+-f\b", "git push --force", command, flags=re.IGNORECASE)
+    return command
+
+
 class BuiltinGuardProvider:
     name = "builtin"
 
@@ -114,8 +128,21 @@ class BuiltinGuardProvider:
             _Rule("filesystem.rm-recursive-force", re.compile(r"(?:^|[;&|]\s*|\$\(|`|['\"]|\b(?:bash|sh|zsh)\s+-c\s+['\"]|\bssh\s+\S+\s+['\"])(?:sudo\s+)?rm\s+-(?:[a-z]*r[a-z]*f|[a-z]*f[a-z]*r)\s+(?P<target>[^;&|\n'\")`]+)", flags), "Recursive forced deletion can permanently remove data.", "Verify and back up the target before deletion.", _rm_commands),
         )
 
+    def describe_rules(self) -> list[dict[str, Any]]:
+        grouped: dict[str, dict[str, Any]] = {}
+        for rule in self.rules:
+            item = grouped.setdefault(rule.rule_id, {
+                "id": rule.rule_id,
+                "category": rule.rule_id.split(".", 1)[0],
+                "patterns": [],
+                "reason": rule.reason,
+                "remediation_summary": rule.summary,
+            })
+            item["patterns"].append(rule.pattern.pattern)
+        return list(grouped.values())
+
     def inspect(self, request: GuardRequest) -> GuardResult:
-        command = self._normalize(request.command or "")
+        command = normalize_command(request.command or "")
         embedded = self._embedded_python(command)
         if embedded:
             nested = self.inspect(GuardRequest(request.tool_name, request.arguments, embedded, request.working_directory, request.host, request.platform))
@@ -136,15 +163,6 @@ class BuiltinGuardProvider:
                 return GuardResult("deny", self.name, rule_id, rule.reason, Remediation(rule.summary, rule.commands(match, request)))
         return GuardResult("allow", self.name)
 
-    @staticmethod
-    def _normalize(command: str) -> str:
-        command = re.sub(r"(?<![\w.-])(?:[A-Za-z]:[\\/]|/)(?:[^\s'\";&|]+[\\/])+(?=(?:rm|git|docker|kubectl|terraform|mkfs)(?:\.exe)?\b)", "", command, flags=re.IGNORECASE)
-        command = re.sub(r"(?:^|[;&|]\s*)(?:(?:sudo|command|nohup)\s+)*(?:env(?:\s+\w+=\S+)*\s+)?(?:busybox\s+)?", lambda match: match.group(0)[-2:] if match.group(0).rstrip().endswith(tuple(";&|")) else "", command, flags=re.IGNORECASE)
-        command = re.sub(r"\bgit\s+(?:-C\s+\S+\s+)+", "git ", command, flags=re.IGNORECASE)
-        command = re.sub(r"\brm\s+--recursive\s+--force\b|\brm\s+--force\s+--recursive\b", "rm -rf", command, flags=re.IGNORECASE)
-        command = re.sub(r"\bgit\s+clean\s+(?:--force|-f)\s+(?:--directories|-d)\b", "git clean -fd", command, flags=re.IGNORECASE)
-        command = re.sub(r"\bgit\s+push\s+-f\b", "git push --force", command, flags=re.IGNORECASE)
-        return command
 
     @staticmethod
     def _embedded_python(command: str) -> str | None:
@@ -193,6 +211,30 @@ class BuiltinGuardProvider:
             return False
         cwd = Path(request.working_directory or os.getcwd()).expanduser().resolve()
         return cwd == Path(cwd.anchor) or cwd == Path.home().resolve()
+
+
+class CustomGuardProvider:
+    name = "custom"
+
+    def __init__(self, rules: Iterable[CustomGuardRule] = ()) -> None:
+        self.rules = validate_rules(rules)
+
+    def inspect(self, request: GuardRequest) -> GuardResult:
+        command = normalize_command(request.command or "")
+        folded = command.casefold()
+        for rule in self.rules:
+            if not rule.enabled:
+                continue
+            pattern = rule.pattern.casefold()
+            matched = pattern in folded if rule.match_type == "contains" else fnmatch.fnmatchcase(folded, pattern)
+            if not matched:
+                continue
+            summary = rule.remediation_summary or "Review the command and use a safer sequence."
+            return GuardResult(
+                "deny", self.name, f"custom.{rule.id}", rule.reason,
+                Remediation(summary, rule.remediation_commands),
+            )
+        return GuardResult("allow", self.name)
 
 
 class DcgGuardProvider:
@@ -265,7 +307,7 @@ class DisabledGuardProvider:
 
 
 class GuardService:
-    def __init__(self, provider: str = "builtin", fallback: str = "builtin", event_logger: Callable[[str, dict[str, Any]], None] | None = None, dcg_executable: str = "dcg", dcg_version: str | None = None) -> None:
+    def __init__(self, provider: str = "builtin", fallback: str = "builtin", event_logger: Callable[[str, dict[str, Any]], None] | None = None, dcg_executable: str = "dcg", dcg_version: str | None = None, custom_rules: Iterable[CustomGuardRule] = ()) -> None:
         self.provider_name = provider.lower()
         self.fallback_name = fallback.lower()
         self.event_logger = event_logger
@@ -276,32 +318,69 @@ class GuardService:
         }
         if self.provider_name not in self.providers or self.fallback_name not in self.providers:
             raise ValueError("guard provider must be builtin, dcg, or disabled")
+        self._custom_lock = threading.RLock()
+        self._custom_provider = CustomGuardProvider(custom_rules)
 
     @classmethod
     def from_environ(cls, environ: Mapping[str, str], event_logger=None) -> "GuardService":
         return cls(environ.get("MCP_COMMAND_GUARD_PROVIDER", "builtin"), environ.get("MCP_COMMAND_GUARD_FALLBACK", "builtin"), event_logger, environ.get("MCP_DCG_EXECUTABLE", "dcg"), environ.get("MCP_DCG_VERSION"))
 
+    def replace_custom_rules(self, rules: Iterable[CustomGuardRule]) -> None:
+        replacement = CustomGuardProvider(rules)
+        with self._custom_lock:
+            self._custom_provider = replacement
+
+    def custom_rules(self) -> tuple[CustomGuardRule, ...]:
+        with self._custom_lock:
+            return self._custom_provider.rules
+
+    def builtin_rules(self) -> list[dict[str, Any]]:
+        provider = self.providers["builtin"]
+        assert isinstance(provider, BuiltinGuardProvider)
+        return provider.describe_rules()
+
+    def _log_decision(self, request: GuardRequest, result: GuardResult) -> None:
+        if not self.event_logger:
+            return
+        self.event_logger("command_guard_decision", {
+            "tool": request.tool_name,
+            "host": request.host,
+            "working_directory": request.working_directory,
+            "platform": request.platform,
+            "decision": result.decision,
+            "guard": result.guard,
+            "rule": result.rule_id,
+            "reason": result.reason,
+            "remediation": result.remediation.summary if result.remediation else None,
+        })
+
     def inspect(self, request: GuardRequest) -> GuardResult:
+        if self.provider_name == "disabled":
+            return self.inspect_without_custom(request)
+
+        with self._custom_lock:
+            custom_provider = self._custom_provider
+        custom_result = custom_provider.inspect(request)
+        if custom_result.decision == "deny":
+            self._log_decision(request, custom_result)
+            return custom_result
+        return self.inspect_without_custom(request)
+
+    def inspect_without_custom(self, request: GuardRequest) -> GuardResult:
+        if self.provider_name == "disabled":
+            result = self.providers["disabled"].inspect(request)
+            self._log_decision(request, result)
+            return result
         try:
             result = self.providers[self.provider_name].inspect(request)
         except Exception as exc:
             if self.event_logger:
                 self.event_logger("command_guard_provider_failure", {"guard": self.provider_name, "error": type(exc).__name__})
             if self.fallback_name == self.provider_name:
-                return GuardResult("deny", self.provider_name, "guard.provider-failure", "The configured command guard could not inspect this request.", Remediation("Retry after restoring the command guard."))
-            result = self.providers[self.fallback_name].inspect(request)
-        if self.event_logger:
-            self.event_logger("command_guard_decision", {
-                "tool": request.tool_name,
-                "host": request.host,
-                "working_directory": request.working_directory,
-                "platform": request.platform,
-                "decision": result.decision,
-                "guard": result.guard,
-                "rule": result.rule_id,
-                "reason": result.reason,
-                "remediation": result.remediation.summary if result.remediation else None,
-            })
+                result = GuardResult("deny", self.provider_name, "guard.provider-failure", "The configured command guard could not inspect this request.", Remediation("Retry after restoring the command guard."))
+            else:
+                result = self.providers[self.fallback_name].inspect(request)
+        self._log_decision(request, result)
         return result
 
 

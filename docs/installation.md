@@ -865,6 +865,10 @@ gate --noguard start
 
 This does not change the saved provider. Gate prints a warning and the launched gateway uses the `disabled` provider only for that process.
 
+Custom deny rules can be managed from the authenticated `/rt` interface under **Command guard**. The view shows the active provider, fallback, Gate's read-only built-in catalogue, and custom rules. Custom rules support case-insensitive `contains` and `glob` matching only; they can add denials but cannot allow a command that the selected provider would otherwise block. Changes are validated, written atomically to `MCP_CONFIG_ROOT/command-guards.json`, and swapped into the running guard immediately without restarting Gate.
+
+`gate --noguard` disables both the selected provider and custom rules for that launch. Restarting normally reloads the persisted custom rules. If the custom JSON is invalid at startup, Gate logs a warning, ignores the custom layer, and keeps the built-in/dcg provider running.
+
 Equivalent downstream shell tools are guarded only when declared in `config/mcp.json` so arbitrary proxy text is not misclassified:
 
 ```json
