@@ -90,6 +90,41 @@ def test_crud_persists_and_updates_service_immediately(tmp_path):
     assert all("pattern" not in data for _, data in events)
 
 
+def test_persistence_failure_returns_service_unavailable_without_changing_memory(tmp_path, monkeypatch):
+    client, service, store = client_for(tmp_path)
+    monkeypatch.setattr(store, "save", lambda rules: (_ for _ in ()).throw(OSError("disk full")))
+
+    response = client.post(
+        "/rt/api/command-guards/custom", json=payload(), headers=mutation_headers(),
+    )
+
+    assert response.status_code == 503
+    assert response.json() == {"error": "persistence_failed", "detail": "Failed to persist custom command guards."}
+    assert service.custom_rules() == ()
+
+
+def test_failed_update_and_delete_leave_existing_rule_active(tmp_path, monkeypatch):
+    client, service, store = client_for(tmp_path)
+    assert client.post(
+        "/rt/api/command-guards/custom", json=payload(), headers=mutation_headers(),
+    ).status_code == 201
+    original = service.custom_rules()
+    monkeypatch.setattr(store, "save", lambda rules: (_ for _ in ()).throw(OSError("read-only filesystem")))
+
+    updated = client.put(
+        "/rt/api/command-guards/custom/protect-production-deploy",
+        json=payload(pattern="release production"), headers=mutation_headers(),
+    )
+    deleted = client.request(
+        "DELETE", "/rt/api/command-guards/custom/protect-production-deploy",
+        json={}, headers=mutation_headers(),
+    )
+
+    assert updated.status_code == 503
+    assert deleted.status_code == 503
+    assert service.custom_rules() == original
+    assert service.inspect(GuardRequest("run_command", {}, "deploy production now")).guard == "custom"
+
 def test_get_exposes_provider_builtin_and_custom_rules(tmp_path):
     client, _, _ = client_for(tmp_path)
     client.post("/rt/api/command-guards/custom", json=payload(), headers=mutation_headers())

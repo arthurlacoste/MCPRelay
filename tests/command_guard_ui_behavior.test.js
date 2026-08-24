@@ -1,14 +1,21 @@
 const assert = require('node:assert/strict')
 const {
+  globProbe,
   guardEscape,
   mutationOptions,
+  parseQuickRule,
   providerLabel,
+  quickGuardPrompt,
+  quickRuleDraft,
+  quickRuleProbe,
   renderBuiltinRules,
   renderCustomRules,
   rulePayload,
   slugifyGuardId,
   switchGateView,
+  switchGateViewAndRefresh,
   testResultLabel,
+  uniqueGuardId,
   validateRuleDraft,
 } = require('../src/realtime_ui/command-guard.js')
 
@@ -16,6 +23,22 @@ assert.equal(slugifyGuardId('Protect Production Deploy!'), 'protect-production-d
 assert.equal(providerLabel('builtin'), 'Built-in')
 assert.equal(providerLabel('dcg'), 'DCG')
 assert.equal(guardEscape('<script>'), '&lt;script&gt;')
+assert.deepEqual(parseQuickRule('contains("deploy production") => "Review deploy"'), {
+  match_type: 'contains', pattern: 'deploy production', reason: 'Review deploy',
+})
+assert.deepEqual(parseQuickRule('glob("git push * --force") => "No force push"'), {
+  match_type: 'glob', pattern: 'git push * --force', reason: 'No force push',
+})
+assert.throws(() => parseQuickRule('deploy production'), /Use contains/)
+assert.equal(globProbe('git push * --force?'), 'git push gate-probe --forcex')
+assert.equal(globProbe('[^x]*'), '^gate-probe')
+assert.equal(globProbe('[!x]*'), 'zgate-probe')
+assert.equal(uniqueGuardId('Block deploy', [{ id: 'block-deploy' }]), 'block-deploy-2')
+const quickDraft = quickRuleDraft('contains("deploy production") => "Review deploy"', [])
+assert.equal(quickDraft.id, 'block-deploy-production')
+assert.equal(quickRuleProbe(quickDraft), 'deploy production')
+assert.match(quickGuardPrompt(), /contains\(\"text to block\"\)/)
+assert.match(quickGuardPrompt(), /one line only/)
 
 const validDraft = {
   id: 'protect-prod', label: 'Protect prod', enabled: true, match_type: 'contains',
@@ -35,6 +58,7 @@ assert.match(builtinHtml, /git\.example/)
 assert.match(builtinHtml, /danger &lt;value&gt;/)
 assert.doesNotMatch(builtinHtml, /<unsafe>/)
 assert.match(builtinHtml, /Read|Patterns/)
+assert.match(builtinHtml, /compact-row/)
 
 const customHtml = renderCustomRules([{
   id: 'protect-prod', label: '<b>Prod</b>', enabled: true, match_type: 'contains',
@@ -45,6 +69,7 @@ assert.match(customHtml, /data-action="edit"/)
 assert.match(customHtml, /data-action="delete"/)
 assert.match(customHtml, /&lt;b&gt;Prod&lt;\/b&gt;/)
 assert.doesNotMatch(customHtml, /<b>Prod<\/b>/)
+assert.match(customHtml, /compact-row/)
 
 assert.equal(testResultLabel({ decision: 'allow', guard: 'builtin' }), 'ALLOWED')
 assert.equal(testResultLabel({ decision: 'deny', guard: 'custom', rule: 'custom.protect-prod' }), 'DENIED by custom.protect-prod')
@@ -97,4 +122,13 @@ assert.equal(realtimeView.hidden, false)
 assert.equal(guardView.hidden, true)
 assert.equal(realtimeNav.attributes['aria-current'], 'page')
 
-console.log('command guard UI behavior: ok')
+let refreshCount = 0
+const refreshErrors = []
+;(async () => {
+  await switchGateViewAndRefresh('command-guard', fakeDocument, async () => { refreshCount += 1 }, message => refreshErrors.push(message))
+  await switchGateViewAndRefresh('realtime', fakeDocument, async () => { refreshCount += 1 }, message => refreshErrors.push(message))
+  await switchGateViewAndRefresh('command-guard', fakeDocument, async () => { refreshCount += 1 }, message => refreshErrors.push(message))
+  assert.equal(refreshCount, 2)
+  assert.deepEqual(refreshErrors, [])
+  console.log('command guard UI behavior: ok')
+})().catch(error => { console.error(error); process.exitCode = 1 })

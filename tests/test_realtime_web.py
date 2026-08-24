@@ -268,7 +268,11 @@ def test_realtime_page_exposes_command_guard_view_and_assets(tmp_path, monkeypat
     page = client.get("/rt")
     assert 'id="nav-command-guard"' in page.text
     assert 'id="view-command-guard"' in page.text
-    assert 'id="guard-form"' in page.text
+    assert 'id="guard-quick-rule"' in page.text
+    assert 'id="add-quick-guard"' in page.text
+    assert 'id="guard-prompt-text"' in page.text
+    assert '<details class="guard-advanced" id="guard-advanced">' in page.text
+    assert page.text.index('Règles personnalisées') < page.text.index('Règles Gate')
     assert 'command-guard.css?v=' in page.text
     assert 'command-guard.js?v=' in page.text
     assert client.get("/rt/assets/command-guard.css").status_code == 200

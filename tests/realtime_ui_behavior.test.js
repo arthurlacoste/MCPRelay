@@ -20,6 +20,7 @@ const {
   releaseLedgerSelectionAnchor,
   shouldAutoScrollLedger,
   state,
+  switchToRealtimeView,
   syncDocumentTitle,
   syntheticThinking,
   syncConversationDrawerA11y,
@@ -52,6 +53,10 @@ assert.equal(syncDocumentTitle(titleCalls, fakeDocument), 'Run focused tests')
 assert.equal(fakeDocument.title, 'Run focused tests')
 assert.equal(syncDocumentTitle([], fakeDocument), '')
 assert.equal(fakeDocument.title, 'Run focused tests')
+let navigatedView = null
+switchToRealtimeView({ switchGateView(view) { navigatedView = view } })
+assert.equal(navigatedView, 'realtime')
+switchToRealtimeView({})
 
 assert.equal(hasActiveTextSelection({ isCollapsed: false, toString: () => 'copy me' }), true)
 assert.equal(hasActiveTextSelection({ isCollapsed: true, toString: () => 'copy me' }), false)

@@ -64,9 +64,16 @@ def register_command_guard_routes(
             "custom": custom,
         }
 
-    def persist(rules: list[CustomGuardRule]) -> None:
-        snapshot = store.save(rules)
+    def persist(rules: list[CustomGuardRule]) -> JSONResponse | None:
+        try:
+            snapshot = store.save(rules)
+        except OSError:
+            return JSONResponse(
+                {"error": "persistence_failed", "detail": "Failed to persist custom command guards."},
+                status_code=503,
+            )
         service.replace_custom_rules(snapshot)
+        return None
 
     def audit(action: str, rule_id: str, change: str) -> None:
         if event_logger:
@@ -93,7 +100,9 @@ def register_command_guard_routes(
                 if any(item.id == rule.id for item in rules):
                     return JSONResponse({"error": "duplicate_id"}, status_code=409)
                 rules.append(rule)
-                persist(rules)
+                persistence_error = persist(rules)
+                if persistence_error:
+                    return persistence_error
         except GuardConfigError as exc:
             return JSONResponse({"error": "invalid_rule", "detail": str(exc)}, status_code=422)
         audit("command_guard_rule_created", rule.id, "create")
@@ -117,7 +126,9 @@ def register_command_guard_routes(
                 if index is None:
                     return JSONResponse({"error": "not_found"}, status_code=404)
                 rules[index] = rule
-                persist(rules)
+                persistence_error = persist(rules)
+                if persistence_error:
+                    return persistence_error
         except GuardConfigError as exc:
             return JSONResponse({"error": "invalid_rule", "detail": str(exc)}, status_code=422)
         audit("command_guard_rule_updated", rule.id, "update")
@@ -138,7 +149,9 @@ def register_command_guard_routes(
             filtered = [item for item in rules if item.id != rule_id]
             if len(filtered) == len(rules):
                 return JSONResponse({"error": "not_found"}, status_code=404)
-            persist(filtered)
+            persistence_error = persist(filtered)
+            if persistence_error:
+                return persistence_error
         audit("command_guard_rule_deleted", rule_id, "delete")
         return JSONResponse({"ok": True, "id": rule_id})
 

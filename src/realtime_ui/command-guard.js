@@ -1,4 +1,4 @@
-const guardState = { data: null, loaded: false, idTouched: false }
+const guardState = { data: null, idTouched: false }
 
 function guardEscape(value) {
   return String(value ?? '').replace(/[&<>"']/g, char => (
@@ -9,6 +9,86 @@ function guardEscape(value) {
 function slugifyGuardId(value) {
   return String(value ?? '')
     .trim().toLowerCase().replace(/[^a-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 64)
+}
+
+function parseQuickRule(value) {
+  const input = String(value ?? '').trim()
+  const match = input.match(/^(contains|glob)\s*\(\s*("(?:\\.|[^"\\])*")\s*\)\s*=>\s*("(?:\\.|[^"\\])*")\s*$/s)
+  if (!match) throw new Error('Use contains("text") => "Reason" or glob("pattern *") => "Reason".')
+  let pattern
+  let reason
+  try {
+    pattern = JSON.parse(match[2])
+    reason = JSON.parse(match[3])
+  } catch (_) {
+    throw new Error('Pattern and reason must use valid double-quoted strings.')
+  }
+  pattern = String(pattern).trim()
+  reason = String(reason).trim()
+  if (!pattern) throw new Error('Pattern cannot be empty.')
+  if (!reason) throw new Error('Reason cannot be empty.')
+  return { match_type: match[1], pattern, reason }
+}
+
+function uniqueGuardId(seed, rules = []) {
+  const used = new Set((rules || []).map(rule => rule.id))
+  const base = slugifyGuardId(seed) || 'custom-guard'
+  if (!used.has(base)) return base
+  for (let index = 2; index < 1000; index += 1) {
+    const suffix = `-${index}`
+    const candidate = `${base.slice(0, 64 - suffix.length)}${suffix}`
+    if (!used.has(candidate)) return candidate
+  }
+  throw new Error('Could not generate a unique rule ID.')
+}
+
+function quickRuleDraft(value, rules = []) {
+  const parsed = parseQuickRule(value)
+  const labelBase = `Block ${parsed.pattern}`
+  const label = labelBase.length > 100 ? `${labelBase.slice(0, 97)}...` : labelBase
+  return {
+    id: uniqueGuardId(label, rules),
+    label,
+    enabled: true,
+    match_type: parsed.match_type,
+    pattern: parsed.pattern,
+    reason: parsed.reason,
+    remediation: '',
+    commands: [],
+  }
+}
+
+function globProbe(pattern) {
+  let output = ''
+  for (let index = 0; index < pattern.length; index += 1) {
+    const char = pattern[index]
+    if (char === '*') { output += 'gate-probe'; continue }
+    if (char === '?') { output += 'x'; continue }
+    if (char !== '[') { output += char; continue }
+    const close = pattern.indexOf(']', index + 1)
+    if (close === -1) { output += char; continue }
+    let chars = pattern.slice(index + 1, close)
+    const negated = chars.startsWith('!')
+    if (negated) chars = chars.slice(1)
+    if (negated) {
+      const forbidden = new Set(chars.split(''))
+      output += ['x', 'z', '0', '_'].find(candidate => !forbidden.has(candidate)) || 'q'
+    } else if (chars.length >= 3 && chars[1] === '-') {
+      output += chars[0]
+    } else {
+      output += chars[0] || 'x'
+    }
+    index = close
+  }
+  return output
+}
+
+function quickRuleProbe(draft) {
+  return draft.match_type === 'glob' ? globProbe(draft.pattern) : draft.pattern
+}
+
+function quickGuardPrompt() {
+  return 'Create exactly one Gate Command guard rule. Reply with one line only using one of these formats: contains("text to block") => "Reason shown when blocked" or glob("shell glob pattern *") => "Reason shown when blocked". Use contains for a literal substring and glob only when wildcards are needed. Do not use regex, Markdown, backticks, JSON, or extra explanation.'
 }
 
 function validateRuleDraft(draft) {
@@ -56,7 +136,7 @@ function renderBuiltinRules(rules) {
   if (!rules?.length) return '<p class="guard-empty">No built-in rules.</p>'
   return rules.map(rule => {
     const patterns = (rule.patterns || []).map(pattern => guardEscape(pattern))
-    return `<details class="guard-card">
+    return `<details class="guard-card compact-row">
       <summary>
         <span class="guard-card-title"><strong>${guardEscape(rule.id)}</strong><small>${guardEscape(rule.category)}</small></span>
         <span class="guard-pattern">${patterns[0] || ''}</span>
@@ -72,16 +152,13 @@ function renderBuiltinRules(rules) {
 
 function renderCustomRules(rules) {
   if (!rules?.length) return '<p class="guard-empty">No custom guards yet.</p>'
-  return rules.map(rule => `<article class="custom-card${rule.enabled ? '' : ' disabled'}" data-rule-id="${guardEscape(rule.id)}">
+  return rules.map(rule => `<article class="custom-card compact-row${rule.enabled ? '' : ' disabled'}" data-rule-id="${guardEscape(rule.id)}">
     <label class="guard-toggle" title="${rule.enabled ? 'Disable' : 'Enable'} ${guardEscape(rule.label)}">
       <input type="checkbox" data-action="toggle" ${rule.enabled ? 'checked' : ''}><span></span>
     </label>
-    <div class="custom-main">
-      <strong>${guardEscape(rule.label)}</strong>
-      <div class="custom-meta"><span>${guardEscape(rule.id)}</span><span>${guardEscape(rule.match_type)}</span></div>
-      <div class="custom-pattern">${guardEscape(rule.pattern)}</div>
-      <div class="custom-reason">${guardEscape(rule.reason)}</div>
-    </div>
+    <div class="custom-identity"><strong>${guardEscape(rule.label)}</strong><small>${guardEscape(rule.id)} · ${guardEscape(rule.match_type)}</small></div>
+    <div class="custom-pattern">${guardEscape(rule.pattern)}</div>
+    <div class="custom-reason">${guardEscape(rule.reason)}</div>
     <div class="custom-actions"><button data-action="edit">Edit</button><button class="danger-button" data-action="delete">Delete</button></div>
   </article>`).join('')
 }
@@ -110,6 +187,19 @@ function switchGateView(view, targetDocument = (typeof document !== 'undefined' 
   targetDocument.body?.classList.toggle('guard-mode', guardMode)
   targetDocument.title = guardMode ? 'Command guard' : 'Real-time calls'
   return view
+}
+
+async function switchGateViewAndRefresh(
+  view,
+  targetDocument = (typeof document !== 'undefined' ? document : null),
+  loader = loadCommandGuards,
+  onError = setFormError,
+) {
+  const activeView = switchGateView(view, targetDocument)
+  if (activeView === 'command-guard') {
+    try { await loader() } catch (error) { onError(error.message) }
+  }
+  return activeView
 }
 
 async function guardFetch(path, options = {}) {
@@ -145,7 +235,6 @@ function updateGuardSummary(data) {
 async function loadCommandGuards() {
   const data = await guardFetch('/rt/api/command-guards')
   guardState.data = data
-  guardState.loaded = true
   updateGuardSummary(data)
   return data
 }
@@ -176,19 +265,19 @@ function setFormError(message = '') {
 
 function closeGuardForm() {
   const form = document.querySelector('#guard-form')
-  form.hidden = true
   form.reset()
   document.querySelector('#guard-editing-id').value = ''
   document.querySelector('#guard-id').disabled = false
   document.querySelector('#guard-enabled').checked = true
   document.querySelector('#guard-test-result').hidden = true
+  document.querySelector('#guard-advanced').open = false
   guardState.idTouched = false
   setFormError()
 }
 
 function openGuardForm(rule = null) {
   const form = document.querySelector('#guard-form')
-  form.hidden = false
+  document.querySelector('#guard-advanced').open = true
   setFormError()
   const result = document.querySelector('#guard-test-result')
   result.hidden = true
@@ -254,6 +343,64 @@ async function testGuardForm() {
   }
 }
 
+function setQuickStatus(message = '', denied = false) {
+  const element = document.querySelector('#guard-quick-result')
+  element.textContent = message
+  element.classList.toggle('denied', denied)
+  element.hidden = !message
+}
+
+function setQuickError(message = '') {
+  const element = document.querySelector('#guard-quick-error')
+  element.textContent = message
+  element.hidden = !message
+}
+
+async function addQuickGuard() {
+  const input = document.querySelector('#guard-quick-rule')
+  const button = document.querySelector('#add-quick-guard')
+  setQuickError()
+  setQuickStatus()
+  let draft
+  try {
+    draft = quickRuleDraft(input.value, guardState.data?.custom || [])
+    const errors = validateRuleDraft(draft)
+    if (errors.length) throw new Error(errors[0])
+  } catch (error) {
+    setQuickError(error.message)
+    return
+  }
+  const payload = rulePayload(draft)
+  button.disabled = true
+  try {
+    const probe = quickRuleProbe(draft)
+    const result = await guardFetch('/rt/api/command-guards/test', mutationOptions('POST', { command: probe, candidate: payload }))
+    if (result.decision !== 'deny' || result.rule !== `custom.${payload.id}`) {
+      throw new Error('The rule did not match its validation probe. Use the advanced form to inspect it.')
+    }
+    await guardFetch('/rt/api/command-guards/custom', mutationOptions('POST', payload))
+    input.value = ''
+    setQuickStatus(`Added and verified: ${payload.id}`)
+    await loadCommandGuards()
+  } catch (error) {
+    setQuickError(error.message)
+  } finally {
+    button.disabled = false
+  }
+}
+
+async function copyGuardPrompt() {
+  const button = document.querySelector('#copy-guard-prompt')
+  try {
+    await navigator.clipboard.writeText(quickGuardPrompt())
+    const original = button.textContent
+    button.textContent = 'Copied'
+    setTimeout(() => { button.textContent = original }, 1200)
+  } catch (_) {
+    setQuickError('Clipboard access failed. Copy the format example manually.')
+  }
+}
+
 async function updateRule(rule, changes) {
   const payload = { ...rule, ...changes, remediation: { ...(rule.remediation || {}) } }
   await guardFetch(`/rt/api/command-guards/custom/${encodeURIComponent(rule.id)}`, mutationOptions('PUT', payload))
@@ -296,14 +443,14 @@ async function handleCustomRuleClick(event) {
 }
 
 function initializeCommandGuardUI() {
+  document.querySelector('#guard-prompt-text').textContent = quickGuardPrompt()
   document.querySelectorAll('.nav-item').forEach(button => button.addEventListener('click', async () => {
-    const view = switchGateView(button.dataset.view)
-    if (view === 'command-guard' && !guardState.loaded) {
-      try { await loadCommandGuards() } catch (error) { setFormError(error.message) }
-    }
+    await switchGateViewAndRefresh(button.dataset.view)
   }))
   document.querySelector('#all-calls').addEventListener('click', () => switchGateView('realtime'))
-  document.querySelector('#add-custom-guard').addEventListener('click', () => openGuardForm())
+  document.querySelector('#add-quick-guard').addEventListener('click', addQuickGuard)
+  document.querySelector('#copy-guard-prompt').addEventListener('click', copyGuardPrompt)
+  document.querySelector('#guard-quick-rule').addEventListener('input', () => { setQuickError(); setQuickStatus() })
   document.querySelector('#cancel-custom-guard').addEventListener('click', closeGuardForm)
   document.querySelector('#test-custom-guard').addEventListener('click', testGuardForm)
   document.querySelector('#guard-form').addEventListener('submit', saveGuardForm)
@@ -316,7 +463,11 @@ function initializeCommandGuardUI() {
 }
 
 if (typeof module !== 'undefined') module.exports = {
-  guardEscape, mutationOptions, providerLabel, renderBuiltinRules, renderCustomRules, rulePayload,
-  slugifyGuardId, switchGateView, testResultLabel, validateRuleDraft,
+  globProbe, guardEscape, mutationOptions, parseQuickRule, providerLabel, quickGuardPrompt, quickRuleDraft, quickRuleProbe,
+  renderBuiltinRules, renderCustomRules, rulePayload, slugifyGuardId, switchGateView, switchGateViewAndRefresh, testResultLabel, uniqueGuardId,
+  validateRuleDraft,
 }
-if (typeof document !== 'undefined' && typeof process === 'undefined') initializeCommandGuardUI()
+if (typeof document !== 'undefined' && typeof process === 'undefined') {
+  window.switchGateView = switchGateView
+  initializeCommandGuardUI()
+}
