@@ -92,38 +92,59 @@
             <div><span>Custom rules</span><strong id="guard-custom-count">0</strong></div>
           </section>
 
-          <section class="guard-section">
-            <div class="guard-section-head"><div><h2>Règles Gate</h2><p>Built-in protections. Read-only.</p></div></div>
-            <div class="guard-list" id="builtin-rules"><p class="guard-empty">Loading…</p></div>
+          <section class="guard-section guard-custom-section">
+            <div class="guard-section-head">
+              <div><h2>Règles personnalisées</h2><p>Paste one rule, validate it, add it.</p></div>
+            </div>
+
+            <div class="guard-quick-add">
+              <label for="guard-quick-rule">Quick rule</label>
+              <div class="guard-quick-line">
+                <textarea id="guard-quick-rule" rows="2" maxlength="1200" spellcheck="false" placeholder='contains("deploy production") => "Production deployment requires review"'></textarea>
+                <button class="primary-button" type="button" id="add-quick-guard">Add rule</button>
+              </div>
+              <div class="guard-quick-help">
+                <span>Format: <code>contains("text") =&gt; "Reason"</code> or <code>glob("pattern *") =&gt; "Reason"</code></span>
+              </div>
+              <details class="guard-prompt">
+                <summary>Prompt for AI</summary>
+                <div><pre id="guard-prompt-text"></pre><button type="button" class="text-button" id="copy-guard-prompt">Copy prompt</button></div>
+              </details>
+              <div class="guard-form-error" id="guard-quick-error" hidden></div>
+              <div class="guard-test-result" id="guard-quick-result" hidden></div>
+            </div>
+
+            <details class="guard-advanced" id="guard-advanced">
+              <summary>Advanced form</summary>
+              <form class="guard-form" id="guard-form" novalidate>
+                <input type="hidden" id="guard-editing-id">
+                <div class="guard-form-grid">
+                  <label>Name<input id="guard-label" maxlength="100" required></label>
+                  <label>ID<input id="guard-id" maxlength="64" pattern="[a-z0-9][a-z0-9._-]{0,63}" required></label>
+                  <label>Match type<select id="guard-match-type"><option value="contains">Contains</option><option value="glob">Glob</option></select></label>
+                  <label class="wide">Pattern<input id="guard-pattern" maxlength="500" required></label>
+                  <label class="wide">Reason<textarea id="guard-reason" maxlength="500" rows="2" required></textarea></label>
+                  <label class="wide">Remediation<textarea id="guard-remediation" maxlength="500" rows="2"></textarea></label>
+                  <label class="wide">Safe commands<textarea id="guard-commands" rows="3" placeholder="One command per line"></textarea></label>
+                  <label class="check"><input type="checkbox" id="guard-enabled" checked>Enabled</label>
+                  <label class="wide">Test command<input id="guard-test-command" maxlength="20000" placeholder="Command to inspect, never executed"></label>
+                </div>
+                <div class="guard-form-error" id="guard-form-error" hidden></div>
+                <div class="guard-test-result" id="guard-test-result" hidden></div>
+                <div class="guard-form-actions">
+                  <button type="button" id="cancel-custom-guard">Reset</button>
+                  <button type="button" id="test-custom-guard">Test</button>
+                  <button class="primary-button" type="submit">Save</button>
+                </div>
+              </form>
+            </details>
+
+            <div class="guard-list compact" id="custom-rules"><p class="guard-empty">Loading…</p></div>
           </section>
 
-          <section class="guard-section">
-            <div class="guard-section-head">
-              <div><h2>Règles personnalisées</h2><p>Additional deny-only protections.</p></div>
-              <button class="primary-button" id="add-custom-guard">+ Add custom guard</button>
-            </div>
-            <form class="guard-form" id="guard-form" hidden novalidate>
-              <input type="hidden" id="guard-editing-id">
-              <div class="guard-form-grid">
-                <label>Name<input id="guard-label" maxlength="100" required></label>
-                <label>ID<input id="guard-id" maxlength="64" pattern="[a-z0-9][a-z0-9._-]{0,63}" required></label>
-                <label>Match type<select id="guard-match-type"><option value="contains">Contains</option><option value="glob">Glob</option></select></label>
-                <label class="wide">Pattern<input id="guard-pattern" maxlength="500" required></label>
-                <label class="wide">Reason<textarea id="guard-reason" maxlength="500" rows="2" required></textarea></label>
-                <label class="wide">Remediation<textarea id="guard-remediation" maxlength="500" rows="2"></textarea></label>
-                <label class="wide">Safe commands<textarea id="guard-commands" rows="3" placeholder="One command per line"></textarea></label>
-                <label class="check"><input type="checkbox" id="guard-enabled" checked>Enabled</label>
-                <label class="wide">Test command<input id="guard-test-command" maxlength="20000" placeholder="Command to inspect, never executed"></label>
-              </div>
-              <div class="guard-form-error" id="guard-form-error" hidden></div>
-              <div class="guard-test-result" id="guard-test-result" hidden></div>
-              <div class="guard-form-actions">
-                <button type="button" id="cancel-custom-guard">Cancel</button>
-                <button type="button" id="test-custom-guard">Test</button>
-                <button class="primary-button" type="submit">Save</button>
-              </div>
-            </form>
-            <div class="guard-list" id="custom-rules"><p class="guard-empty">Loading…</p></div>
+          <section class="guard-section guard-builtin-section">
+            <div class="guard-section-head"><div><h2>Règles Gate</h2><p>Built-in protections. Read-only.</p></div></div>
+            <div class="guard-list compact" id="builtin-rules"><p class="guard-empty">Loading…</p></div>
           </section>
         </div>
       </div>

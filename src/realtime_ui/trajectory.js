@@ -349,7 +349,12 @@ function renderConversations() {
   })
 }
 
+function switchToRealtimeView(target = (typeof window !== 'undefined' ? window : null)) {
+  if (typeof target?.switchGateView === 'function') target.switchGateView('realtime')
+}
+
 function openConversation(key) {
+  switchToRealtimeView()
   state.conversation = key
   state.selected = latestToolCallId(state.calls.filter(matches), key)
   state.inspectorOpen = Boolean(state.selected)
@@ -850,7 +855,7 @@ if (typeof module !== 'undefined') module.exports = {
   handleDrawerKeydown, closeInspector, handleInspectorTouchEnd, handleInspectorTouchStart, handleLedgerKeydown,
   hasActiveTextSelection, inspectorTouchPoint, isLeftSwipe, latestEventPurpose, latestToolCallId, ledgerNavigationExcludedTarget,
   organizeLedgerCalls, releaseLedgerSelectionAnchor, resolveStateParent, runParentContext, shouldAutoScrollLedger,
-  state, syncConversationDrawerA11y, syncDocumentTitle, syntheticThinking, timelineContentWidth, timelineLayout, timing,
-  toggleConversationDrawer,
+  state, switchToRealtimeView, syncConversationDrawerA11y, syncDocumentTitle, syntheticThinking, timelineContentWidth,
+  timelineLayout, timing, toggleConversationDrawer,
 }
 if (typeof document !== 'undefined' && typeof process === 'undefined') initializeUI()

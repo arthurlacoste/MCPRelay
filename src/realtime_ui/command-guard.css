@@ -33,9 +33,6 @@
 .guard-toggle span::after { position: absolute; top: 3px; left: 3px; width: 16px; height: 16px; border-radius: 50%; background: #fff; content: ""; transition: 120ms ease; }
 .guard-toggle input:checked + span { background: var(--blue); }
 .guard-toggle input:checked + span::after { transform: translateX(16px); }
-.custom-main { min-width: 0; }
-.custom-main strong { display: block; margin-bottom: 4px; font-size: 14px; }
-.custom-meta { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 6px; color: var(--muted); font-size: 11px; }
 .custom-pattern { margin-bottom: 5px; overflow-wrap: anywhere; font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; }
 .custom-reason { color: var(--muted); }
 .custom-actions { display: flex; gap: 5px; }
@@ -75,4 +72,76 @@
   .guard-form-grid { grid-template-columns: 1fr; }
   .guard-form label.wide, .guard-form label.check { grid-column: 1; }
   .guard-form-actions { flex-wrap: wrap; }
+}
+
+/* Quick entry is the primary custom-rule path; detailed editing stays behind disclosure. */
+.guard-custom-section { margin-top: 20px; }
+.guard-builtin-section { margin-top: 22px; }
+.guard-quick-add { margin-bottom: 10px; padding: 12px 14px; border: 1px solid var(--line); border-radius: 9px; background: var(--sidebar); }
+.guard-quick-add > label { display: block; margin-bottom: 6px; color: var(--text); font-size: 12px; font-weight: 600; }
+.guard-quick-line { display: flex; gap: 8px; align-items: stretch; }
+.guard-quick-line textarea { flex: 1; min-width: 0; min-height: 58px; padding: 9px 10px; border: 1px solid var(--line); border-radius: 7px; outline: 0; resize: vertical; background: var(--bg); color: var(--text); font: 16px/1.35 ui-monospace, SFMono-Regular, Menlo, monospace; }
+.guard-quick-line textarea:focus { border-color: var(--blue); }
+.guard-quick-line .primary-button { flex: 0 0 auto; min-width: 92px; }
+.guard-quick-help { margin-top: 7px; color: var(--muted); font-size: 11px; }
+.guard-quick-help code { color: var(--text); font: 11px ui-monospace, SFMono-Regular, Menlo, monospace; }
+.text-button { padding: 2px 0; border: 0; background: transparent; color: var(--blue); cursor: pointer; font: inherit; white-space: nowrap; }
+.guard-prompt { margin-top: 7px; color: var(--muted); font-size: 11px; }
+.guard-prompt > summary { width: fit-content; cursor: pointer; color: var(--blue); }
+.guard-prompt > div { margin-top: 7px; padding: 9px 10px; border: 1px solid var(--line-soft); border-radius: 7px; background: var(--bg); }
+.guard-prompt pre { margin: 0 0 7px; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--text); font: 11px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; }
+.guard-advanced { margin-bottom: 10px; border: 1px solid var(--line); border-radius: 9px; background: var(--bg); }
+.guard-advanced > summary { padding: 9px 12px; cursor: pointer; color: var(--muted); font-size: 12px; font-weight: 600; list-style-position: inside; }
+.guard-advanced[open] > summary { border-bottom: 1px solid var(--line-soft); }
+.guard-advanced .guard-form { margin: 0; border: 0; border-radius: 0; background: transparent; }
+
+/* One visual row per rule. Extra built-in detail remains behind disclosure; custom detail remains behind Edit. */
+.guard-list.compact { gap: 0; overflow: hidden; border: 1px solid var(--line); border-radius: 9px; }
+.guard-list.compact .guard-empty { margin: 0; border: 0; border-radius: 0; }
+.guard-list.compact .guard-card,
+.guard-list.compact .custom-card { border: 0; border-bottom: 1px solid var(--line-soft); border-radius: 0; }
+.guard-list.compact > :last-child { border-bottom: 0; }
+.guard-list.compact .guard-card summary { grid-template-columns: minmax(145px, .85fr) minmax(180px, 1.05fr) minmax(220px, 1.5fr) 16px; gap: 10px; min-height: 42px; padding: 8px 11px; }
+.guard-list.compact .guard-card summary::after { position: static; right: auto; }
+.guard-list.compact .guard-card-title,
+.guard-list.compact .custom-identity { display: flex; min-width: 0; align-items: baseline; gap: 6px; }
+.guard-list.compact .guard-card-title strong,
+.guard-list.compact .guard-card-title small,
+.guard-list.compact .custom-identity strong,
+.guard-list.compact .custom-identity small { display: block; min-width: 0; margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.guard-list.compact .guard-card-title strong,
+.guard-list.compact .custom-identity strong { flex: 0 1 auto; }
+.guard-list.compact .guard-card-title small,
+.guard-list.compact .custom-identity small { flex: 1 1 auto; }
+.guard-list.compact .guard-reason { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.guard-list.compact .guard-details { background: var(--sidebar); }
+
+.guard-list.compact .custom-card { grid-template-columns: 32px minmax(150px, .9fr) minmax(180px, 1.05fr) minmax(220px, 1.45fr) auto; gap: 10px; min-height: 42px; padding: 7px 10px; align-items: center; }
+.guard-list.compact .custom-identity strong { font-size: 12px; font-weight: 600; }
+.guard-list.compact .custom-identity small { color: var(--muted); font-size: 10px; }
+.guard-list.compact .custom-pattern,
+.guard-list.compact .custom-reason { min-width: 0; margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.guard-list.compact .custom-actions { gap: 4px; }
+.guard-list.compact .custom-actions button { min-height: 28px; padding: 0 8px; font-size: 11px; }
+.guard-list.compact .guard-toggle { width: 32px; height: 18px; margin: 0; }
+.guard-list.compact .guard-toggle span::after { top: 2px; left: 2px; width: 14px; height: 14px; }
+.guard-list.compact .guard-toggle input:checked + span::after { transform: translateX(14px); }
+
+@media (max-width: 850px) {
+  .guard-quick-line { flex-direction: column; }
+  .guard-quick-line .primary-button { align-self: flex-start; min-height: 38px; }
+
+  .guard-list.compact .guard-card summary { grid-template-columns: minmax(0, 1fr) 16px; min-height: 38px; gap: 4px 8px; padding: 7px 9px; }
+  .guard-list.compact .guard-card-title { grid-column: 1; grid-row: 1; }
+  .guard-list.compact .guard-card .guard-pattern,
+  .guard-list.compact .guard-card .guard-reason { display: none; }
+  .guard-list.compact .guard-card summary::after { grid-column: 2; grid-row: 1; align-self: center; }
+
+  .guard-list.compact .custom-card { grid-template-columns: 32px minmax(0, 1fr) auto; min-height: 38px; gap: 8px; padding: 6px 8px; }
+  .guard-list.compact .custom-identity { grid-column: 2; grid-row: 1; }
+  .guard-list.compact .custom-identity small,
+  .guard-list.compact .custom-pattern,
+  .guard-list.compact .custom-reason { display: none; }
+  .guard-list.compact .custom-actions { grid-column: 3; grid-row: 1; }
+  .guard-list.compact .custom-actions button { min-height: 26px; padding: 0 7px; }
 }
