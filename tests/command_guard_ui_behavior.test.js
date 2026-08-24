@@ -13,6 +13,7 @@ const {
   rulePayload,
   slugifyGuardId,
   switchGateView,
+  switchGateViewAndRefresh,
   testResultLabel,
   uniqueGuardId,
   validateRuleDraft,
@@ -30,6 +31,8 @@ assert.deepEqual(parseQuickRule('glob("git push * --force") => "No force push"')
 })
 assert.throws(() => parseQuickRule('deploy production'), /Use contains/)
 assert.equal(globProbe('git push * --force?'), 'git push gate-probe --forcex')
+assert.equal(globProbe('[^x]*'), '^gate-probe')
+assert.equal(globProbe('[!x]*'), 'zgate-probe')
 assert.equal(uniqueGuardId('Block deploy', [{ id: 'block-deploy' }]), 'block-deploy-2')
 const quickDraft = quickRuleDraft('contains("deploy production") => "Review deploy"', [])
 assert.equal(quickDraft.id, 'block-deploy-production')
@@ -119,4 +122,13 @@ assert.equal(realtimeView.hidden, false)
 assert.equal(guardView.hidden, true)
 assert.equal(realtimeNav.attributes['aria-current'], 'page')
 
-console.log('command guard UI behavior: ok')
+let refreshCount = 0
+const refreshErrors = []
+;(async () => {
+  await switchGateViewAndRefresh('command-guard', fakeDocument, async () => { refreshCount += 1 }, message => refreshErrors.push(message))
+  await switchGateViewAndRefresh('realtime', fakeDocument, async () => { refreshCount += 1 }, message => refreshErrors.push(message))
+  await switchGateViewAndRefresh('command-guard', fakeDocument, async () => { refreshCount += 1 }, message => refreshErrors.push(message))
+  assert.equal(refreshCount, 2)
+  assert.deepEqual(refreshErrors, [])
+  console.log('command guard UI behavior: ok')
+})().catch(error => { console.error(error); process.exitCode = 1 })

@@ -1,4 +1,4 @@
-const guardState = { data: null, loaded: false, idTouched: false }
+const guardState = { data: null, idTouched: false }
 
 function guardEscape(value) {
   return String(value ?? '').replace(/[&<>"']/g, char => (
@@ -68,7 +68,7 @@ function globProbe(pattern) {
     const close = pattern.indexOf(']', index + 1)
     if (close === -1) { output += char; continue }
     let chars = pattern.slice(index + 1, close)
-    const negated = chars.startsWith('!') || chars.startsWith('^')
+    const negated = chars.startsWith('!')
     if (negated) chars = chars.slice(1)
     if (negated) {
       const forbidden = new Set(chars.split(''))
@@ -189,6 +189,19 @@ function switchGateView(view, targetDocument = (typeof document !== 'undefined' 
   return view
 }
 
+async function switchGateViewAndRefresh(
+  view,
+  targetDocument = (typeof document !== 'undefined' ? document : null),
+  loader = loadCommandGuards,
+  onError = setFormError,
+) {
+  const activeView = switchGateView(view, targetDocument)
+  if (activeView === 'command-guard') {
+    try { await loader() } catch (error) { onError(error.message) }
+  }
+  return activeView
+}
+
 async function guardFetch(path, options = {}) {
   const response = await fetch(path, { credentials: 'same-origin', ...options })
   if (response.status === 401) {
@@ -222,7 +235,6 @@ function updateGuardSummary(data) {
 async function loadCommandGuards() {
   const data = await guardFetch('/rt/api/command-guards')
   guardState.data = data
-  guardState.loaded = true
   updateGuardSummary(data)
   return data
 }
@@ -433,10 +445,7 @@ async function handleCustomRuleClick(event) {
 function initializeCommandGuardUI() {
   document.querySelector('#guard-prompt-text').textContent = quickGuardPrompt()
   document.querySelectorAll('.nav-item').forEach(button => button.addEventListener('click', async () => {
-    const view = switchGateView(button.dataset.view)
-    if (view === 'command-guard' && !guardState.loaded) {
-      try { await loadCommandGuards() } catch (error) { setFormError(error.message) }
-    }
+    await switchGateViewAndRefresh(button.dataset.view)
   }))
   document.querySelector('#all-calls').addEventListener('click', () => switchGateView('realtime'))
   document.querySelector('#add-quick-guard').addEventListener('click', addQuickGuard)
@@ -455,7 +464,7 @@ function initializeCommandGuardUI() {
 
 if (typeof module !== 'undefined') module.exports = {
   globProbe, guardEscape, mutationOptions, parseQuickRule, providerLabel, quickGuardPrompt, quickRuleDraft, quickRuleProbe,
-  renderBuiltinRules, renderCustomRules, rulePayload, slugifyGuardId, switchGateView, testResultLabel, uniqueGuardId,
+  renderBuiltinRules, renderCustomRules, rulePayload, slugifyGuardId, switchGateView, switchGateViewAndRefresh, testResultLabel, uniqueGuardId,
   validateRuleDraft,
 }
 if (typeof document !== 'undefined' && typeof process === 'undefined') {
