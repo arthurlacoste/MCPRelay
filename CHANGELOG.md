@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.39](https://github.com/spelcc/gate/compare/v0.1.38...v0.1.39) (2026-08-24)
+
+
+### Added
+
+* land command guard quick entry on main ([#110](https://github.com/spelcc/gate/issues/110)) ([ab08ef2](https://github.com/spelcc/gate/commit/ab08ef2cb24f0fefd1a33b30a7f4ea8861a28fd9))
+
 ## [0.1.38](https://github.com/spelcc/gate/compare/v0.1.37...v0.1.38) (2026-08-23)
 
 
