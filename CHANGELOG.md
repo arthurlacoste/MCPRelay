@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.40](https://github.com/spelcc/gate/compare/v0.1.39...v0.1.40) (2026-08-30)
+
+
+### Fixed
+
+* avoid unzip replace prompt when installing ngrok ([#115](https://github.com/spelcc/gate/issues/115)) ([2876692](https://github.com/spelcc/gate/commit/2876692e7ae68386a470576dd65ec1bd71d02cbb))
+
 ## [0.1.39](https://github.com/spelcc/gate/compare/v0.1.38...v0.1.39) (2026-08-24)
 
 
