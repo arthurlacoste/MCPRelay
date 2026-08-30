@@ -6,7 +6,6 @@
 ### Added
 
 * friendly remediation for broken macOS developer tools ([4554a2c](https://github.com/spelcc/gate/commit/4554a2c0b0a4af5192e7d836fa378a9f22ff2fc5))
-* show friendly remediation for broken macOS developer tools ([6cfcb43](https://github.com/spelcc/gate/commit/6cfcb431b222cb9ad45d28242c8037ec88f5b5d2))
 
 
 ### Fixed
