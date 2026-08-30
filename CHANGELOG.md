@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.1.41](https://github.com/spelcc/gate/compare/v0.1.40...v0.1.41) (2026-08-30)
+
+
+### Added
+
+* friendly remediation for broken macOS developer tools ([4554a2c](https://github.com/spelcc/gate/commit/4554a2c0b0a4af5192e7d836fa378a9f22ff2fc5))
+
+
+### Fixed
+
+* increase gateway health check timeout to prevent launch failure ([bc778c4](https://github.com/spelcc/gate/commit/bc778c43b97f5c009881a75be63e85411e1c5243))
+
 ## [0.1.40](https://github.com/spelcc/gate/compare/v0.1.39...v0.1.40) (2026-08-30)
 
 
