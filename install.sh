@@ -32,6 +32,30 @@ ask_yes() {
 
 need() { command -v "$1" >/dev/null 2>&1; }
 
+darwin_devenv_tools_ok() {
+  [ "$(uname -s)" = "Darwin" ] || return 0
+  command -v xcrun >/dev/null 2>&1 && xcrun --find cc >/dev/null 2>&1
+}
+
+gate_build_deps() {
+  local venv="$1" req="$2" errrc
+  if uv pip install --python "$venv/bin/python" -r "$req"; then
+    return 0
+  fi
+  errrc=$?
+  if ! darwin_devenv_tools_ok; then
+    printf '\n\033[1;31mCould not build Gate'\''s dependencies.\033[0m 🐾\n' >&2
+    printf 'Gate needs to compile a tiny bit of C code, and your Mac'\''s ' >&2
+    printf 'Command Line Tools are feeling a little wonky (xcrun is unavailable).\n\n' >&2
+    printf 'Fix it in three quick steps:\n' >&2
+    printf '  1. sudo xcode-select --reset\n     sudo xcode-select --install\n' >&2
+    printf '  2. xcode-select -p      # should print a real path\n     xcrun --find cc        # should print a real path\n' >&2
+    printf '  3. run Gate again\n\n' >&2
+    printf 'Once your tools are healthy, Gate will glide through install.\n' >&2
+  fi
+  return "$errrc"
+}
+
 is_alpine() {
   [ -f /etc/alpine-release ] || grep -q '^ID=alpine$' /etc/os-release 2>/dev/null
 }
@@ -173,7 +197,7 @@ install_release() {
   rm -rf "$release.next"; mv "$extracted" "$release.next"
   python="$(uv python find "$PYTHON_VERSION")"
   uv venv --python "$python" "$release.next/.venv"
-  uv pip install --python "$release.next/.venv/bin/python" -r "$release.next/requirements.txt"
+  gate_build_deps "$release.next/.venv" "$release.next/requirements.txt"
   mv "$release.next" "$release"
   GATE_RELEASE="$release" GATE_ROOT="$GATE_ROOT" uv run --python "$PYTHON_VERSION" python - <<'PYCODE'
 import os
