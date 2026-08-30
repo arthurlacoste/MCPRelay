@@ -100,7 +100,7 @@ install_ngrok() {
   esac
   info "Installing ngrok"
   mkdir -p "$GATE_ROOT/runtime/bin"
-  tmp="$(mktemp -d)"; archive="$tmp/ngrok"
+  tmp="$(mktemp -d)"; archive="$tmp/ngrok.archive"
   curl -fsSL "$url" -o "$archive"
   case "$url" in *.zip) unzip -q "$archive" -d "$tmp" ;; *) tar -xzf "$archive" -C "$tmp" ;; esac
   install -m 755 "$tmp/ngrok" "$GATE_ROOT/runtime/bin/ngrok"
