@@ -503,7 +503,7 @@ GATEWAY_HEALTH_URL = gateway_health_url(NGROK_PORT)
 NGROK_TUNNELS_URL = f"{NGROK_INSPECT_URL}/api/tunnels"
 
 
-def wait_for_gateway_health(process: subprocess.Popen | ExistingProcess, timeout: float = 5.0) -> None:
+def wait_for_gateway_health(process: subprocess.Popen | ExistingProcess, timeout: float = 15.0) -> None:
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         if STOP_REQUESTED:
